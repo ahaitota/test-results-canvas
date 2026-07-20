@@ -1,0 +1,12 @@
+# Bundled sample reports are dev-only fixtures — not shipped to users.
+# The extension guards for a missing samples/ dir, so leaving it out is safe.
+samples/
+
+# Runtime/dev artifacts the extension may write while testing locally.
+results.trx
+*.log
+
+# Dependencies / editor / OS cruft
+node_modules/
+.DS_Store
+Thumbs.db
