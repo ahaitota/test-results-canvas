@@ -5,8 +5,6 @@ inside the Copilot app. It renders **.NET TRX** and **JUnit XML** reports with
 pass/fail/skip status, per-test duration, failure messages, filtering/search, and
 a summary — and it updates live over SSE every time you re-run the tests.
 
-## The point: it opens itself after you run tests
-
 Once installed, you don't have to do anything special. In **any** project:
 
 1. You write code and ask Copilot to run the tests (`dotnet test`, `mvn test`,
@@ -20,35 +18,35 @@ Supported report formats: `.trx` (VSTest/`dotnet test --logger trx`) and JUnit
 `.xml` (Maven Surefire, Gradle, pytest, jest-junit, etc.).
 
 ## Install (once, per user — works in every project)
+### Step 1:
 
-### Option A — ask Copilot to install it
-In the Copilot app, tell the agent:
-
-> Install the canvas extension at
-> `https://github.com/<owner>/test-results-canvas` and name it `test-results-canvas`
-
-### Option B — install it manually
+### Option A — install it manually
 Clone the repo straight into your user extensions directory so the app discovers it:
-
-- **Windows:** `%USERPROFILE%\.copilot\extensions\test-results-canvas\`
-- **macOS/Linux:** `~/.copilot/extensions/test-results-canvas/`
 
 ```bash
 # macOS/Linux
-git clone https://github.com/<owner>/test-results-canvas.git ~/.copilot/extensions/test-results-canvas
+git clone https://github.com/ahaitota/test-results-canvas.git ~/.copilot/extensions/test-results-canvas
 ```
 ```powershell
 # Windows (PowerShell)
-git clone https://github.com/<owner>/test-results-canvas.git "$env:USERPROFILE\.copilot\extensions\test-results-canvas"
+git clone https://github.com/ahaitota/test-results-canvas.git "$env:USERPROFILE\.copilot\extensions\test-results-canvas"
 ```
+### Option B — ask Copilot to install it (haven't tested it yet, but Copilot said it can do this)
 
-Restart the app (or run `/clear`) so the extension loads. That's it — from now on
-your test runs surface the Test Results panel automatically.
+In the Copilot app, tell the agent:
 
-## Try it
+> Install the canvas extension at
+> `https://github.com/ahaitota/test-results-canvas` and name it `test-results-canvas`
+
+### Step 2:
+
+Restart the app (or run `/clear`) so the extension loads.
+
+### Step 3:
+
 Open any project and ask the agent to run your test suite — the **Test Results**
 panel opens on its own as soon as the report is written, and refreshes on each
-re-run. (There's nothing else to configure.)
+re-run.
 
 ## Files
 - `extension.mjs` — entry point: SSE server, canvas registration, and the
@@ -56,5 +54,3 @@ re-run. (There's nothing else to configure.)
 - `trx.mjs` / `junit.mjs` — TRX and JUnit parsers.
 - `view.mjs` — the panel UI (CSS + client rendering/filtering/animation).
 
-No build step and no `npm install`: the `@github/copilot-sdk` import is resolved
-automatically by the app.
