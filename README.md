@@ -20,7 +20,6 @@ Supported report formats: `.trx` (VSTest/`dotnet test --logger trx`) and JUnit
 ## Install (once, per user — works in every project)
 ### Step 1:
 
-### Option A — install it manually
 Clone the repo straight into your user extensions directory so the app discovers it:
 
 ```bash
@@ -31,12 +30,6 @@ git clone https://github.com/ahaitota/test-results-canvas.git ~/.copilot/extensi
 # Windows (PowerShell)
 git clone https://github.com/ahaitota/test-results-canvas.git "$env:USERPROFILE\.copilot\extensions\test-results-canvas"
 ```
-### Option B — ask Copilot to install it (haven't tested it yet, but Copilot said it can do this)
-
-In the Copilot app, tell the agent:
-
-> Install the canvas extension at
-> `https://github.com/ahaitota/test-results-canvas` and name it `test-results-canvas`
 
 ### Step 2:
 
