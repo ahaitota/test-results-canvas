@@ -87,10 +87,20 @@ export function renderShell(title) {
               color:var(--fgColor-muted); font-weight:600; margin-bottom:3px; }
   .field .v { display:block; font-size:13px; color:var(--fgColor-default); word-break:break-word; }
   .field .v.mono { font-family:var(--fontStack-mono); font-size:12px; }
+  /* Secondary fields are hidden. */
+  .dgrid.secondary { margin-top:14px; padding-top:14px;
+                     border-top:1px solid var(--borderColor-muted); }
+  .dgrid.secondary.hidden { display:none; }
+  .more-toggle { margin-top:12px; font-family:inherit; font-size:12px; font-weight:500;
+                 padding:2px 0; background:none; border:none; cursor:pointer;
+                 color:var(--fgColor-accent); }
+  .more-toggle:hover { text-decoration:underline; }
   .msg { margin-top:12px; padding:8px 10px; background:var(--bgColor-default); border-radius:6px;
          border:1px solid var(--borderColor-default);
          font-family:var(--fontStack-mono); font-size:12px;
          color:var(--fgColor-danger); white-space:pre-wrap; overflow-x:auto; }
+  /* When the trace leads (failing tests) drop the top margin and space it from the grid below. */
+  .details > .msg:first-child { margin-top:0; margin-bottom:16px; }
   .empty { color:var(--fgColor-muted); font-style:italic; }
   .controls { display:flex; align-items:center; gap:12px; justify-content:flex-end; }
   .head { margin-top:10px; }
@@ -115,12 +125,17 @@ export function renderShell(title) {
   html[data-theme="light"] #theme-toggle .knob { left:22px; }
   #file-select {
     font-family:var(--fontStack-sans); font-size:13px; font-weight:600;
-    padding:6px 10px; border-radius:6px; cursor:pointer; max-width:190px;
+    padding:6px 10px; border-radius:6px; cursor:pointer;
+    max-width:min(42vw, 460px); min-width:0;
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
     color:var(--fgColor-default); background:var(--bgColor-muted);
     border:1px solid var(--borderColor-default);
   }
   #file-select:hover { border-color:var(--fgColor-muted); }
+  /* The file picker fills the row, the theme toggle stays pinned to the right. */
+  @media (max-width:520px){
+    #file-select { flex:1 1 auto; max-width:none; }
+  }
   /* Toolbar: search, group, sort, jump-to-failure */
   .toolbar { display:flex; flex-direction:column; gap:8px; margin:12px 0 6px; }
   .toolbar.hidden { display:none; }
@@ -313,25 +328,41 @@ function renderRow(t, M){
   const add = (k, v, opts) => {
     if(v==null || v==="") return;
     fields.push({ k, v:String(v), full:!!(opts&&opts.full), mono:!!(opts&&opts.mono),
-                  color:(opts&&opts.color)||"" });
+                  color:(opts&&opts.color)||"", secondary:!!(opts&&opts.secondary) });
   };
+  // Primary fields: always shown when a row is expanded.
   add("Class", t.className, { full:true, mono:true });
-  add("Method", t.method || t.name, { mono:true });
-  add("Framework", t.framework);
   add("Status", statusWord, { color:m.color });
   add("Duration", t.durationMs!=null ? fmtDur(t.durationMs) : null);
   add("Start time", fmtTime(t.startTime));
-  add("End time", fmtTime(t.endTime));
-  add("Computer", t.computerName);
-  add("Adapter", t.adapter, { full:true, mono:true });
+  // Secondary fields: tucked behind "Show more".
+  add("Method", t.method || t.name, { mono:true, secondary:true });
+  add("Framework", t.framework, { secondary:true });
+  add("End time", fmtTime(t.endTime), { secondary:true });
+  add("Computer", t.computerName, { secondary:true });
+  add("Adapter", t.adapter, { full:true, mono:true, secondary:true });
 
-  const fieldHtml = fields.map(f=>
+  const renderFields = (list) => list.map(f=>
     '<div class="field'+(f.full?' full':'')+'">'+
       '<span class="k">'+esc(f.k)+'</span>'+
       '<span class="v'+(f.mono?' mono':'')+'"'+(f.color?' style="color:'+f.color+';"':'')+'>'+esc(f.v)+'</span>'+
     '</div>').join("");
+  const primaryFields = fields.filter(f=>!f.secondary);
+  const secondaryFields = fields.filter(f=>f.secondary);
+
+  const primaryGrid = '<div class="dgrid">'+renderFields(primaryFields)+'</div>';
+  const moreBlock = secondaryFields.length
+    ? '<button class="more-toggle" type="button" aria-expanded="false">Show more \u25BE</button>'+
+      '<div class="dgrid secondary hidden">'+renderFields(secondaryFields)+'</div>'
+    : '';
   const msgRow = t.message ? '<div class="msg">'+esc(t.message)+'</div>' : "";
-  const details = '<div class="details hidden"><div class="dgrid">'+fieldHtml+'</div>'+msgRow+'</div>';
+
+  // Failing tests lead with the trace so it's the first thing you read; other
+  // statuses keep the field grid first (they rarely carry a message).
+  const detailsInner = t.status==="fail"
+    ? msgRow + primaryGrid + moreBlock
+    : primaryGrid + moreBlock + msgRow;
+  const details = '<div class="details hidden">'+detailsInner+'</div>';
 
   return '<div class="row" data-status="'+t.status+'" style="background:'+m.bg+';">'+
            '<div class="row-head">'+
@@ -450,12 +481,17 @@ function render(state){
   const failed = results.filter(t=>t.status==="fail").length;
   const skipped = results.filter(t=>t.status==="skip").length;
   const total = results.reduce((s,t)=>s+(t.durationMs||0),0);
+  const executed = passed + failed + skipped;
+  const passRate = executed ? Math.round((passed/executed)*100) : null;
 
-  banner.className = "banner";
-  banner.style.color = failed>0 ? tok("--fgColor-danger") : tok("--fgColor-success");
-  banner.textContent = failed>0
+  const bannerMsg = failed>0
     ? failed+" of "+results.length+" test"+(results.length===1?"":"s")+" failing"
     : "All "+results.length+" test"+(results.length===1?"":"s")+" passing";
+  banner.className = "banner";
+  banner.style.color = failed>0 ? tok("--fgColor-danger") : tok("--fgColor-success");
+  banner.innerHTML = esc(bannerMsg) + (passRate!=null
+    ? ' <span style="color:'+tok("--fgColor-muted")+';font-weight:400;">· '+passRate+'% pass rate</span>'
+    : '');
 
   summary.className = "summary";
   summary.innerHTML =
@@ -591,6 +627,16 @@ document.getElementById("list").addEventListener("click", (e) => {
       if(tg) tg.setAttribute("aria-expanded", collapsed ? "false" : "true");
       const key = gh.getAttribute("data-group");
       if(key){ if(collapsed) collapsedGroups.add(key); else collapsedGroups.delete(key); }
+    }
+    return;
+  }
+  const moreBtn = e.target.closest(".more-toggle");
+  if(moreBtn){
+    const grid = moreBtn.nextElementSibling;
+    if(grid && grid.classList.contains("secondary")){
+      const hidden = grid.classList.toggle("hidden");
+      moreBtn.setAttribute("aria-expanded", hidden ? "false" : "true");
+      moreBtn.textContent = hidden ? "Show more \u25BE" : "Show less \u25B4";
     }
     return;
   }
