@@ -234,6 +234,21 @@ function fmtTime(iso){
   const mt = /(\\d{4}-\\d{2}-\\d{2})[T ](\\d{2}:\\d{2}:\\d{2})/.exec(String(iso));
   return mt ? mt[1]+" "+mt[2] : String(iso);
 }
+// Make duration human-readable: keep "ms" for sub-second, switch to
+// seconds (1 decimal) up to a minute, then "Nm Ss" beyond a minute.
+function fmtDur(ms){
+  if(ms==null || !Number.isFinite(Number(ms))) return "";
+  const n = Number(ms);
+  if(n < 1000) return Math.round(n)+" ms";
+  if(n < 60000){
+    const s = n/1000;
+    return (s < 10 ? s.toFixed(2) : s.toFixed(1)).replace(/\\.?0+$/,"")+" s";
+  }
+  const totalSec = Math.round(n/1000);
+  const m = Math.floor(totalSec/60);
+  const s = totalSec % 60;
+  return s ? m+"m "+s+"s" : m+"m";
+}
 
 // True if the free-text query matches any searchable field of a test.
 function matchesSearch(t, q){
@@ -289,7 +304,7 @@ function miniCounts(c){
 // Render one test row (header + collapsible details). M = current theme meta.
 function renderRow(t, M){
   const m = M[t.status] || M.skip;
-  const dur = t.durationMs!=null ? '<span class="dur">'+t.durationMs+' ms</span>' : "";
+  const dur = t.durationMs!=null ? '<span class="dur">'+fmtDur(t.durationMs)+'</span>' : "";
   const arrow = '<button class="toggle" type="button" aria-expanded="false" aria-label="Toggle details">&#9654;</button>';
   const statusWord = STATUS_WORD[t.status] || t.status;
 
@@ -304,7 +319,7 @@ function renderRow(t, M){
   add("Method", t.method || t.name, { mono:true });
   add("Framework", t.framework);
   add("Status", statusWord, { color:m.color });
-  add("Duration", t.durationMs!=null ? t.durationMs+" ms" : null);
+  add("Duration", t.durationMs!=null ? fmtDur(t.durationMs) : null);
   add("Start time", fmtTime(t.startTime));
   add("End time", fmtTime(t.endTime));
   add("Computer", t.computerName);
@@ -448,7 +463,7 @@ function render(state){
     filterChip("fail", failed+' failed')+
     filterChip("skip", skipped+' skipped')+
     '<span class="brk"></span>'+
-    '<span class="pill" style="background:'+tok("--bgColor-accent-muted")+';color:'+tok("--fgColor-accent")+';">'+total+' ms total</span>';
+    '<span class="pill" style="background:'+tok("--bgColor-accent-muted")+';color:'+tok("--fgColor-accent")+';">'+fmtDur(total)+' total</span>';
   applyFilterChipStyles();
 
   renderList();
