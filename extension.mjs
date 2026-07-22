@@ -13,6 +13,7 @@ import { watch, watchFile, readFileSync, writeFileSync, existsSync, readdirSync,
 import { joinSession, createCanvas } from "@github/copilot-sdk/extension";
 import { serializeTrx, parseTrx } from "./src/parsers/trx.mjs";
 import { parseJUnit } from "./src/parsers/junit.mjs";
+import { labelForPath } from "./src/labels.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const VIEW_PATH = join(__dirname, "src", "view.mjs");
@@ -227,19 +228,8 @@ function listLocalNames() {
     }
 }
 
-// Build a short, unique display label for a discovered file. Prefer the bare
-// filename; if that collides with a different path, prefix the parent folder.
-function labelForPath(abs) {
-    for (const [label, p] of discovered) if (p === abs) return label;
-    const name = basename(abs);
-    const taken = (l) => discovered.has(l) || listLocalNames().includes(l);
-    if (!taken(name)) return name;
-    const withParent = `${basename(dirname(abs))}/${name}`;
-    if (!taken(withParent)) return withParent;
-    let i = 2;
-    while (taken(`${withParent} (${i})`)) i++;
-    return `${withParent} (${i})`;
-}
+// labelForPath (unique display labels for discovered files) lives in
+// ./src/labels.mjs so it can be unit-tested in isolation.
 
 // Find the most recently modified results file directly inside a directory.
 function newestResultsFileIn(dir) {
@@ -288,7 +278,7 @@ function loadResultsForInstance(instanceId, input = {}) {
     }
     if (!abs) return null;
 
-    const label = labelForPath(abs);
+    const label = labelForPath(abs, discovered, listLocalNames());
     discovered.set(label, abs);
     instanceFile.set(instanceId, label);
     instanceResults.set(instanceId, loadFile(label));
@@ -329,7 +319,7 @@ function watchDirForInstance(instanceId, dir) {
 function refreshInstanceFromDir(instanceId, dir) {
     const abs = newestResultsFileIn(dir);
     if (!abs) return;
-    const label = labelForPath(abs);
+    const label = labelForPath(abs, discovered, listLocalNames());
     discovered.set(label, abs);
     instanceFile.set(instanceId, label);
     instanceResults.set(instanceId, loadFile(label));
@@ -470,11 +460,16 @@ async function startServer(instanceId, title) {
                 res.end(JSON.stringify({ ok: false, error: "unknown file" }));
                 return;
             }
-            instanceFile.set(instanceId, basename(name));
+            // Store the full validated label (not its basename): discovered
+            // project files can carry a parent-dir prefix (e.g. projB/results.trx)
+            // to stay unique, and only the full label resolves back to the right
+            // file. Collapsing to basename would resolve to a different project's
+            // same-named report. Matches loadResultsForInstance/refreshInstanceFromDir.
+            instanceFile.set(instanceId, name);
             instanceResults.set(instanceId, loadFile(name));
             broadcast(instanceId);
             res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ ok: true, file: basename(name) }));
+            res.end(JSON.stringify({ ok: true, file: name }));
             return;
         }
 
