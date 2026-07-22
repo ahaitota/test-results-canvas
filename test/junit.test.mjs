@@ -178,3 +178,39 @@ test("parseJUnit captures a testcase that sits outside any suite", () => {
   assert.equal(rows.loose.suite, undefined);
   assert.equal(rows.inside.suite, "S");
 });
+
+// --- XML-aware scanning: whitespace, comments, CDATA (issue #2 review) -----
+
+test("parseJUnit tolerates whitespace before '>' in a closing testsuite tag", () => {
+  // Inner suite closed with "</testsuite >"; the outer case must be Outer.
+  const xml =
+    `<testsuite name="Outer"><testsuite name="Inner">` +
+    `<testcase name="inner"/></testsuite ><testcase name="outer"/></testsuite>`;
+  const rows = byName(parseJUnit(xml));
+  assert.equal(rows.inner.suite, "Inner");
+  assert.equal(rows.outer.suite, "Outer");
+});
+
+test("parseJUnit ignores suite-like text inside XML comments", () => {
+  // A commented-out <testsuite> must not push a phantom suite.
+  const xml =
+    `<testsuite name="Real"><!-- <testsuite name="Fake"> -->` +
+    `<testcase name="a"/></testsuite><testcase name="b"/>`;
+  const rows = byName(parseJUnit(xml));
+  assert.equal(rows.a.suite, "Real");
+  assert.equal(rows.b.suite, undefined);
+});
+
+test("parseJUnit ignores suite/case-like text inside CDATA", () => {
+  // "</testcase>" / "<testsuite>" inside CDATA is literal text, not markup.
+  const xml =
+    `<testsuite name="Real">` +
+    `<testcase name="a"><failure><![CDATA[boom </testcase> <testsuite name="Fake">]]></failure></testcase>` +
+    `<testcase name="b"/></testsuite>`;
+  const rows = byName(parseJUnit(xml));
+  assert.equal(Object.keys(rows).length, 2);
+  assert.equal(rows.a.status, "fail");
+  assert.equal(rows.a.suite, "Real");
+  assert.equal(rows.b.status, "pass");
+  assert.equal(rows.b.suite, "Real");
+});

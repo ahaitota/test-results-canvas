@@ -41,42 +41,115 @@ function timeToMs(t) {
 
 // Parse a JUnit XML string into an array of our result objects.
 //
-// <testsuite> elements can be *nested* (JUnit 5 Platform Suite Engine,
-// composed suites, aggregated reports). A single non-greedy regex cannot
-// delimit balanced/nested blocks, so we scan the document with a small tag
-// stack: push on each <testsuite ...>, pop on each </testsuite>, and attribute
-// every <testcase> to the suite currently on top of the stack (its nearest
-// enclosing suite). Cases that sit outside any suite get an empty context,
-// which also covers reports that omit <testsuite> entirely.
+// <testsuite> elements can be *nested*, so a single regex can't delimit them.
+// We scan the document as XML with a small tokenizer: keep a stack of open
+// <testsuite>s and attribute each <testcase> to the suite on top (its nearest
+// enclosing suite); cases outside any suite get an empty context (also covers
+// reports with no <testsuite>). Scanning as XML also lets us skip comments and
+// CDATA (their contents are data, not elements) and accept whitespace in end
+// tags, e.g. "</testsuite >".
 export function parseJUnit(xml) {
     const text = String(xml || "");
     const results = [];
-
-    const tokenRe =
-        /<testsuite\b([^>]*?)(\/?)>|<\/testsuite>|<testcase\b([^>]*?)(\/>|>([\s\S]*?)<\/testcase>)/g;
     const suiteStack = [];
-    let m;
-    while ((m = tokenRe.exec(text)) !== null) {
-        if (m[1] !== undefined) {
-            // <testsuite ...> opening tag. Skip self-closed suites (no cases).
-            if (m[2] !== "/") {
+    let i = 0;
+
+    while (i < text.length) {
+        const lt = text.indexOf("<", i);
+        if (lt < 0) break;
+
+        // Comments and CDATA are opaque: never scan their contents as markup.
+        if (text.startsWith("<!--", lt)) { i = skipPast(text, lt + 4, "-->"); continue; }
+        if (text.startsWith("<![CDATA[", lt)) { i = skipPast(text, lt + 9, "]]>"); continue; }
+
+        // </testsuite ...> closes the nearest open suite.
+        const closed = matchCloseTag(text, lt, "testsuite");
+        if (closed >= 0) { suiteStack.pop(); i = closed; continue; }
+
+        // <testsuite ...> opens a suite (self-closed ones hold no cases).
+        const suite = matchOpenTag(text, lt, "testsuite");
+        if (suite) {
+            if (!suite.selfClosing) {
                 suiteStack.push({
-                    suiteName: attr(m[1], "name"),
-                    suiteTime: attr(m[1], "timestamp"),
-                    suiteHost: attr(m[1], "hostname"),
+                    suiteName: attr(suite.attrs, "name"),
+                    suiteTime: attr(suite.attrs, "timestamp"),
+                    suiteHost: attr(suite.attrs, "hostname"),
                 });
             }
-        } else if (m[3] !== undefined) {
-            // A complete <testcase> element -> nearest enclosing suite.
-            const ctx = suiteStack.length ? suiteStack[suiteStack.length - 1] : {};
-            emitCase(m[3], m[5] || "", ctx, results);
-        } else {
-            // </testsuite> -> leave the current suite.
-            suiteStack.pop();
+            i = suite.end;
+            continue;
         }
+
+        // <testcase ...> ... </testcase> (or self-closed) -> nearest suite.
+        const tc = matchOpenTag(text, lt, "testcase");
+        if (tc) {
+            const ctx = suiteStack.length ? suiteStack[suiteStack.length - 1] : {};
+            if (tc.selfClosing) {
+                emitCase(tc.attrs, "", ctx, results);
+                i = tc.end;
+            } else {
+                // Real </testcase>, skipping any inside comments/CDATA.
+                const close = findCloseTag(text, tc.end, "testcase");
+                const bodyEnd = close.start >= 0 ? close.start : text.length;
+                emitCase(tc.attrs, text.slice(tc.end, bodyEnd), ctx, results);
+                i = close.after >= 0 ? close.after : text.length;
+            }
+            continue;
+        }
+
+        // Any other tag (<testsuites>, <properties>, ...): step over this "<".
+        i = lt + 1;
     }
 
     return results;
+}
+
+// Index just past `marker` (from `from`), or end of string — jumps over
+// comment/CDATA runs.
+function skipPast(text, from, marker) {
+    const idx = text.indexOf(marker, from);
+    return idx < 0 ? text.length : idx + marker.length;
+}
+
+// Match "<name ...>" / self-closing "<name .../>" at i -> { attrs, end,
+// selfClosing } or null. The char after `name` must be space, "/" or ">" so
+// "testsuites" isn't mistaken for "testsuite".
+function matchOpenTag(text, i, name) {
+    if (text[i] !== "<" || !text.startsWith(name, i + 1)) return null;
+    const after = text[i + 1 + name.length];
+    if (after !== ">" && after !== "/" && !/\s/.test(after ?? "")) return null;
+    const gt = text.indexOf(">", i);
+    if (gt < 0) return null;
+    let raw = text.slice(i + 1 + name.length, gt);
+    const selfClosing = raw.trimEnd().endsWith("/");
+    if (selfClosing) raw = raw.trimEnd().slice(0, -1);
+    return { attrs: raw, end: gt + 1, selfClosing };
+}
+
+// Match "</name>" at i, tolerating whitespace before ">" -> index past ">", or -1.
+function matchCloseTag(text, i, name) {
+    if (!text.startsWith("</", i) || !text.startsWith(name, i + 2)) return -1;
+    let j = i + 2 + name.length;
+    while (j < text.length && /\s/.test(text[j])) j++;
+    if (text[j] !== ">") return -1;
+    return j + 1;
+}
+
+// Find the matching "</name>" from `from`, skipping comments/CDATA so a literal
+// "</name>" inside them doesn't end the element early. -> { start, after }
+// (indices of "</name" and past ">"; both -1 if not found).
+function findCloseTag(text, from, name) {
+    let i = from;
+    while (i < text.length) {
+        const lt = text.indexOf("<", i);
+        if (lt < 0) break;
+        if (text.startsWith("<!--", lt)) { i = skipPast(text, lt + 4, "-->"); continue; }
+        if (text.startsWith("<![CDATA[", lt)) { i = skipPast(text, lt + 9, "]]>"); continue; }
+        const after = matchCloseTag(text, lt, name);
+        if (after >= 0) return { start: lt, after };
+        i = lt + 1;
+    }
+    return { start: -1, after: -1 };
 }
 
 // Turn one <testcase> element (its attribute string + inner body) into a
