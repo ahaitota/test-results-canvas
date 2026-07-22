@@ -41,9 +41,19 @@ Open any project and ask the agent to run your test suite — the **Test Results
 panel opens on its own as soon as the report is written, and refreshes on each
 re-run.
 
-## Files
-- `extension.mjs` — entry point: SSE server, canvas registration, and the
-  post-tool-use hook that auto-surfaces results.
-- `trx.mjs` / `junit.mjs` — TRX and JUnit parsers.
-- `view.mjs` — the panel UI (CSS + client rendering/filtering/animation).
+## Project structure
+
+```
+extension.mjs            entry point (must stay at the repo root — the app
+                         discovers the extension by this file)
+src/
+  view.mjs               panel UI (CSS + client rendering/filtering/animation)
+  parsers/
+    trx.mjs              .NET TRX parser
+    junit.mjs            JUnit XML parser
+test/
+  trx.test.mjs           unit tests for the TRX parser
+  junit.test.mjs         unit tests for the JUnit parser
+.github/workflows/ci.yml CI: syntax-check + `node --test` on Node 20 & 22
+```
 
