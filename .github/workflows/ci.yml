@@ -1,0 +1,33 @@
+name: CI
+
+# Run on pushes to main and on every pull request.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Test (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['20.x', '22.x']
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      # No dependency install step: the Copilot SDK is provided by the app at
+      # runtime, and the tests rely only on Node's built-in test runner -- so
+      # there is no package-lock.json and nothing to `npm ci`.
+      - name: Syntax-check all ES modules
+        run: find . -name '*.mjs' -not -path './node_modules/*' -print0 | xargs -0 -n1 node --check
+
+      - name: Run unit tests
+        run: npm test
