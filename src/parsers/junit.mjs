@@ -40,74 +40,81 @@ function timeToMs(t) {
 }
 
 // Parse a JUnit XML string into an array of our result objects.
+//
+// <testsuite> elements can be *nested* (JUnit 5 Platform Suite Engine,
+// composed suites, aggregated reports). A single non-greedy regex cannot
+// delimit balanced/nested blocks, so we scan the document with a small tag
+// stack: push on each <testsuite ...>, pop on each </testsuite>, and attribute
+// every <testcase> to the suite currently on top of the stack (its nearest
+// enclosing suite). Cases that sit outside any suite get an empty context,
+// which also covers reports that omit <testsuite> entirely.
 export function parseJUnit(xml) {
     const text = String(xml || "");
     const results = [];
 
-    // Walk each <testsuite> so we can attach suite-level context (name,
-    // timestamp, hostname) to the cases inside it.
-    const suiteRe = /<testsuite\b([^>]*?)>([\s\S]*?)<\/testsuite>/g;
-    let s;
-    let matchedAnySuite = false;
-    while ((s = suiteRe.exec(text)) !== null) {
-        matchedAnySuite = true;
-        const suiteAttrs = s[1] || "";
-        const suiteBody = s[2] || "";
-        collectCases(suiteBody, {
-            suiteName: attr(suiteAttrs, "name"),
-            suiteTime: attr(suiteAttrs, "timestamp"),
-            suiteHost: attr(suiteAttrs, "hostname"),
-        }, results);
+    const tokenRe =
+        /<testsuite\b([^>]*?)(\/?)>|<\/testsuite>|<testcase\b([^>]*?)(\/>|>([\s\S]*?)<\/testcase>)/g;
+    const suiteStack = [];
+    let m;
+    while ((m = tokenRe.exec(text)) !== null) {
+        if (m[1] !== undefined) {
+            // <testsuite ...> opening tag. Skip self-closed suites (no cases).
+            if (m[2] !== "/") {
+                suiteStack.push({
+                    suiteName: attr(m[1], "name"),
+                    suiteTime: attr(m[1], "timestamp"),
+                    suiteHost: attr(m[1], "hostname"),
+                });
+            }
+        } else if (m[3] !== undefined) {
+            // A complete <testcase> element -> nearest enclosing suite.
+            const ctx = suiteStack.length ? suiteStack[suiteStack.length - 1] : {};
+            emitCase(m[3], m[5] || "", ctx, results);
+        } else {
+            // </testsuite> -> leave the current suite.
+            suiteStack.pop();
+        }
     }
-
-    // Some tools emit bare <testcase> elements with no <testsuite> wrapper.
-    if (!matchedAnySuite) collectCases(text, {}, results);
 
     return results;
 }
 
-// Extract every <testcase> from a chunk of XML into `results`.
-function collectCases(body, ctx, results) {
-    const caseRe = /<testcase\b([^>]*?)(\/>|>([\s\S]*?)<\/testcase>)/g;
-    let m;
-    while ((m = caseRe.exec(body)) !== null) {
-        const attrs = m[1] || "";
-        const inner = m[3] || "";
+// Turn one <testcase> element (its attribute string + inner body) into a
+// result record tagged with the given suite context, and append it.
+function emitCase(attrs, inner, ctx, results) {
+    const name = attr(attrs, "name");
+    if (!name) return;
+    const className = attr(attrs, "classname");
+    const durationMs = timeToMs(attr(attrs, "time"));
 
-        const name = attr(attrs, "name");
-        if (!name) continue;
-        const className = attr(attrs, "classname");
-        const durationMs = timeToMs(attr(attrs, "time"));
+    let status = "pass";
+    let message;
 
-        let status = "pass";
-        let message;
-
-        // A <failure> or <error> child marks the test as failing.
-        const fail = /<(failure|error)\b([^>]*?)(\/>|>([\s\S]*?)<\/\1>)/.exec(inner);
-        const skip = /<skipped\b([^>]*?)(\/>|>([\s\S]*?)<\/skipped>)/.exec(inner);
-        if (fail) {
-            status = "fail";
-            const fType = attr(fail[2], "type");
-            const fMsg = attr(fail[2], "message");
-            const head = [fType, fMsg].filter(Boolean).join(": ");
-            const stack = xmlUnescape(fail[4] || "").trim();
-            message = [head, stack].filter(Boolean).join("\n") || undefined;
-        } else if (skip) {
-            status = "skip";
-            const sMsg = attr(skip[1], "message");
-            if (sMsg) message = sMsg;
-        }
-
-        results.push({
-            name,
-            status,
-            durationMs,
-            message,
-            className: className || undefined,
-            method: name,
-            suite: ctx.suiteName,
-            startTime: ctx.suiteTime,
-            computerName: ctx.suiteHost,
-        });
+    // A <failure> or <error> child marks the test as failing.
+    const fail = /<(failure|error)\b([^>]*?)(\/>|>([\s\S]*?)<\/\1>)/.exec(inner);
+    const skip = /<skipped\b([^>]*?)(\/>|>([\s\S]*?)<\/skipped>)/.exec(inner);
+    if (fail) {
+        status = "fail";
+        const fType = attr(fail[2], "type");
+        const fMsg = attr(fail[2], "message");
+        const head = [fType, fMsg].filter(Boolean).join(": ");
+        const stack = xmlUnescape(fail[4] || "").trim();
+        message = [head, stack].filter(Boolean).join("\n") || undefined;
+    } else if (skip) {
+        status = "skip";
+        const sMsg = attr(skip[1], "message");
+        if (sMsg) message = sMsg;
     }
+
+    results.push({
+        name,
+        status,
+        durationMs,
+        message,
+        className: className || undefined,
+        method: name,
+        suite: ctx.suiteName,
+        startTime: ctx.suiteTime,
+        computerName: ctx.suiteHost,
+    });
 }
