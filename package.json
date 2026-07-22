@@ -1,0 +1,15 @@
+{
+  "name": "test-results-canvas",
+  "version": "0.1.0",
+  "private": true,
+  "description": "GitHub Copilot canvas extension that renders .NET TRX and JUnit XML test runs as a live UI panel.",
+  "type": "module",
+  "main": "extension.mjs",
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}
