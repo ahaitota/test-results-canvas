@@ -11,11 +11,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, basename, resolve as resolvePath } from "node:path";
 import { watch, watchFile, readFileSync, writeFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { joinSession, createCanvas } from "@github/copilot-sdk/extension";
-import { serializeTrx, parseTrx } from "./trx.mjs";
-import { parseJUnit } from "./junit.mjs";
+import { serializeTrx, parseTrx } from "./src/parsers/trx.mjs";
+import { parseJUnit } from "./src/parsers/junit.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const VIEW_PATH = join(__dirname, "view.mjs");
+const VIEW_PATH = join(__dirname, "src", "view.mjs");
 const DEFAULT_FILE = "results.trx";
 
 // The canvas id declared below (used when programmatically opening the panel).

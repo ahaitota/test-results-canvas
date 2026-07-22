@@ -2,7 +2,7 @@
 // Run with: node --test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { serializeTrx, parseTrx } from "../trx.mjs";
+import { serializeTrx, parseTrx } from "../src/parsers/trx.mjs";
 
 const byName = (rows) => Object.fromEntries(rows.map((r) => [r.name, r]));
 

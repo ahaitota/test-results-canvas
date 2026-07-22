@@ -2,7 +2,7 @@
 // Run with: node --test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseJUnit } from "../junit.mjs";
+import { parseJUnit } from "../src/parsers/junit.mjs";
 
 const byName = (rows) => Object.fromEntries(rows.map((r) => [r.name, r]));
 
