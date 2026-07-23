@@ -530,13 +530,21 @@ let failCursor = -1;              // cursor into visible failing rows (jump-to-f
 // theme if the platform ever provides one (data-host-theme). Explicit
 // light/dark override auto. Only the preference is persisted.
 const THEME_KEY = "test-results-theme-pref";
+const LEGACY_THEME_KEY = "test-results-theme";
 const THEME_ORDER = ["auto", "light", "dark"];
 const THEME_ICON = { auto: "🌗", light: "☀️", dark: "🌙" };
 const THEME_LABEL = { auto: "Auto", light: "Light", dark: "Dark" };
 const darkMedia = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
 function loadThemePref(){
   const v = localStorage.getItem(THEME_KEY);
-  return (v === "auto" || v === "light" || v === "dark") ? v : "auto";
+  if (v === "auto" || v === "light" || v === "dark") return v;
+  // Migrate an explicit Light/Dark choice from the before tri-state version.
+  const legacy = localStorage.getItem(LEGACY_THEME_KEY);
+  if (legacy === "light" || legacy === "dark"){
+    localStorage.setItem(THEME_KEY, legacy);
+    return legacy;
+  }
+  return "auto";
 }
 function hostTheme(){
   // Future-proofing: prefer an app-supplied theme when present.
