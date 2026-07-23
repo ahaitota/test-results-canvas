@@ -84,3 +84,133 @@ test("parseJUnit leaves durationMs undefined when time is absent", () => {
 test("parseJUnit returns an empty array for empty input", () => {
   assert.deepEqual(parseJUnit(""), []);
 });
+
+// --- Nested <testsuite> handling (issue #2) ------------------------------
+
+// The exact reproduction from the issue: an inner suite followed by a sibling
+// case in the outer suite. The old single-regex parser dropped `outerTest`
+// and mislabelled `innerTest` as belonging to "Outer".
+const NESTED = `<testsuites>
+  <testsuite name="Outer">
+    <testsuite name="Inner">
+      <testcase name="innerTest" classname="Inner" time="0.01"/>
+    </testsuite>
+    <testcase name="outerTest" classname="Outer" time="0.02"/>
+  </testsuite>
+</testsuites>`;
+
+test("parseJUnit keeps every case in nested suites and uses the nearest suite name", () => {
+  const rows = byName(parseJUnit(NESTED));
+  assert.equal(Object.keys(rows).length, 2); // nothing silently dropped
+  assert.equal(rows.innerTest.suite, "Inner");
+  assert.equal(rows.outerTest.suite, "Outer");
+});
+
+test("parseJUnit reports correct status and suite context for nested cases", () => {
+  const xml = `<testsuite name="Outer" timestamp="2024-01-01" hostname="outer-host">
+      <testsuite name="Inner" timestamp="2025-02-02" hostname="inner-host">
+        <testcase name="innerFail" time="0.01">
+          <failure message="nope" type="AssertionError">at inner.js:1</failure>
+        </testcase>
+      </testsuite>
+      <testcase name="outerPass" time="0.02"/>
+    </testsuite>`;
+  const rows = byName(parseJUnit(xml));
+  assert.equal(Object.keys(rows).length, 2);
+  assert.equal(rows.innerFail.status, "fail");
+  assert.equal(rows.innerFail.suite, "Inner");
+  assert.equal(rows.innerFail.startTime, "2025-02-02");
+  assert.equal(rows.innerFail.computerName, "inner-host");
+  assert.equal(rows.outerPass.status, "pass");
+  assert.equal(rows.outerPass.suite, "Outer");
+  assert.equal(rows.outerPass.startTime, "2024-01-01");
+});
+
+test("parseJUnit handles suites nested three levels deep with interleaved cases", () => {
+  const xml = `<testsuite name="L1">
+      <testcase name="a"/>
+      <testsuite name="L2">
+        <testcase name="b"/>
+        <testsuite name="L3">
+          <testcase name="c"/>
+        </testsuite>
+        <testcase name="b2"/>
+      </testsuite>
+      <testcase name="a2"/>
+    </testsuite>`;
+  const rows = byName(parseJUnit(xml));
+  assert.deepEqual(Object.keys(rows).sort(), ["a", "a2", "b", "b2", "c"]);
+  assert.equal(rows.a.suite, "L1");
+  assert.equal(rows.a2.suite, "L1");
+  assert.equal(rows.b.suite, "L2");
+  assert.equal(rows.b2.suite, "L2");
+  assert.equal(rows.c.suite, "L3");
+});
+
+test("parseJUnit still attributes sibling (non-nested) suites correctly", () => {
+  const xml = `<testsuites>
+      <testsuite name="A"><testcase name="a1"/></testsuite>
+      <testsuite name="B"><testcase name="b1"/></testsuite>
+    </testsuites>`;
+  const rows = byName(parseJUnit(xml));
+  assert.equal(Object.keys(rows).length, 2);
+  assert.equal(rows.a1.suite, "A");
+  assert.equal(rows.b1.suite, "B");
+});
+
+test("parseJUnit tolerates self-closed testsuite elements", () => {
+  const xml = `<testsuites>
+      <testsuite name="Empty" tests="0"/>
+      <testsuite name="Real"><testcase name="r1"/></testsuite>
+    </testsuites>`;
+  const rows = byName(parseJUnit(xml));
+  assert.equal(Object.keys(rows).length, 1);
+  assert.equal(rows.r1.suite, "Real");
+});
+
+test("parseJUnit captures a testcase that sits outside any suite", () => {
+  const xml = `<testsuites>
+      <testcase name="loose"/>
+      <testsuite name="S"><testcase name="inside"/></testsuite>
+    </testsuites>`;
+  const rows = byName(parseJUnit(xml));
+  assert.equal(Object.keys(rows).length, 2);
+  assert.equal(rows.loose.suite, undefined);
+  assert.equal(rows.inside.suite, "S");
+});
+
+// --- XML-aware scanning: whitespace, comments, CDATA (issue #2 review) -----
+
+test("parseJUnit tolerates whitespace before '>' in a closing testsuite tag", () => {
+  // Inner suite closed with "</testsuite >"; the outer case must be Outer.
+  const xml =
+    `<testsuite name="Outer"><testsuite name="Inner">` +
+    `<testcase name="inner"/></testsuite ><testcase name="outer"/></testsuite>`;
+  const rows = byName(parseJUnit(xml));
+  assert.equal(rows.inner.suite, "Inner");
+  assert.equal(rows.outer.suite, "Outer");
+});
+
+test("parseJUnit ignores suite-like text inside XML comments", () => {
+  // A commented-out <testsuite> must not push a phantom suite.
+  const xml =
+    `<testsuite name="Real"><!-- <testsuite name="Fake"> -->` +
+    `<testcase name="a"/></testsuite><testcase name="b"/>`;
+  const rows = byName(parseJUnit(xml));
+  assert.equal(rows.a.suite, "Real");
+  assert.equal(rows.b.suite, undefined);
+});
+
+test("parseJUnit ignores suite/case-like text inside CDATA", () => {
+  // "</testcase>" / "<testsuite>" inside CDATA is literal text, not markup.
+  const xml =
+    `<testsuite name="Real">` +
+    `<testcase name="a"><failure><![CDATA[boom </testcase> <testsuite name="Fake">]]></failure></testcase>` +
+    `<testcase name="b"/></testsuite>`;
+  const rows = byName(parseJUnit(xml));
+  assert.equal(Object.keys(rows).length, 2);
+  assert.equal(rows.a.status, "fail");
+  assert.equal(rows.a.suite, "Real");
+  assert.equal(rows.b.status, "pass");
+  assert.equal(rows.b.suite, "Real");
+});
