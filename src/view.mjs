@@ -114,24 +114,20 @@ export function renderShell(title) {
   .controls { display:flex; align-items:center; gap:12px; justify-content:flex-end; }
   .head { margin-top:10px; }
   .head h1 { margin:0; }
-  /* Oval sliding theme switch: knob sits left for dark, right for light. */
+  /* Theme cycle button: shows current preference (Auto / Light / Dark). */
   #theme-toggle {
-    box-sizing:border-box; position:relative; flex-shrink:0;
-    width:48px; height:28px; padding:0; cursor:pointer;
+    box-sizing:border-box; flex-shrink:0;
+    display:inline-flex; align-items:center; gap:6px;
+    height:28px; padding:0 10px; cursor:pointer;
     border-radius:999px; background:var(--bgColor-inset);
     border:1px solid var(--borderColor-default);
+    color:var(--fgColor-default);
+    font-family:var(--fontStack-sans); font-size:12px; font-weight:600;
     transition:background .18s ease, border-color .18s ease;
   }
   #theme-toggle:hover { border-color:var(--fgColor-muted); }
-  #theme-toggle .knob {
-    position:absolute; top:2px; left:2px;
-    width:22px; height:22px; border-radius:50%;
-    background:var(--fgColor-default);
-    display:flex; align-items:center; justify-content:center;
-    font-size:12px; line-height:1;
-    transition:left .18s ease;
-  }
-  html[data-theme="light"] #theme-toggle .knob { left:22px; }
+  #theme-toggle .theme-ico { font-size:13px; line-height:1; }
+  #theme-toggle .theme-label { line-height:1; }
   #file-select {
     font-family:var(--fontStack-sans); font-size:13px; font-weight:600;
     padding:6px 10px; border-radius:6px; cursor:pointer;
@@ -200,7 +196,7 @@ export function renderShell(title) {
 <body>
   <div class="controls">
     <select id="file-select" title="Choose which results file to display"></select>
-    <button id="theme-toggle" type="button" role="switch" aria-label="Toggle light/dark theme"><span class="knob"></span></button>
+    <button id="theme-toggle" type="button" aria-label="Theme: auto"><span class="theme-ico">🌗</span><span class="theme-label">Auto</span></button>
   </div>
   <div class="head">
     <h1><span id="title">${title}</span></h1>
@@ -529,24 +525,56 @@ let sortBy = "status";            // default|name|duration|status — default: o
 let collapsedGroups = new Set();  // group keys the user has collapsed
 let failCursor = -1;              // cursor into visible failing rows (jump-to-failure)
 
-// --- Theme toggle (persists choice; defaults to dark to match the app) ---
-const THEME_KEY = "test-results-theme";
-function applyTheme(t){
-  document.documentElement.setAttribute("data-theme", t);
+// --- Theme preference: auto | light | dark (default auto) ---
+// "auto" follows the app/OS via prefers-color-scheme, and an app-supplied
+// theme if the platform ever provides one (data-host-theme). Explicit
+// light/dark override auto. Only the preference is persisted.
+const THEME_KEY = "test-results-theme-pref";
+const THEME_ORDER = ["auto", "light", "dark"];
+const THEME_ICON = { auto: "🌗", light: "☀️", dark: "🌙" };
+const THEME_LABEL = { auto: "Auto", light: "Light", dark: "Dark" };
+const darkMedia = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+function loadThemePref(){
+  const v = localStorage.getItem(THEME_KEY);
+  return (v === "auto" || v === "light" || v === "dark") ? v : "auto";
+}
+function hostTheme(){
+  // Future-proofing: prefer an app-supplied theme when present.
+  const v = document.documentElement.getAttribute("data-host-theme");
+  return (v === "light" || v === "dark") ? v : null;
+}
+function resolveTheme(pref){
+  if (pref === "light" || pref === "dark") return pref;
+  return hostTheme() || (darkMedia && darkMedia.matches ? "dark" : "light");
+}
+let themePref = loadThemePref();
+function applyTheme(pref){
+  themePref = pref;
+  const resolved = resolveTheme(pref);
+  document.documentElement.setAttribute("data-theme", resolved);
   const btn = document.getElementById("theme-toggle");
   if (btn){
-    btn.setAttribute("aria-checked", t === "light" ? "true" : "false");
-    const knob = btn.querySelector(".knob");
-    if (knob) knob.textContent = t === "light" ? "☀️" : "🌙";
+    const ico = btn.querySelector(".theme-ico");
+    const lab = btn.querySelector(".theme-label");
+    if (ico) ico.textContent = THEME_ICON[pref];
+    if (lab) lab.textContent = THEME_LABEL[pref];
+    btn.setAttribute("aria-label", "Theme: " + pref + (pref === "auto" ? " (showing " + resolved + ")" : ""));
+    btn.title = "Theme: Auto / Light / Dark — click to cycle";
   }
   render(lastState);
 }
-applyTheme(localStorage.getItem(THEME_KEY) || "dark");
+applyTheme(themePref);
 document.getElementById("theme-toggle").addEventListener("click", () => {
-  const next = document.documentElement.getAttribute("data-theme") === "light" ? "dark" : "light";
+  const next = THEME_ORDER[(THEME_ORDER.indexOf(themePref) + 1) % THEME_ORDER.length];
   localStorage.setItem(THEME_KEY, next);
   applyTheme(next);
 });
+// In Auto, follow live app/OS theme changes.
+if (darkMedia){
+  const onSchemeChange = () => { if (themePref === "auto") applyTheme("auto"); };
+  if (darkMedia.addEventListener) darkMedia.addEventListener("change", onSchemeChange);
+  else if (darkMedia.addListener) darkMedia.addListener(onSchemeChange);
+}
 
 // --- Results file picker (choose which .trx file this panel displays) ---
 const fileSelect = document.getElementById("file-select");
