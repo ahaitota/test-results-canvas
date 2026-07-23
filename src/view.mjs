@@ -325,11 +325,18 @@ function miniCounts(c){
   return bits.join("");
 }
 
+// Stable identity for a test so its expand state survives re-renders and live
+// refreshes (row order/index can shift between runs, so key by content, not index).
+function rowKey(t){ return [t.suite||"", t.className||"", t.name||""].join("\\u001f"); }
+
 // Render one test row (header + collapsible details). M = current theme meta.
 function renderRow(t, M){
   const m = M[t.status] || M.skip;
+  const key = rowKey(t);
+  const open = expandedRows.has(key);           // details currently expanded?
+  const moreOpen = expandedSecondary.has(key);  // "Show more" currently expanded?
   const dur = t.durationMs!=null ? '<span class="dur">'+fmtDur(t.durationMs)+'</span>' : "";
-  const arrow = '<button class="toggle" type="button" aria-expanded="false" aria-label="Toggle details">&#9654;</button>';
+  const arrow = '<button class="toggle" type="button" aria-expanded="'+(open?"true":"false")+'" aria-label="Toggle details">&#9654;</button>';
   const statusWord = STATUS_WORD[t.status] || t.status;
 
   // Collect whichever fields are present in the real result (from the TRX/JUnit).
@@ -361,8 +368,8 @@ function renderRow(t, M){
 
   const primaryGrid = '<div class="dgrid">'+renderFields(primaryFields)+'</div>';
   const moreBlock = secondaryFields.length
-    ? '<button class="more-toggle" type="button" aria-expanded="false">Show more \u25BE</button>'+
-      '<div class="dgrid secondary hidden">'+renderFields(secondaryFields)+'</div>'
+    ? '<button class="more-toggle" type="button" aria-expanded="'+(moreOpen?"true":"false")+'">Show '+(moreOpen?"less \u25B4":"more \u25BE")+'</button>'+
+      '<div class="dgrid secondary'+(moreOpen?"":" hidden")+'">'+renderFields(secondaryFields)+'</div>'
     : '';
   const msgRow = t.message ? '<div class="msg">'+esc(t.message)+'</div>' : "";
 
@@ -371,14 +378,14 @@ function renderRow(t, M){
   const detailsInner = t.status==="fail"
     ? msgRow + primaryGrid + moreBlock
     : primaryGrid + moreBlock + msgRow;
-  const details = '<div class="details hidden">'+detailsInner+'</div>';
+  const details = '<div class="details'+(open?"":" hidden")+'">'+detailsInner+'</div>';
 
   // Inline failure headline (first line only) under the name; full trace stays in details.
   const preview = (t.status==="fail" && t.message)
     ? '<div class="msg-preview" title="Click for full details">'+esc(t.message.split(/\\r?\\n/)[0])+'</div>'
     : "";
 
-  return '<div class="row" data-status="'+t.status+'" style="background:'+m.bg+';">'+
+  return '<div class="row" data-status="'+t.status+'" data-key="'+encodeURIComponent(key)+'" style="background:'+m.bg+';">'+
            '<div class="row-head">'+
              '<span class="label" style="color:'+m.color+';">'+m.label+'</span>'+
              '<span class="name" title="'+esc(t.name)+'">'+esc(t.name)+'</span>'+
@@ -527,6 +534,8 @@ let searchText = "";              // free-text query
 let groupBy = "suite";            // none|status|namespace|class|suite|framework — default: suite
 let sortBy = "status";            // default|name|duration|status — default: outcome (failures first)
 let collapsedGroups = new Set();  // group keys the user has collapsed
+let expandedRows = new Set();     // row keys whose details are expanded
+let expandedSecondary = new Set();// row keys whose "Show more" is expanded
 let failCursor = -1;              // cursor into visible failing rows (jump-to-failure)
 
 // --- Theme toggle (persists choice; defaults to dark to match the app) ---
@@ -570,7 +579,12 @@ if (fileSelect){
 
 // --- Toolbar: search, group, sort, jump-to-failure ---
 const searchEl = document.getElementById("search");
-if(searchEl) searchEl.addEventListener("input", ()=>{ searchText = searchEl.value; renderList(); });
+let searchTimer;  // debounce so large lists don't re-render on every keystroke
+if(searchEl) searchEl.addEventListener("input", ()=>{
+  searchText = searchEl.value;
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(renderList, 150);
+});
 const groupEl = document.getElementById("group-by");
 if(groupEl){ groupEl.value = groupBy;   // reflect the default in the dropdown
   groupEl.addEventListener("change", ()=>{ groupBy = groupEl.value; renderList(); }); }
@@ -653,6 +667,9 @@ document.getElementById("list").addEventListener("click", (e) => {
       const hidden = grid.classList.toggle("hidden");
       moreBtn.setAttribute("aria-expanded", hidden ? "false" : "true");
       moreBtn.textContent = hidden ? "Show more \u25BE" : "Show less \u25B4";
+      const row = moreBtn.closest(".row");
+      const k = row && decodeURIComponent(row.getAttribute("data-key")||"");
+      if(k){ if(hidden) expandedSecondary.delete(k); else expandedSecondary.add(k); }
     }
     return;
   }
@@ -664,6 +681,8 @@ document.getElementById("list").addEventListener("click", (e) => {
   const open = details.classList.toggle("hidden") === false;
   const btn = row.querySelector(".toggle");
   if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
+  const k = decodeURIComponent(row.getAttribute("data-key")||"");
+  if(k){ if(open) expandedRows.add(k); else expandedRows.delete(k); }
 });
 </script>
 </body>
