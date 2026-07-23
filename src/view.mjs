@@ -101,6 +101,15 @@ export function renderShell(title) {
          color:var(--fgColor-danger); white-space:pre-wrap; overflow-x:auto; }
   /* When the trace leads (failing tests) drop the top margin and space it from the grid below. */
   .details > .msg:first-child { margin-top:0; margin-bottom:16px; }
+  /* Failure headline shown inline under the name, wrapped and clamped to 2 lines. */
+  .msg-preview { margin-top:8px; padding:6px 10px; border-radius:6px;
+                 background:var(--bgColor-default); border:1px solid var(--borderColor-default);
+                 font-family:var(--fontStack-mono); font-size:12px; color:var(--fgColor-danger);
+                 white-space:normal; word-break:break-word; cursor:pointer;
+                 display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .msg-preview:hover { border-color:var(--fgColor-muted); }
+  /* Hide the preview once expanded — the full trace shows in details. */
+  .row:has(.details:not(.hidden)) .msg-preview { display:none; }
   .empty { color:var(--fgColor-muted); font-style:italic; }
   .controls { display:flex; align-items:center; gap:12px; justify-content:flex-end; }
   .head { margin-top:10px; }
@@ -221,7 +230,7 @@ export function renderShell(title) {
             <option value="default">Default</option>
             <option value="name">Name</option>
             <option value="duration">Duration</option>
-            <option value="status">Status</option>
+            <option value="status">Outcome</option>
           </select>
         </label>
       </div>
@@ -310,9 +319,9 @@ function sortView(view){
 // Compact per-group pass/fail/skip badges shown in a group header.
 function miniCounts(c){
   const bits = [];
-  if(c.pass) bits.push('<span class="mini" style="color:'+tok("--fgColor-success")+';background:'+tok("--bgColor-success-muted")+';">'+c.pass+' P</span>');
-  if(c.fail) bits.push('<span class="mini" style="color:'+tok("--fgColor-danger")+';background:'+tok("--bgColor-danger-muted")+';">'+c.fail+' F</span>');
-  if(c.skip) bits.push('<span class="mini" style="color:'+tok("--fgColor-muted")+';background:'+tok("--bgColor-muted")+';">'+c.skip+' S</span>');
+  if(c.pass) bits.push('<span class="mini" style="color:'+tok("--fgColor-success")+';background:'+tok("--bgColor-success-muted")+';">'+c.pass+' passed</span>');
+  if(c.fail) bits.push('<span class="mini" style="color:'+tok("--fgColor-danger")+';background:'+tok("--bgColor-danger-muted")+';">'+c.fail+' failed</span>');
+  if(c.skip) bits.push('<span class="mini" style="color:'+tok("--fgColor-muted")+';background:'+tok("--bgColor-muted")+';">'+c.skip+' skipped</span>');
   return bits.join("");
 }
 
@@ -364,13 +373,18 @@ function renderRow(t, M){
     : primaryGrid + moreBlock + msgRow;
   const details = '<div class="details hidden">'+detailsInner+'</div>';
 
+  // Inline failure headline (first line only) under the name; full trace stays in details.
+  const preview = (t.status==="fail" && t.message)
+    ? '<div class="msg-preview" title="Click for full details">'+esc(t.message.split(/\\r?\\n/)[0])+'</div>'
+    : "";
+
   return '<div class="row" data-status="'+t.status+'" style="background:'+m.bg+';">'+
            '<div class="row-head">'+
              '<span class="label" style="color:'+m.color+';">'+m.label+'</span>'+
              '<span class="name" title="'+esc(t.name)+'">'+esc(t.name)+'</span>'+
              dur+
              arrow+
-           '</div>'+details+
+           '</div>'+preview+details+
          '</div>';
 }
 
@@ -510,8 +524,8 @@ let lastState = { results: [] };
 // UI view-state, persisted across re-renders (SSE pushes, theme changes).
 let filterStatuses = new Set();   // active status filters (empty = show all)
 let searchText = "";              // free-text query
-let groupBy = "none";             // none | status | namespace | class | suite | framework
-let sortBy = "default";           // default | name | duration | status
+let groupBy = "suite";            // none|status|namespace|class|suite|framework — default: suite
+let sortBy = "status";            // default|name|duration|status — default: outcome (failures first)
 let collapsedGroups = new Set();  // group keys the user has collapsed
 let failCursor = -1;              // cursor into visible failing rows (jump-to-failure)
 
@@ -558,9 +572,11 @@ if (fileSelect){
 const searchEl = document.getElementById("search");
 if(searchEl) searchEl.addEventListener("input", ()=>{ searchText = searchEl.value; renderList(); });
 const groupEl = document.getElementById("group-by");
-if(groupEl) groupEl.addEventListener("change", ()=>{ groupBy = groupEl.value; renderList(); });
+if(groupEl){ groupEl.value = groupBy;   // reflect the default in the dropdown
+  groupEl.addEventListener("change", ()=>{ groupBy = groupEl.value; renderList(); }); }
 const sortEl = document.getElementById("sort-by");
-if(sortEl) sortEl.addEventListener("change", ()=>{ sortBy = sortEl.value; renderList(); });
+if(sortEl){ sortEl.value = sortBy;
+  sortEl.addEventListener("change", ()=>{ sortBy = sortEl.value; renderList(); }); }
 const jumpEl = document.getElementById("jump-fail");
 if(jumpEl) jumpEl.addEventListener("click", ()=> jumpToNextFailure(1));
 
@@ -640,7 +656,7 @@ document.getElementById("list").addEventListener("click", (e) => {
     }
     return;
   }
-  const head = e.target.closest(".row-head");
+  const head = e.target.closest(".row-head, .msg-preview");
   if (!head) return;
   const row = head.closest(".row");
   const details = row.querySelector(".details");
