@@ -107,26 +107,3 @@ test("parseTrx returns an empty array for empty or junk input", () => {
   assert.deepEqual(parseTrx(""), []);
   assert.deepEqual(parseTrx("<TestRun></TestRun>"), []);
 });
-
-test("parseTrx reads testId and executionId attributes", () => {
-  const xml = `<?xml version="1.0"?>
-<TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
-  <Results>
-    <UnitTestResult testName="x" outcome="Passed" testId="tid-1" executionId="eid-1" />
-  </Results>
-</TestRun>`;
-  const [row] = parseTrx(xml);
-  assert.equal(row.testId, "tid-1");
-  assert.equal(row.executionId, "eid-1");
-});
-
-test("serialize -> parse exposes a unique executionId per result", () => {
-  const rows = byName(parseTrx(serializeTrx([
-    { name: "a", status: "pass" },
-    { name: "b", status: "fail", message: "x" },
-  ])));
-  assert.ok(rows.a.testId && rows.b.testId, "both carry a testId");
-  assert.ok(rows.a.executionId && rows.b.executionId, "both carry an executionId");
-  // The per-result executionId must differ so same-named retries never collide.
-  assert.notEqual(rows.a.executionId, rows.b.executionId);
-});

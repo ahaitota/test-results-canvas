@@ -325,16 +325,20 @@ function miniCounts(c){
   return bits.join("");
 }
 
-// Stable identity for a test so its expand state survives re-renders and live
-// refreshes. Prefer a real per-result id from the run: TRX gives a unique
-// executionId per result (so retries / multi-target runs that repeat the same
-// name don't collide), then a per-test testId (also set from a JUnit testcase
-// "id"). Only formats without ids fall back to the content tuple. Each source is
-// prefixed so an id can never collide with a tuple.
-function rowKey(t){
-  if(t.executionId) return "e\\u001f"+t.executionId;
-  if(t.testId) return "t\\u001f"+t.testId;
-  return "k\\u001f"+[t.suite||"", t.className||"", t.name||""].join("\\u001f");
+// Row key = stable identity (suite+class+name) + a per-identity occurrence #,
+// so expand state survives re-renders and reruns. Ids aren't used: TRX
+// executionId changes each run; JUnit ids repeat ("0") or are missing.
+function rowIdentity(t){ return [t.suite||"", t.className||"", t.name||""].join("\\u001f"); }
+function rowKey(t){ return t.__rowKey || rowIdentity(t); }
+// Key = identity + "#" + Nth occurrence, counted in parse order so
+// sort/filter/group never shift it.
+function assignRowKeys(results){
+  const seen = Object.create(null);
+  for(const t of results){
+    const id = rowIdentity(t);
+    const n = (seen[id] = (seen[id] || 0) + 1) - 1;
+    t.__rowKey = id + "\\u001f#" + n;
+  }
 }
 
 // Render one test row (header + collapsible details). M = current theme meta.
@@ -418,6 +422,7 @@ function updateJumpButton(view){
 function renderList(){
   const list = document.getElementById("list");
   const all = lastState.results || [];
+  assignRowKeys(all);              // stable, collision-free keys
   const M = meta();
   const q = searchText.trim().toLowerCase();
 

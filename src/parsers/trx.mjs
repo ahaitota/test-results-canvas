@@ -210,7 +210,6 @@ export function parseTrx(xml) {
         const outcome = getAttr("outcome");
         const durationMs = durationToMs(getAttr("duration"));
         const testId = getAttr("testId");
-        const executionId = getAttr("executionId");
         const computerName = getAttr("computerName");
         const startTime = getAttr("startTime");
         const endTime = getAttr("endTime");
@@ -230,8 +229,6 @@ export function parseTrx(xml) {
             status: outcomeToStatus(outcome),
             durationMs,
             message: message || undefined,
-            testId,
-            executionId,
             className: def.className,
             method: def.method,
             framework: def.framework,
