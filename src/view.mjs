@@ -515,7 +515,7 @@ let failCursor = -1;              // cursor into visible failing rows (jump-to-f
 
 // --- Theme: always follows the Copilot app (no manual control) ---
 // The host mirrors its theme onto our document (create-canvas contract): root/body
-// attrs data-color-mode / data-visual-mode plus semantic tokens like
+// attrs data-color-mode / data-theme-tone / data-visual-mode plus tokens like
 // --background-color-default. We read those to pick light/dark for our own accent
 // colors; the surface adopts the app's documented tokens directly (see :root CSS).
 const darkMedia = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
@@ -548,6 +548,8 @@ function appTone(){
   const attr = (n) => ("" + (el.getAttribute(n) || (bd && bd.getAttribute(n)) || "")).toLowerCase();
   const mode = attr("data-color-mode");   // "light" | "dark" | "auto"
   if (mode === "light" || mode === "dark") return mode;
+  const tone = attr("data-theme-tone");   // resolved tone (documented)
+  if (tone === "light" || tone === "dark") return tone;
   const vis = attr("data-visual-mode");   // resolved tone when mode is "auto"
   if (vis === "light" || vis === "dark") return vis;
   if (!bd) return null;
@@ -560,8 +562,10 @@ function appTone(){
   return toneFromColor(bg);
 }
 function applyAppTheme(){
-  // data-theme drives our own accent colors; the surface uses app tokens directly.
-  document.documentElement.setAttribute("data-theme", appTone() || "dark");
+  // Prefer the app's own tone. If the host contract exposes none, fall back to the
+  // OS preference (prefers-color-scheme), and only to dark if that's unavailable.
+  const osTone = darkMedia ? (darkMedia.matches ? "dark" : "light") : "dark";
+  document.documentElement.setAttribute("data-theme", appTone() || osTone);
   render(lastState);
 }
 applyAppTheme();
@@ -569,12 +573,13 @@ applyAppTheme();
 // when the user switches the app theme.
 if (window.MutationObserver){
   const themeObserver = new MutationObserver(applyAppTheme);
-  const obsOpt = { attributes: true, attributeFilter: ["data-color-mode","data-visual-mode","data-dark-theme","data-light-theme","class","style"] };
+  const obsOpt = { attributes: true, attributeFilter: ["data-color-mode","data-theme-tone","data-theme-source","data-visual-mode","data-dark-theme","data-light-theme","class","style"] };
   themeObserver.observe(document.documentElement, obsOpt);
   if (document.body) themeObserver.observe(document.body, obsOpt);
 }
-// If the app syncs with the OS, an OS flip changes the app's tokens too; re-read
-// the APP theme (never the OS value).
+// An OS theme flip can change the app's mirrored tokens (when the app syncs with
+// the OS) and is also our fallback signal when the host exposes no tone, so
+// re-evaluate on change. appTone() still takes precedence when available.
 if (darkMedia){
   const reeval = () => applyAppTheme();
   if (darkMedia.addEventListener) darkMedia.addEventListener("change", reeval);
