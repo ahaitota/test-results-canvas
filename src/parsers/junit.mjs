@@ -158,6 +158,7 @@ function emitCase(attrs, inner, ctx, results) {
     const name = attr(attrs, "name");
     if (!name) return;
     const className = attr(attrs, "classname");
+    const testId = attr(attrs, "id");
     const durationMs = timeToMs(attr(attrs, "time"));
 
     let status = "pass";
@@ -184,6 +185,7 @@ function emitCase(attrs, inner, ctx, results) {
         status,
         durationMs,
         message,
+        testId: testId || undefined,
         className: className || undefined,
         method: name,
         suite: ctx.suiteName,

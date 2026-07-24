@@ -326,8 +326,16 @@ function miniCounts(c){
 }
 
 // Stable identity for a test so its expand state survives re-renders and live
-// refreshes (row order/index can shift between runs, so key by content, not index).
-function rowKey(t){ return [t.suite||"", t.className||"", t.name||""].join("\\u001f"); }
+// refreshes. Prefer a real per-result id from the run: TRX gives a unique
+// executionId per result (so retries / multi-target runs that repeat the same
+// name don't collide), then a per-test testId (also set from a JUnit testcase
+// "id"). Only formats without ids fall back to the content tuple. Each source is
+// prefixed so an id can never collide with a tuple.
+function rowKey(t){
+  if(t.executionId) return "e\\u001f"+t.executionId;
+  if(t.testId) return "t\\u001f"+t.testId;
+  return "k\\u001f"+[t.suite||"", t.className||"", t.name||""].join("\\u001f");
+}
 
 // Render one test row (header + collapsible details). M = current theme meta.
 function renderRow(t, M){

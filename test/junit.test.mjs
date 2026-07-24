@@ -214,3 +214,14 @@ test("parseJUnit ignores suite/case-like text inside CDATA", () => {
   assert.equal(rows.b.status, "pass");
   assert.equal(rows.b.suite, "Real");
 });
+
+test("parseJUnit reads a testcase id into testId", () => {
+  const xml =
+    `<testsuite name="s">` +
+    `<testcase name="withId" classname="C" id="case-1" time="0.01"/>` +
+    `<testcase name="noId" classname="C" time="0.01"/>` +
+    `</testsuite>`;
+  const rows = byName(parseJUnit(xml));
+  assert.equal(rows.withId.testId, "case-1");
+  assert.equal(rows.noId.testId, undefined);
+});
