@@ -15,42 +15,45 @@ export function renderShell(title) {
 <meta charset="utf-8" />
 <title>${title}</title>
 <style>
-  /* GitHub Copilot app theme — Primer tokens (extracted from app.js) */
-  /* Dark is the default; [data-theme="light"] overrides it. */
+  /* Theme tracks the Copilot app. Documented app tokens (create-canvas contract)
+     drive the main surface, so the exact palette (incl. Dark Dimmed, high-contrast,
+     colorblind) is matched; our hex is the fallback and also sets the undocumented
+     colors (success green, attention amber, muted backgrounds) per the resolved
+     light/dark tone. data-theme is set from the detected app tone (see JS). */
   :root {
-    --fgColor-default: #f0f6fc;
-    --fgColor-muted: #9198a1;
-    --fgColor-accent: #4493f8;
+    --fgColor-default: var(--text-color-default, #f0f6fc);
+    --fgColor-muted: var(--text-color-muted, #9198a1);
+    --fgColor-accent: var(--true-color-blue, #4493f8);
     --fgColor-success: #3fb950;
     --fgColor-attention: #d29922;
-    --fgColor-danger: #f85149;
-    --bgColor-default: #0d1117;
+    --fgColor-danger: var(--true-color-red, #f85149);
+    --bgColor-default: var(--background-color-default, #0d1117);
     --bgColor-muted: #151b23;
     --bgColor-inset: #010409;
-    --bgColor-accent-muted: #388bfd1a;
+    --bgColor-accent-muted: var(--true-color-blue-muted, #388bfd1a);
     --bgColor-success-muted: #2ea04326;
     --bgColor-attention-muted: #bb800926;
-    --bgColor-danger-muted: #f851491a;
-    --borderColor-default: #3d444d;
+    --bgColor-danger-muted: var(--true-color-red-muted, #f851491a);
+    --borderColor-default: var(--border-color-default, #3d444d);
     --borderColor-muted: #3d444db3;
     --fontStack-sans: -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
     --fontStack-mono: ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
   }
   html[data-theme="light"] {
-    --fgColor-default: #1f2328;
-    --fgColor-muted: #59636e;
-    --fgColor-accent: #0969da;
+    --fgColor-default: var(--text-color-default, #1f2328);
+    --fgColor-muted: var(--text-color-muted, #59636e);
+    --fgColor-accent: var(--true-color-blue, #0969da);
     --fgColor-success: #1a7f37;
     --fgColor-attention: #9a6700;
-    --fgColor-danger: #d1242f;
-    --bgColor-default: #ffffff;
+    --fgColor-danger: var(--true-color-red, #d1242f);
+    --bgColor-default: var(--background-color-default, #ffffff);
     --bgColor-muted: #f6f8fa;
     --bgColor-inset: #f6f8fa;
-    --bgColor-accent-muted: #ddf4ff;
+    --bgColor-accent-muted: var(--true-color-blue-muted, #ddf4ff);
     --bgColor-success-muted: #dafbe1;
     --bgColor-attention-muted: #fff8c5;
-    --bgColor-danger-muted: #ffebe9;
-    --borderColor-default: #d1d9e0;
+    --bgColor-danger-muted: var(--true-color-red-muted, #ffebe9);
+    --borderColor-default: var(--border-color-default, #d1d9e0);
     --borderColor-muted: #d1d9e0b3;
   }
   html, body { transition: background-color .15s ease, color .15s ease; }
@@ -114,24 +117,6 @@ export function renderShell(title) {
   .controls { display:flex; align-items:center; gap:12px; justify-content:flex-end; }
   .head { margin-top:10px; }
   .head h1 { margin:0; }
-  /* Oval sliding theme switch: knob sits left for dark, right for light. */
-  #theme-toggle {
-    box-sizing:border-box; position:relative; flex-shrink:0;
-    width:48px; height:28px; padding:0; cursor:pointer;
-    border-radius:999px; background:var(--bgColor-inset);
-    border:1px solid var(--borderColor-default);
-    transition:background .18s ease, border-color .18s ease;
-  }
-  #theme-toggle:hover { border-color:var(--fgColor-muted); }
-  #theme-toggle .knob {
-    position:absolute; top:2px; left:2px;
-    width:22px; height:22px; border-radius:50%;
-    background:var(--fgColor-default);
-    display:flex; align-items:center; justify-content:center;
-    font-size:12px; line-height:1;
-    transition:left .18s ease;
-  }
-  html[data-theme="light"] #theme-toggle .knob { left:22px; }
   #file-select {
     font-family:var(--fontStack-sans); font-size:13px; font-weight:600;
     padding:6px 10px; border-radius:6px; cursor:pointer;
@@ -141,7 +126,7 @@ export function renderShell(title) {
     border:1px solid var(--borderColor-default);
   }
   #file-select:hover { border-color:var(--fgColor-muted); }
-  /* The file picker fills the row, the theme toggle stays pinned to the right. */
+  /* The file picker fills the row on narrow widths. */
   @media (max-width:520px){
     #file-select { flex:1 1 auto; max-width:none; }
   }
@@ -200,7 +185,6 @@ export function renderShell(title) {
 <body>
   <div class="controls">
     <select id="file-select" title="Choose which results file to display"></select>
-    <button id="theme-toggle" type="button" role="switch" aria-label="Toggle light/dark theme"><span class="knob"></span></button>
   </div>
   <div class="head">
     <h1><span id="title">${title}</span></h1>
@@ -529,24 +513,78 @@ let sortBy = "status";            // default|name|duration|status — default: o
 let collapsedGroups = new Set();  // group keys the user has collapsed
 let failCursor = -1;              // cursor into visible failing rows (jump-to-failure)
 
-// --- Theme toggle (persists choice; defaults to dark to match the app) ---
-const THEME_KEY = "test-results-theme";
-function applyTheme(t){
-  document.documentElement.setAttribute("data-theme", t);
-  const btn = document.getElementById("theme-toggle");
-  if (btn){
-    btn.setAttribute("aria-checked", t === "light" ? "true" : "false");
-    const knob = btn.querySelector(".knob");
-    if (knob) knob.textContent = t === "light" ? "☀️" : "🌙";
+// --- Theme: always follows the Copilot app (no manual control) ---
+// The host mirrors its theme onto our document (create-canvas contract): root/body
+// attrs data-color-mode / data-theme-tone / data-visual-mode plus tokens like
+// --background-color-default. We read those to pick light/dark for our own accent
+// colors; the surface adopts the app's documented tokens directly (see :root CSS).
+const darkMedia = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+// Brightness of a resolved CSS color ("rgb(..)"/"rgba(..)"/"#rrggbb").
+// Returns "light" | "dark", or null if unparseable or fully transparent.
+function toneFromColor(css){
+  if (!css) return null;
+  css = ("" + css).trim();
+  let r, g, b, a = 1;
+  if (css.charAt(0) === "#"){
+    let h = css.slice(1);
+    if (h.length === 3) h = h.charAt(0)+h.charAt(0)+h.charAt(1)+h.charAt(1)+h.charAt(2)+h.charAt(2);
+    if (h.length < 6) return null;
+    r = parseInt(h.slice(0,2),16); g = parseInt(h.slice(2,4),16); b = parseInt(h.slice(4,6),16);
+  } else {
+    const o = css.indexOf("("), e = css.indexOf(")");
+    if (o < 0 || e < 0) return null;
+    const p = css.slice(o+1, e).split(",");
+    r = parseFloat(p[0]); g = parseFloat(p[1]); b = parseFloat(p[2]);
+    if (p.length > 3) a = parseFloat(p[3]);
   }
+  if (isNaN(r) || isNaN(g) || isNaN(b)) return null;
+  if (!isNaN(a) && a === 0) return null;
+  return ((0.2126*r + 0.7152*g + 0.0722*b) / 255) < 0.5 ? "dark" : "light";
+}
+// Detect the Copilot app's current light/dark tone from the theme contract the
+// host mirrors onto our document. Returns "light" | "dark" | null.
+function appTone(){
+  const el = document.documentElement, bd = document.body;
+  const attr = (n) => ("" + (el.getAttribute(n) || (bd && bd.getAttribute(n)) || "")).toLowerCase();
+  const mode = attr("data-color-mode");   // "light" | "dark" | "auto"
+  if (mode === "light" || mode === "dark") return mode;
+  const tone = attr("data-theme-tone");   // resolved tone (documented)
+  if (tone === "light" || tone === "dark") return tone;
+  const vis = attr("data-visual-mode");   // resolved tone when mode is "auto"
+  if (vis === "light" || vis === "dark") return vis;
+  if (!bd) return null;
+  // Last resort: measure the app-provided background token (covers "auto").
+  const probe = document.createElement("span");
+  probe.style.cssText = "position:absolute;left:-9999px;top:-9999px;background-color:var(--background-color-default)";
+  bd.appendChild(probe);
+  const bg = getComputedStyle(probe).backgroundColor;
+  bd.removeChild(probe);
+  return toneFromColor(bg);
+}
+function applyAppTheme(){
+  // Prefer the app's own tone. If the host contract exposes none, fall back to the
+  // OS preference (prefers-color-scheme), and only to dark if that's unavailable.
+  const osTone = darkMedia ? (darkMedia.matches ? "dark" : "light") : "dark";
+  document.documentElement.setAttribute("data-theme", appTone() || osTone);
   render(lastState);
 }
-applyTheme(localStorage.getItem(THEME_KEY) || "dark");
-document.getElementById("theme-toggle").addEventListener("click", () => {
-  const next = document.documentElement.getAttribute("data-theme") === "light" ? "dark" : "light";
-  localStorage.setItem(THEME_KEY, next);
-  applyTheme(next);
-});
+applyAppTheme();
+// Follow live app theme changes: the host updates the mirrored attributes/tokens
+// when the user switches the app theme.
+if (window.MutationObserver){
+  const themeObserver = new MutationObserver(applyAppTheme);
+  const obsOpt = { attributes: true, attributeFilter: ["data-color-mode","data-theme-tone","data-theme-source","data-visual-mode","data-dark-theme","data-light-theme","class","style"] };
+  themeObserver.observe(document.documentElement, obsOpt);
+  if (document.body) themeObserver.observe(document.body, obsOpt);
+}
+// An OS theme flip can change the app's mirrored tokens (when the app syncs with
+// the OS) and is also our fallback signal when the host exposes no tone, so
+// re-evaluate on change. appTone() still takes precedence when available.
+if (darkMedia){
+  const reeval = () => applyAppTheme();
+  if (darkMedia.addEventListener) darkMedia.addEventListener("change", reeval);
+  else if (darkMedia.addListener) darkMedia.addListener(reeval);
+}
 
 // --- Results file picker (choose which .trx file this panel displays) ---
 const fileSelect = document.getElementById("file-select");
