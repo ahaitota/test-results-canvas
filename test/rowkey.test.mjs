@@ -64,6 +64,27 @@ test("reversed duplicate rows differing only by duration keep their keys", () =>
   assert.notEqual(kFast, kSlow);
 });
 
+test("changing a volatile field across reruns keeps keys anchored by stable discriminators", () => {
+  // Two agents run the same test; only computerName (stable) tells them apart.
+  // Durations differ and change on rerun — keys must follow computerName, not rank.
+  const run1 = [
+    { name: "T", className: "C", suite: "S", computerName: "agent-1", durationMs: 10 },
+    { name: "T", className: "C", suite: "S", computerName: "agent-2", durationMs: 20 },
+  ];
+  assignRowKeys(run1);
+  const k1 = run1.find(t => t.computerName === "agent-1").__rowKey;
+  const k2 = run1.find(t => t.computerName === "agent-2").__rowKey;
+
+  const run2 = [
+    { name: "T", className: "C", suite: "S", computerName: "agent-1", durationMs: 30 },
+    { name: "T", className: "C", suite: "S", computerName: "agent-2", durationMs: 20 },
+  ];
+  assignRowKeys(run2);
+  assert.equal(run2.find(t => t.computerName === "agent-1").__rowKey, k1);
+  assert.equal(run2.find(t => t.computerName === "agent-2").__rowKey, k2);
+  assert.notEqual(k1, k2);
+});
+
 test("rowKey falls back to identity when no key is assigned", () => {
   const t = { name: "X", className: "C" };
   assert.equal(rowKey(t), rowIdentity(t));
