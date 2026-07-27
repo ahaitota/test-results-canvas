@@ -325,10 +325,13 @@ function miniCounts(c){
   return bits.join("");
 }
 
-// Row key = stable identity (suite+class+name) + a per-identity occurrence #,
-// so expand state survives re-renders and reruns. Ids aren't used: TRX
-// executionId changes each run; JUnit ids repeat ("0") or are missing.
-function rowIdentity(t){ return [t.suite||"", t.className||"", t.name||""].join("\\u001f"); }
+// Row key = stable identity + a per-identity occurrence #, so expand state
+// survives re-renders and reruns. Identity includes every stable dimension
+// (framework + storage + suite + class + name) so same-name results from
+// different targets (net8.0 vs net9.0) stay distinct and don't swap expansion
+// when payload order changes; the occurrence # only separates true retries.
+// Ids aren't used: TRX executionId changes each run; JUnit ids repeat/miss.
+function rowIdentity(t){ return [t.framework||"", t.storage||"", t.suite||"", t.className||"", t.name||""].join("\\u001f"); }
 function rowKey(t){ return t.__rowKey || rowIdentity(t); }
 // Key = identity + "#" + Nth occurrence, counted in parse order so
 // sort/filter/group never shift it.
