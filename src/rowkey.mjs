@@ -2,9 +2,10 @@
 // key = identity + "#" + ordinal:
 //   identity = all stable dimensions (framework+storage+suite+class+name), so
 //     same-name tests on different targets (net8.0 vs net9.0) never collide.
-//   ordinal  = position among rows sharing an identity (retries/duplicates),
-//     ordered by each row's own metadata (occurrenceSig), NOT array position, so
-//     a reordered payload keeps every ordinal on the same row. Unique => "#0".
+//   ordinal  = rank of the row among rows sharing an identity (retries/duplicates),
+//     fixed by the row's own metadata (occurrenceSig). A live refresh that reorders
+//     the payload keeps every ordinal glued to the same row. Unique => "#0". Rows
+//     identical in every parsed field share a key (they are indistinguishable).
 // Ids aren't used: TRX executionId changes each run; JUnit ids repeat/miss.
 // Single source of truth: node tests import this; view.mjs inlines it (ROWKEY_SRC).
 
@@ -14,28 +15,29 @@ export function rowIdentity(t){
   return [t.framework||"", t.storage||"", t.suite||"", t.className||"", t.name||""].join(US);
 }
 
-// Orders rows that share an identity; startTime/endTime are the strongest stamps.
+// Every stable parsed discriminator, so any two distinguishable rows differ here.
 export function occurrenceSig(t){
-  return [t.startTime||"", t.endTime||"", t.durationMs==null?"":String(t.durationMs), t.status||"", t.message||""].join(US);
+  return [
+    t.startTime||"", t.endTime||"", t.durationMs==null?"":String(t.durationMs),
+    t.status||"", t.computerName||"", t.method||"", t.adapter||"", t.message||"",
+  ].join(US);
 }
 
 export function assignRowKeys(results){
   const groups = new Map();
-  results.forEach((t, i) => {
+  results.forEach(t => {
     const id = rowIdentity(t);
     let g = groups.get(id);
     if(!g){ g = []; groups.set(id, g); }
-    g.push({ t, i });
+    g.push(t);
   });
   groups.forEach((g, id) => {
-    if(g.length === 1){ g[0].t.__rowKey = id + US + "#0"; return; }
-    g.sort((a, b) => {
-      const sa = occurrenceSig(a.t), sb = occurrenceSig(b.t);
-      if(sa < sb) return -1;
-      if(sa > sb) return 1;
-      return a.i - b.i; // identical rows: stable, and indistinguishable anyway
-    });
-    g.forEach((e, ord) => { e.t.__rowKey = id + US + "#" + ord; });
+    if(g.length === 1){ g[0].__rowKey = id + US + "#0"; return; }
+    // Rank each row by its metadata signature, so the ordinal is decided by content
+    // alone. Rows with the same signature are indistinguishable and share a key.
+    const rank = new Map();
+    [...new Set(g.map(occurrenceSig))].sort().forEach((sig, i) => rank.set(sig, i));
+    g.forEach(t => { t.__rowKey = id + US + "#" + rank.get(occurrenceSig(t)); });
   });
 }
 
