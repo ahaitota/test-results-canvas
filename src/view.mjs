@@ -8,6 +8,12 @@
 // You only need a full extension reload (via the agent or /clear) when you
 // change extension.mjs itself (actions, schemas, SSE wiring).
 
+import { readFileSync } from "node:fs";
+
+// Row-key logic, shared with the unit tests; see src/rowkey.mjs.
+const ROWKEY_SRC = readFileSync(new URL("./rowkey.mjs", import.meta.url), "utf8")
+    .replace(/^export /gm, "");
+
 export function renderShell(title) {
     return `<!doctype html>
 <html>
@@ -325,24 +331,8 @@ function miniCounts(c){
   return bits.join("");
 }
 
-// Row key = stable identity + a per-identity occurrence #, so expand state
-// survives re-renders and reruns. Identity includes every stable dimension
-// (framework + storage + suite + class + name) so same-name results from
-// different targets (net8.0 vs net9.0) stay distinct and don't swap expansion
-// when payload order changes; the occurrence # only separates true retries.
-// Ids aren't used: TRX executionId changes each run; JUnit ids repeat/miss.
-function rowIdentity(t){ return [t.framework||"", t.storage||"", t.suite||"", t.className||"", t.name||""].join("\\u001f"); }
-function rowKey(t){ return t.__rowKey || rowIdentity(t); }
-// Key = identity + "#" + Nth occurrence, counted in parse order so
-// sort/filter/group never shift it.
-function assignRowKeys(results){
-  const seen = Object.create(null);
-  for(const t of results){
-    const id = rowIdentity(t);
-    const n = (seen[id] = (seen[id] || 0) + 1) - 1;
-    t.__rowKey = id + "\\u001f#" + n;
-  }
-}
+// Row-key logic inlined verbatim from src/rowkey.mjs (browser + tests share it).
+${ROWKEY_SRC}
 
 // Render one test row (header + collapsible details). M = current theme meta.
 function renderRow(t, M){
