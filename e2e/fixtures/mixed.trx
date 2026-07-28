@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TestRun id="b4423a0f-aa74-3b5f-7efb-e01ae52d" name="Mixed Suite" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-07-27T13:11:59.932Z" queuing="2026-07-27T13:11:59.932Z" start="2026-07-27T13:11:59.932Z" finish="2026-07-27T13:11:59.932Z" />
+  <Results>
+    <UnitTestResult executionId="7a2e5c58-8a9b-70d8-86c8-01579f01" testId="8a64040b-9d6c-fe9b-e583-dd3e6e96" testName="AddsTwoNumbers" computerName="localhost" duration="00:00:00.0120000" outcome="Passed" testListId="e76a7060-b455-1260-7f11-0b9f5915" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b"></UnitTestResult>
+    <UnitTestResult executionId="95d79e29-cca4-bb59-5c3c-9ff00879" testId="f2efdb2a-5873-620a-16e1-a795f3cb" testName="DividesNumbers" computerName="localhost" duration="00:00:00.0080000" outcome="Passed" testListId="e76a7060-b455-1260-7f11-0b9f5915" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b"></UnitTestResult>
+    <UnitTestResult executionId="ed6e0b73-9c34-4583-fd10-55663690" testId="76df32dc-64a0-261c-6870-88b31da5" testName="ThrowsOnNull" computerName="localhost" duration="00:00:00.0250000" outcome="Failed" testListId="e76a7060-b455-1260-7f11-0b9f5915" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b">
+        <Output>
+          <ErrorInfo>
+            <Message>System.NullReferenceException: object not set
+  at Calc.Math.Div()</Message>
+          </ErrorInfo>
+        </Output>
+      </UnitTestResult>
+    <UnitTestResult executionId="4d5862c9-87fc-4df9-ffce-05108f5a" testId="ce5fc4da-cb18-24ba-eb63-ca4537c5" testName="SkippedFeature" computerName="localhost" duration="00:00:00.0000000" outcome="NotExecuted" testListId="e76a7060-b455-1260-7f11-0b9f5915" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b"></UnitTestResult>
+    <UnitTestResult executionId="9645c2a5-86ae-9115-a021-7b040e49" testId="091002e4-2c6b-c3a4-d79e-e6fbb5d4" testName="SlowIntegration" computerName="localhost" duration="00:00:01.5000000" outcome="Passed" testListId="e76a7060-b455-1260-7f11-0b9f5915" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b"></UnitTestResult>
+    <UnitTestResult executionId="b13da3fb-d30d-038b-ce09-a02eb743" testId="80d3582c-1040-c26c-6fbd-2d033403" testName="FailingIntegration" computerName="localhost" duration="00:00:00.3000000" outcome="Failed" testListId="e76a7060-b455-1260-7f11-0b9f5915" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b">
+        <Output>
+          <ErrorInfo>
+            <Message>Assert.Equal() Failure
+Expected: 42
+Actual:   41</Message>
+          </ErrorInfo>
+        </Output>
+      </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="AddsTwoNumbers" id="8a64040b-9d6c-fe9b-e583-dd3e6e96">
+      <Execution id="7a2e5c58-8a9b-70d8-86c8-01579f01" />
+      <TestMethod codeBase="mock" className="Mock.Tests" name="AddsTwoNumbers" />
+    </UnitTest>
+    <UnitTest name="DividesNumbers" id="f2efdb2a-5873-620a-16e1-a795f3cb">
+      <Execution id="95d79e29-cca4-bb59-5c3c-9ff00879" />
+      <TestMethod codeBase="mock" className="Mock.Tests" name="DividesNumbers" />
+    </UnitTest>
+    <UnitTest name="ThrowsOnNull" id="76df32dc-64a0-261c-6870-88b31da5">
+      <Execution id="ed6e0b73-9c34-4583-fd10-55663690" />
+      <TestMethod codeBase="mock" className="Mock.Tests" name="ThrowsOnNull" />
+    </UnitTest>
+    <UnitTest name="SkippedFeature" id="ce5fc4da-cb18-24ba-eb63-ca4537c5">
+      <Execution id="4d5862c9-87fc-4df9-ffce-05108f5a" />
+      <TestMethod codeBase="mock" className="Mock.Tests" name="SkippedFeature" />
+    </UnitTest>
+    <UnitTest name="SlowIntegration" id="091002e4-2c6b-c3a4-d79e-e6fbb5d4">
+      <Execution id="9645c2a5-86ae-9115-a021-7b040e49" />
+      <TestMethod codeBase="mock" className="Mock.Tests" name="SlowIntegration" />
+    </UnitTest>
+    <UnitTest name="FailingIntegration" id="80d3582c-1040-c26c-6fbd-2d033403">
+      <Execution id="b13da3fb-d30d-038b-ce09-a02eb743" />
+      <TestMethod codeBase="mock" className="Mock.Tests" name="FailingIntegration" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="8a64040b-9d6c-fe9b-e583-dd3e6e96" executionId="7a2e5c58-8a9b-70d8-86c8-01579f01" testListId="e76a7060-b455-1260-7f11-0b9f5915" />
+    <TestEntry testId="f2efdb2a-5873-620a-16e1-a795f3cb" executionId="95d79e29-cca4-bb59-5c3c-9ff00879" testListId="e76a7060-b455-1260-7f11-0b9f5915" />
+    <TestEntry testId="76df32dc-64a0-261c-6870-88b31da5" executionId="ed6e0b73-9c34-4583-fd10-55663690" testListId="e76a7060-b455-1260-7f11-0b9f5915" />
+    <TestEntry testId="ce5fc4da-cb18-24ba-eb63-ca4537c5" executionId="4d5862c9-87fc-4df9-ffce-05108f5a" testListId="e76a7060-b455-1260-7f11-0b9f5915" />
+    <TestEntry testId="091002e4-2c6b-c3a4-d79e-e6fbb5d4" executionId="9645c2a5-86ae-9115-a021-7b040e49" testListId="e76a7060-b455-1260-7f11-0b9f5915" />
+    <TestEntry testId="80d3582c-1040-c26c-6fbd-2d033403" executionId="b13da3fb-d30d-038b-ce09-a02eb743" testListId="e76a7060-b455-1260-7f11-0b9f5915" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="All Results" id="e76a7060-b455-1260-7f11-0b9f5915" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="6" executed="5" passed="3" failed="2" error="0" timeout="0" aborted="0" inconclusive="0" notExecuted="1" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+  </ResultSummary>
+</TestRun>
