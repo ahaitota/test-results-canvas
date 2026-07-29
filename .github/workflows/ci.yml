@@ -6,10 +6,10 @@ on:
     branches: [main]
   pull_request:
 
-# The reporter step publishes a Check run with the test results.
+# Tests only read the repo and upload results as artifacts; the separate
+# test-report.yml workflow publishes the Check runs.
 permissions:
   contents: read
-  checks: write
 
 jobs:
   test:
@@ -49,15 +49,6 @@ jobs:
           path: test-results/unit-junit.xml
           if-no-files-found: warn
 
-      - name: Publish unit test report
-        if: always()
-        uses: dorny/test-reporter@v1
-        with:
-          name: Unit tests (Node ${{ matrix.node-version }})
-          path: test-results/unit-junit.xml
-          reporter: java-junit
-          fail-on-error: false
-
   e2e:
     name: Playwright e2e
     runs-on: ubuntu-latest
@@ -90,12 +81,3 @@ jobs:
             playwright-report/
             test-results/e2e-junit.xml
           if-no-files-found: warn
-
-      - name: Publish e2e test report
-        if: always()
-        uses: dorny/test-reporter@v1
-        with:
-          name: Playwright e2e
-          path: test-results/e2e-junit.xml
-          reporter: java-junit
-          fail-on-error: false
