@@ -21,19 +21,21 @@ jobs:
     steps:
       # One report per matrix artifact; $1 is the captured node version.
       - name: Publish unit test report
+        if: always()
         uses: dorny/test-reporter@v1
         with:
           artifact: /unit-test-results-(.*)/
           name: Unit tests (Node $1)
           path: '**/unit-junit.xml'
           reporter: java-junit
-          fail-on-error: false
+          fail-on-empty: false
 
       - name: Publish e2e test report
+        if: always()
         uses: dorny/test-reporter@v1
         with:
           artifact: playwright-report
           name: Playwright e2e
           path: '**/e2e-junit.xml'
           reporter: java-junit
-          fail-on-error: false
+          fail-on-empty: false
