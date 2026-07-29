@@ -13,6 +13,7 @@ export default defineConfig({
   testDir: "./e2e",
   outputDir: "test-results/e2e",   // Playwright cleans this dir only
   fullyParallel: true,
+  workers: process.env.CI ? 4 : undefined,   // cap CI workers 
   retries: process.env.CI ? 2 : 1,
   timeout: 30_000,
   expect: { timeout: 10_000 },
