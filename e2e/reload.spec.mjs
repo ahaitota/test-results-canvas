@@ -1,9 +1,9 @@
-import { test, expect, fixture, openCanvas } from "./canvas-server.mjs";
+import { test, expect, get_fixture_path, openCanvas } from "./canvas-server.mjs";
 
 // Reload via the server's `reload` SSE event, and via fresh navigation.
 
 test("reloads the page when the server sends a reload event", async ({ page, makeServer }) => {
-  const s = await makeServer({ resultsFile: fixture("mixed.trx") });
+  const s = await makeServer({ resultsFile: get_fixture_path("mixed.trx") });
   await openCanvas(page, s);
   await expect(page.getByTestId("test-row")).toHaveCount(6);
 
@@ -18,7 +18,7 @@ test("reloads the page when the server sends a reload event", async ({ page, mak
 });
 
 test("a reopened canvas shows the current results in the default view", async ({ page, makeServer }) => {
-  const s = await makeServer({ resultsFile: fixture("mixed.trx") });
+  const s = await makeServer({ resultsFile: get_fixture_path("mixed.trx") });
   await openCanvas(page, s);
 
   const row = () => page.getByTestId("test-row").filter({ hasText: "AddsTwoNumbers" });

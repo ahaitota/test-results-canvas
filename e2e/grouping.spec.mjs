@@ -1,9 +1,9 @@
-import { test, expect, fixture, openCanvas } from "./canvas-server.mjs";
+import { test, expect, get_fixture_path, openCanvas } from "./canvas-server.mjs";
 
 // The Group dropdown offers none/status/namespace/class/suite/framework.
 
 test("group by none shows a flat list", async ({ page, makeServer }) => {
-  const s = await makeServer({ resultsFile: fixture("mixed.trx") });
+  const s = await makeServer({ resultsFile: get_fixture_path("mixed.trx") });
   await openCanvas(page, s);
   await page.getByTestId("group-by").selectOption("none");
   await expect(page.getByTestId("group")).toHaveCount(0);
@@ -11,7 +11,7 @@ test("group by none shows a flat list", async ({ page, makeServer }) => {
 });
 
 test("groups by status", async ({ page, makeServer }) => {
-  const s = await makeServer({ resultsFile: fixture("mixed.junit.xml") });
+  const s = await makeServer({ resultsFile: get_fixture_path("mixed.junit.xml") });
   await openCanvas(page, s);
   await page.getByTestId("group-by").selectOption("status");
   await expect(page.getByTestId("group")).toHaveCount(3);
@@ -21,7 +21,7 @@ test("groups by status", async ({ page, makeServer }) => {
 });
 
 test("groups by namespace", async ({ page, makeServer }) => {
-  const s = await makeServer({ resultsFile: fixture("mixed.junit.xml") });
+  const s = await makeServer({ resultsFile: get_fixture_path("mixed.junit.xml") });
   await openCanvas(page, s);
   await page.getByTestId("group-by").selectOption("namespace");
   await expect(page.getByTestId("group")).toHaveCount(2);
@@ -30,7 +30,7 @@ test("groups by namespace", async ({ page, makeServer }) => {
 });
 
 test("groups by class", async ({ page, makeServer }) => {
-  const s = await makeServer({ resultsFile: fixture("mixed.junit.xml") });
+  const s = await makeServer({ resultsFile: get_fixture_path("mixed.junit.xml") });
   await openCanvas(page, s);
   await page.getByTestId("group-by").selectOption("class");
   await expect(page.getByTestId("group")).toHaveCount(2);
@@ -39,7 +39,7 @@ test("groups by class", async ({ page, makeServer }) => {
 });
 
 test("groups by suite (the default)", async ({ page, makeServer }) => {
-  const s = await makeServer({ resultsFile: fixture("mixed.junit.xml") });
+  const s = await makeServer({ resultsFile: get_fixture_path("mixed.junit.xml") });
   await openCanvas(page, s);
   await expect(page.getByTestId("group")).toHaveCount(2);
   await expect(page.getByTestId("group-header").filter({ hasText: "Api.SmokeSuite" })).toBeVisible();
@@ -47,7 +47,7 @@ test("groups by suite (the default)", async ({ page, makeServer }) => {
 });
 
 test("groups by framework", async ({ page, makeServer }) => {
-  const s = await makeServer({ resultsFile: fixture("frameworks.trx") });
+  const s = await makeServer({ resultsFile: get_fixture_path("frameworks.trx") });
   await openCanvas(page, s);
   await page.getByTestId("group-by").selectOption("framework");
   await expect(page.getByTestId("group")).toHaveCount(2);
@@ -56,7 +56,7 @@ test("groups by framework", async ({ page, makeServer }) => {
 });
 
 test("collapses a group", async ({ page, makeServer }) => {
-  const s = await makeServer({ resultsFile: fixture("mixed.junit.xml") });
+  const s = await makeServer({ resultsFile: get_fixture_path("mixed.junit.xml") });
   await openCanvas(page, s);
   const db = () => page.getByTestId("group").filter({ hasText: "Db.RepositoryTests" });
   await expect(db().getByTestId("group-body")).toBeVisible();
@@ -65,7 +65,7 @@ test("collapses a group", async ({ page, makeServer }) => {
 });
 
 test("expands a collapsed group", async ({ page, makeServer }) => {
-  const s = await makeServer({ resultsFile: fixture("mixed.junit.xml") });
+  const s = await makeServer({ resultsFile: get_fixture_path("mixed.junit.xml") });
   await openCanvas(page, s);
   const db = () => page.getByTestId("group").filter({ hasText: "Db.RepositoryTests" });
   await db().getByTestId("group-header").click();
@@ -76,8 +76,8 @@ test("expands a collapsed group", async ({ page, makeServer }) => {
 
 test("group collapse survives a live refresh", async ({ page, makeServer }) => {
   const s = await makeServer({
-    resultsFile: fixture("mixed.junit.xml"),
-    alsoRegister: [fixture("mixed-plus.junit.xml")],
+    resultsFile: get_fixture_path("mixed.junit.xml"),
+    alsoRegister: [get_fixture_path("mixed-plus.junit.xml")],
   });
   await openCanvas(page, s);
 

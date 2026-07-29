@@ -1,14 +1,14 @@
 // Boots the real canvas server over an e2e/fixtures file
-// and opens it in the browser. Specs import test/expect/fixture/openCanvas here.
+// and opens it in the browser. Specs import test/expect/get_fixture_path/openCanvas here.
 import { test as base, expect } from "@playwright/test";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { createResultsServer } from "../src/server.mjs";
 
-const FIX = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
+const FIXTURES_FOLDER_PATH = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 
 // Absolute path to a fixture file.
-export const fixture = (name) => join(FIX, name);
+export const get_fixture_path = (name) => join(FIXTURES_FOLDER_PATH, name);
 
 // Navigate to the canvas and wait for its SSE stream (/events) to open before
 // asserting.

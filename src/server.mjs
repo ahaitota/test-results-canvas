@@ -10,9 +10,9 @@ import { parseJUnit } from "./parsers/junit.mjs";
 import { labelForPath } from "./labels.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url)); // .../src
-const ROOT = dirname(__dirname); // extension root
+const EXTENSION_ROOT = dirname(__dirname);
 const VIEW_PATH = join(__dirname, "view.mjs");
-const SAMPLES_DIR = join(ROOT, "samples");
+const SAMPLES_DIR = join(EXTENSION_ROOT, "samples");
 const DEFAULT_FILE = "results.trx";
 
 export const RESULT_EXTS = [".trx", ".xml"];
@@ -48,14 +48,14 @@ export function normalizeStatus(raw) {
 }
 
 function listLocalNames() {
-    try { return readdirSync(ROOT).filter((f) => RESULT_EXTS.some((e) => f.toLowerCase().endsWith(e))); }
+    try { return readdirSync(EXTENSION_ROOT).filter((f) => RESULT_EXTS.some((e) => f.toLowerCase().endsWith(e))); }
     catch { return []; }
 }
 
 // Selectable files = local extension-folder reports + discovered project files.
 function listResultFiles(discovered) {
     let local = [];
-    try { local = readdirSync(ROOT).filter((f) => RESULT_EXTS.some((e) => f.toLowerCase().endsWith(e))).sort(); }
+    try { local = readdirSync(EXTENSION_ROOT).filter((f) => RESULT_EXTS.some((e) => f.toLowerCase().endsWith(e))).sort(); }
     catch { local = []; }
     const extras = [...discovered.keys()].filter((l) => !local.includes(l)).sort();
     return [...local, ...extras];
@@ -68,7 +68,7 @@ function resolveResultPath(name, discovered) {
     if (discovered.has(raw)) { const abs = discovered.get(raw); return existsSync(abs) ? abs : null; }
     const base = basename(raw);
     if (!RESULT_EXTS.some((e) => base.toLowerCase().endsWith(e))) return null;
-    const full = join(ROOT, base);
+    const full = join(EXTENSION_ROOT, base);
     return existsSync(full) ? full : null;
 }
 
@@ -88,7 +88,7 @@ function persist(results, name, discovered) {
     if (discovered.has(String(name || ""))) return;
     const base = basename(String(name || DEFAULT_FILE)) || DEFAULT_FILE;
     if (!base.toLowerCase().endsWith(".trx")) return;
-    try { writeFileSync(join(ROOT, base), serializeTrx(results, { runName: "Test Results" }), "utf8"); }
+    try { writeFileSync(join(EXTENSION_ROOT, base), serializeTrx(results, { runName: "Test Results" }), "utf8"); }
     catch (err) { console.error("[server] failed to write TRX:", err?.message || err); }
 }
 

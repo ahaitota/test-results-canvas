@@ -1,4 +1,4 @@
-import { test, expect, fixture, openCanvas } from "./canvas-server.mjs";
+import { test, expect, get_fixture_path, openCanvas } from "./canvas-server.mjs";
 
 // Pass/fail/skip status chips filter the list.
 
@@ -7,7 +7,7 @@ async function statuses(page) {
 }
 
 test("filters to passing tests", async ({ page, makeServer }) => {
-  const s = await makeServer({ resultsFile: fixture("mixed.trx") });
+  const s = await makeServer({ resultsFile: get_fixture_path("mixed.trx") });
   await openCanvas(page, s);
   await page.getByTestId("chip-pass").click();
   await expect(page.getByTestId("test-row")).toHaveCount(3);
@@ -15,7 +15,7 @@ test("filters to passing tests", async ({ page, makeServer }) => {
 });
 
 test("filters to failing tests", async ({ page, makeServer }) => {
-  const s = await makeServer({ resultsFile: fixture("mixed.trx") });
+  const s = await makeServer({ resultsFile: get_fixture_path("mixed.trx") });
   await openCanvas(page, s);
   await page.getByTestId("chip-fail").click();
   await expect(page.getByTestId("test-row")).toHaveCount(2);
@@ -23,7 +23,7 @@ test("filters to failing tests", async ({ page, makeServer }) => {
 });
 
 test("filters to skipped tests", async ({ page, makeServer }) => {
-  const s = await makeServer({ resultsFile: fixture("mixed.trx") });
+  const s = await makeServer({ resultsFile: get_fixture_path("mixed.trx") });
   await openCanvas(page, s);
   await page.getByTestId("chip-skip").click();
   await expect(page.getByTestId("test-row")).toHaveCount(1);
@@ -31,7 +31,7 @@ test("filters to skipped tests", async ({ page, makeServer }) => {
 });
 
 test("toggles a filter back off", async ({ page, makeServer }) => {
-  const s = await makeServer({ resultsFile: fixture("mixed.trx") });
+  const s = await makeServer({ resultsFile: get_fixture_path("mixed.trx") });
   await openCanvas(page, s);
   await page.getByTestId("chip-fail").click();
   await expect(page.getByTestId("test-row")).toHaveCount(2);
@@ -40,7 +40,7 @@ test("toggles a filter back off", async ({ page, makeServer }) => {
 });
 
 test("combines two filters", async ({ page, makeServer }) => {
-  const s = await makeServer({ resultsFile: fixture("mixed.trx") });
+  const s = await makeServer({ resultsFile: get_fixture_path("mixed.trx") });
   await openCanvas(page, s);
   await page.getByTestId("chip-pass").click();
   await page.getByTestId("chip-fail").click();
@@ -49,7 +49,7 @@ test("combines two filters", async ({ page, makeServer }) => {
 });
 
 test("filters via the Enter key on a chip", async ({ page, makeServer }) => {
-  const s = await makeServer({ resultsFile: fixture("mixed.trx") });
+  const s = await makeServer({ resultsFile: get_fixture_path("mixed.trx") });
   await openCanvas(page, s);
   await page.getByTestId("chip-fail").focus();
   await page.keyboard.press("Enter");
@@ -57,7 +57,7 @@ test("filters via the Enter key on a chip", async ({ page, makeServer }) => {
 });
 
 test("filters via the Space key on a chip", async ({ page, makeServer }) => {
-  const s = await makeServer({ resultsFile: fixture("mixed.trx") });
+  const s = await makeServer({ resultsFile: get_fixture_path("mixed.trx") });
   await openCanvas(page, s);
   await page.getByTestId("chip-skip").focus();
   await page.keyboard.press("Space");
@@ -65,7 +65,7 @@ test("filters via the Space key on a chip", async ({ page, makeServer }) => {
 });
 
 test("updates the showing counter when filtered", async ({ page, makeServer }) => {
-  const s = await makeServer({ resultsFile: fixture("mixed.trx") });
+  const s = await makeServer({ resultsFile: get_fixture_path("mixed.trx") });
   await openCanvas(page, s);
   await expect(page.getByTestId("showing")).toHaveText("");
   await page.getByTestId("chip-fail").click();

@@ -1,9 +1,9 @@
-import { test, expect, fixture, openCanvas } from "./canvas-server.mjs";
+import { test, expect, get_fixture_path, openCanvas } from "./canvas-server.mjs";
 
 // "Next failure" button and re-expand a collapsed group holding a failure.
 
 test("disables the jump button when there are no failures", async ({ page, makeServer }) => {
-  const s = await makeServer({ resultsFile: fixture("empty.trx") });
+  const s = await makeServer({ resultsFile: get_fixture_path("empty.trx") });
   await openCanvas(page, s);
   await s.setResults([
     { name: "a", status: "pass", durationMs: 1 },
@@ -13,13 +13,13 @@ test("disables the jump button when there are no failures", async ({ page, makeS
 });
 
 test("enables the jump button when there are failures", async ({ page, makeServer }) => {
-  const s = await makeServer({ resultsFile: fixture("mixed.trx") });
+  const s = await makeServer({ resultsFile: get_fixture_path("mixed.trx") });
   await openCanvas(page, s);
   await expect(page.getByTestId("jump-fail")).toBeEnabled();
 });
 
 test("clicking jump re-expands a collapsed group hiding a failure", async ({ page, makeServer }) => {
-  const s = await makeServer({ resultsFile: fixture("mixed.junit.xml") });
+  const s = await makeServer({ resultsFile: get_fixture_path("mixed.junit.xml") });
   await openCanvas(page, s);
   const api = () => page.getByTestId("group").filter({ hasText: "Api.SmokeSuite" });
   await api().getByTestId("group-header").click();
@@ -30,7 +30,7 @@ test("clicking jump re-expands a collapsed group hiding a failure", async ({ pag
 });
 
 test("the n key jumps to the next failure", async ({ page, makeServer }) => {
-  const s = await makeServer({ resultsFile: fixture("mixed.junit.xml") });
+  const s = await makeServer({ resultsFile: get_fixture_path("mixed.junit.xml") });
   await openCanvas(page, s);
   const api = () => page.getByTestId("group").filter({ hasText: "Api.SmokeSuite" });
   await api().getByTestId("group-header").click();
@@ -42,7 +42,7 @@ test("the n key jumps to the next failure", async ({ page, makeServer }) => {
 });
 
 test("the p key jumps to the previous failure", async ({ page, makeServer }) => {
-  const s = await makeServer({ resultsFile: fixture("mixed.junit.xml") });
+  const s = await makeServer({ resultsFile: get_fixture_path("mixed.junit.xml") });
   await openCanvas(page, s);
   const api = () => page.getByTestId("group").filter({ hasText: "Api.SmokeSuite" });
   await api().getByTestId("group-header").click();

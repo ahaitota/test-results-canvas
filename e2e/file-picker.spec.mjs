@@ -1,11 +1,11 @@
-import { test, expect, fixture, openCanvas } from "./canvas-server.mjs";
+import { test, expect, get_fixture_path, openCanvas } from "./canvas-server.mjs";
 
 // The file-select dropdown chooses which results file the panel displays.
 
 test("lists every registered file in the dropdown", async ({ page, makeServer }) => {
   const s = await makeServer({
-    resultsFile: fixture("mixed.trx"),
-    alsoRegister: [fixture("mixed.junit.xml")],
+    resultsFile: get_fixture_path("mixed.trx"),
+    alsoRegister: [get_fixture_path("mixed.junit.xml")],
   });
   await openCanvas(page, s);
 
@@ -16,8 +16,8 @@ test("lists every registered file in the dropdown", async ({ page, makeServer })
 
 test("switches the displayed results when a file is picked", async ({ page, makeServer }) => {
   const s = await makeServer({
-    resultsFile: fixture("mixed.trx"),
-    alsoRegister: [fixture("mixed.junit.xml")],
+    resultsFile: get_fixture_path("mixed.trx"),
+    alsoRegister: [get_fixture_path("mixed.junit.xml")],
   });
   await openCanvas(page, s);
   await expect(page.getByTestId("test-name").filter({ hasText: "AddsTwoNumbers" })).toBeVisible();

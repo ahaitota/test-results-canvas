@@ -1,9 +1,9 @@
-import { test, expect, fixture, openCanvas } from "./canvas-server.mjs";
+import { test, expect, get_fixture_path, openCanvas } from "./canvas-server.mjs";
 
 // Sort dropdown options.
 
 test("sorts by duration, slowest first", async ({ page, makeServer }) => {
-  const s = await makeServer({ resultsFile: fixture("mixed.trx") });
+  const s = await makeServer({ resultsFile: get_fixture_path("mixed.trx") });
   await openCanvas(page, s);
   await page.getByTestId("group-by").selectOption("none");
   await page.getByTestId("sort-by").selectOption("duration");
@@ -11,7 +11,7 @@ test("sorts by duration, slowest first", async ({ page, makeServer }) => {
 });
 
 test("sorts by name alphabetically", async ({ page, makeServer }) => {
-  const s = await makeServer({ resultsFile: fixture("mixed.trx") });
+  const s = await makeServer({ resultsFile: get_fixture_path("mixed.trx") });
   await openCanvas(page, s);
   await page.getByTestId("group-by").selectOption("none");
   await page.getByTestId("sort-by").selectOption("name");
@@ -20,7 +20,7 @@ test("sorts by name alphabetically", async ({ page, makeServer }) => {
 });
 
 test("sorts by outcome, failures first", async ({ page, makeServer }) => {
-  const s = await makeServer({ resultsFile: fixture("mixed.trx") });
+  const s = await makeServer({ resultsFile: get_fixture_path("mixed.trx") });
   await openCanvas(page, s);
   await page.getByTestId("group-by").selectOption("none");
   await page.getByTestId("sort-by").selectOption("status");
@@ -28,7 +28,7 @@ test("sorts by outcome, failures first", async ({ page, makeServer }) => {
 });
 
 test("default sort keeps the original file order", async ({ page, makeServer }) => {
-  const s = await makeServer({ resultsFile: fixture("mixed.trx") });
+  const s = await makeServer({ resultsFile: get_fixture_path("mixed.trx") });
   await openCanvas(page, s);
   await page.getByTestId("group-by").selectOption("none");
   await page.getByTestId("sort-by").selectOption("default");

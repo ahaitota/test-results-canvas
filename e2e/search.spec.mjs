@@ -1,9 +1,9 @@
-import { test, expect, fixture, openCanvas } from "./canvas-server.mjs";
+import { test, expect, get_fixture_path, openCanvas } from "./canvas-server.mjs";
 
 // Free-text search over name, class, method, framework, suite, computer, message.
 
 test("searches by test name", async ({ page, makeServer }) => {
-  const s = await makeServer({ resultsFile: fixture("mixed.trx") });
+  const s = await makeServer({ resultsFile: get_fixture_path("mixed.trx") });
   await openCanvas(page, s);
   await page.getByTestId("group-by").selectOption("none");
   await page.getByTestId("search").fill("Integration");
@@ -11,7 +11,7 @@ test("searches by test name", async ({ page, makeServer }) => {
 });
 
 test("searches by class name", async ({ page, makeServer }) => {
-  const s = await makeServer({ resultsFile: fixture("mixed.junit.xml") });
+  const s = await makeServer({ resultsFile: get_fixture_path("mixed.junit.xml") });
   await openCanvas(page, s);
   await page.getByTestId("group-by").selectOption("none");
   await page.getByTestId("search").fill("Db.Repository");
@@ -19,7 +19,7 @@ test("searches by class name", async ({ page, makeServer }) => {
 });
 
 test("searches by failure message", async ({ page, makeServer }) => {
-  const s = await makeServer({ resultsFile: fixture("mixed.trx") });
+  const s = await makeServer({ resultsFile: get_fixture_path("mixed.trx") });
   await openCanvas(page, s);
   await page.getByTestId("group-by").selectOption("none");
   await page.getByTestId("search").fill("NullReference");
@@ -28,7 +28,7 @@ test("searches by failure message", async ({ page, makeServer }) => {
 });
 
 test("clearing the search restores every row", async ({ page, makeServer }) => {
-  const s = await makeServer({ resultsFile: fixture("mixed.trx") });
+  const s = await makeServer({ resultsFile: get_fixture_path("mixed.trx") });
   await openCanvas(page, s);
   await page.getByTestId("group-by").selectOption("none");
   await page.getByTestId("search").fill("Integration");
@@ -38,7 +38,7 @@ test("clearing the search restores every row", async ({ page, makeServer }) => {
 });
 
 test("shows an empty state when nothing matches", async ({ page, makeServer }) => {
-  const s = await makeServer({ resultsFile: fixture("mixed.trx") });
+  const s = await makeServer({ resultsFile: get_fixture_path("mixed.trx") });
   await openCanvas(page, s);
   await page.getByTestId("search").fill("zzz-no-such-test");
   await expect(page.getByTestId("test-row")).toHaveCount(0);
