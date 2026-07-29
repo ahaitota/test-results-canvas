@@ -195,7 +195,7 @@ export function renderShell(title) {
   <div id="toolbar" data-testid="toolbar" class="toolbar hidden">
     <div class="toolbar-row">
       <input id="search" data-testid="search" class="search" type="search" placeholder="Search name, class or message…" autocomplete="off" />
-      <button id="jump-fail" data-testid="jump-fail" class="link-btn" type="button" title="Jump to next failure (press n)">Next failure ↓</button>
+      <button id="jump-fail" data-testid="jump-fail" class="link-btn" type="button" title="Jump to failure (n = next, p = previous)">Next failure ↓</button>
     </div>
     <div class="toolbar-row toolbar-controls">
       <div class="ctl-pair">
@@ -662,7 +662,7 @@ document.addEventListener("keydown", (e)=>{
   const tag = (e.target && e.target.tagName ? e.target.tagName : "").toUpperCase();
   if(tag==="INPUT"||tag==="SELECT"||tag==="TEXTAREA") return;
   if(e.key==="n"){ e.preventDefault(); jumpToNextFailure(1); }
-  else if(e.key==="p" || e.key==="N"){ e.preventDefault(); jumpToNextFailure(-1); }
+  else if(e.key==="p"){ e.preventDefault(); jumpToNextFailure(-1); }
 });
 
 const source = new EventSource("/events");
