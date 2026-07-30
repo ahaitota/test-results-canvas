@@ -29,6 +29,17 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
 
+      # Discovery depends on this exact filename: the app scans for
+      # extension.mjs and never reads package.json "main". Losing it breaks
+      # installation silently, while every test below still passes.
+      - name: Verify extension entry point
+        run: |
+          test -f extension.mjs || {
+            echo "::error file=extension.mjs::extension.mjs is missing. The Copilot app discovers extensions by that exact filename; without it this extension is skipped silently."
+            exit 1
+          }
+          node --check extension.mjs
+
       # The TypeScript toolchain (tsc/tsx) is now a dev dependency.
       - name: Install dependencies
         run: npm ci
@@ -38,6 +49,20 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      # dist/ is committed so a plain clone runs without a build step. That only
+      # holds if the committed output matches the sources it was built from, so
+      # fail the run when a source change was not rebuilt and committed.
+      # --porcelain is used rather than `git diff --exit-code` because it also
+      # reports brand-new files that a diff against HEAD would miss.
+      - name: Verify committed dist/ is up to date
+        run: |
+          if [ -n "$(git status --porcelain -- dist/)" ]; then
+            echo "::error::dist/ is out of date. Run 'npm run build' and commit the result."
+            git status --porcelain -- dist/
+            git --no-pager diff -- dist/
+            exit 1
+          fi
 
       # test:ci writes a JUnit XML alongside the console output.
       - name: Run unit tests

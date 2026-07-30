@@ -13,6 +13,8 @@ import { dirname, join, resolve as resolvePath } from "node:path";
 import { watchFile, readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { joinSession, createCanvas } from "@github/copilot-sdk/extension";
 import { createResultsServer, looksLikeResults, RESULT_EXTS } from "./src/server.js";
+// Action/open input reaches handlers typed as `unknown`; narrow it here first.
+import { asResultInput, asOpenInput } from "./src/validate.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const VIEW_PATH = join(__dirname, "src", "view.js");
 // The canvas id declared below (used when programmatically opening the panel).
@@ -164,7 +166,11 @@ const session = await joinSession({
                         const handle = servers.get(ctx.instanceId);
                         if (!handle)
                             return { success: false, error: "canvas not open" };
-                        const total = handle.addResult(ctx.input);
+                        const result = asResultInput(ctx.input);
+                        if (!result) {
+                            return { success: false, error: "invalid input: expected an object with a non-empty string 'name'" };
+                        }
+                        const total = handle.addResult(result);
                         return { success: true, totalResults: total };
                     },
                 },
@@ -195,8 +201,18 @@ const session = await joinSession({
                         const handle = servers.get(ctx.instanceId);
                         if (!handle)
                             return { success: false, error: "canvas not open" };
-                        const total = handle.setResults(ctx.input.results || []);
-                        return { success: true, totalResults: total };
+                        const raw = ctx.input?.results;
+                        if (!Array.isArray(raw)) {
+                            return { success: false, error: "invalid input: 'results' must be an array of test results" };
+                        }
+                        // Keep the well-formed entries and tell the agent how many
+                        // were unusable, rather than failing the whole batch.
+                        const results = raw.map(asResultInput).filter((r) => r !== null);
+                        const skipped = raw.length - results.length;
+                        const total = handle.setResults(results);
+                        return skipped > 0
+                            ? { success: true, totalResults: total, skipped, warning: `${skipped} entr${skipped === 1 ? "y" : "ies"} skipped: missing a valid 'name'` }
+                            : { success: true, totalResults: total };
                     },
                 },
                 {
@@ -233,6 +249,11 @@ const session = await joinSession({
             open: async (ctx) => {
                 // Panel header is always a fixed label, regardless of input.
                 const title = "Test Results";
+                // Non-string resultsFile/resultsDir are dropped here so they
+                // never reach existsSync()/path joins; the canvas then opens
+                // empty instead of throwing during open. ctx.input may also be
+                // absent entirely — both seed fields are optional.
+                const seed = asOpenInput(ctx.input);
                 let handle = servers.get(ctx.instanceId);
                 if (!handle) {
                     // Seed from the agent's input (file or dir) before the page
@@ -240,14 +261,14 @@ const session = await joinSession({
                     handle = await createResultsServer({
                         title,
                         port: FIXED_PORT,
-                        resultsFile: ctx.input?.resultsFile,
-                        resultsDir: ctx.input?.resultsDir,
+                        resultsFile: seed.resultsFile,
+                        resultsDir: seed.resultsDir,
                     });
                     servers.set(ctx.instanceId, handle);
                 }
                 else {
                     // Re-open may point at a new file; re-seed and push it live.
-                    handle.loadInput(ctx.input || {});
+                    handle.loadInput(seed);
                 }
                 return { title, url: handle.url };
             },

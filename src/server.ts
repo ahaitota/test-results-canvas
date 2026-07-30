@@ -128,7 +128,7 @@ export interface ResultsServerOptions {
 }
 
 // A single result as accepted from SDK actions before its status is normalized.
-interface ResultInput {
+export interface ResultInput {
     name: string;
     status: unknown;
     durationMs?: number;

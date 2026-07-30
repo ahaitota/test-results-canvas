@@ -55,6 +55,7 @@ extension.ts             the real entry point source (compiled to dist/extension
 src/
   view.ts                panel UI (CSS + client rendering/filtering/animation)
   server.ts              SDK-free HTTP/SSE server, file loading + watching
+  validate.ts            narrows untrusted agent input at the action/open boundary
   labels.ts              file-picker label disambiguation
   types.ts               shared TestResult / TestStatus types
   parsers/
@@ -64,7 +65,11 @@ test/
   trx.test.ts            unit tests for the TRX parser
   junit.test.ts          unit tests for the JUnit parser
   labels.test.ts         unit tests for the label generator
+  validate.test.ts       unit tests for the input-validation boundary
 e2e/                     Playwright browser tests (load the compiled dist server)
+scripts/
+  typecheck-sdk.ts       checks the pinned SDK against the installed app's copy
+  wrap-junit.ts          adds the <testsuite> wrapper node:test omits
 dist/                    compiled JS + .d.ts (committed; regenerate with `npm run build`)
 tsconfig.json            type-check config (noEmit)
 tsconfig.build.json      build config (emits dist/)
@@ -77,6 +82,7 @@ tsconfig.build.json      build config (emits dist/)
 npm install          # install the TypeScript toolchain + Playwright
 npm run build        # compile TypeScript to dist/
 npm run typecheck    # type-check without emitting
+npm run typecheck:sdk # re-check against the installed app's SDK (see below)
 npm test             # run unit tests (via tsx)
 npm run test:e2e     # build + run Playwright e2e tests
 ```
@@ -90,4 +96,24 @@ and Playwright resolve them to the `.ts` sources. After changing any source, run
 > it the extension is skipped silently — no error, the panel just never appears.
 > Note that the build and test suites all import the code directly, so they pass
 > even when discovery is broken.
+
+### `@github/copilot-sdk`
+
+The SDK is a **devDependency**, so `tsc` type-checks against the real published
+declarations — there is no hand-written stub. It is dev-only for a reason: at
+runtime that copy is never loaded. The Copilot app injects its own bundled SDK
+into the extension process through a module resolver hook, so `node_modules` is
+used purely for types. End users are unaffected either way, since `dist/` is
+committed and they never run `npm install`.
+
+It is a heavy install (the SDK depends on the full `@github/copilot` CLI), which
+is the price of type-checking against the genuine contract instead of a mirror
+that can quietly go stale.
+
+Because the compile-time SDK and the run-time SDK are two different copies on
+two different release cadences, they can drift. `npm run typecheck:sdk`
+re-checks the project against the SDK inside your installed Copilot app and
+fails if the pinned version no longer agrees with it. Run it before opening a PR
+that touches SDK-facing code; on a machine without the app it prints a notice
+and exits 0, so it is safe to run anywhere.
 

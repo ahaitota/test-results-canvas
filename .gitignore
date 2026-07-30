@@ -15,6 +15,9 @@ playwright-report/
 # extension straight from a checkout; remove that exception to require a build).
 *.tsbuildinfo
 
+# Temp config written by `npm run typecheck:sdk` (removed on exit).
+tsconfig.sdk-check.json
+
 # Dependencies / editor / OS cruft
 node_modules/
 .DS_Store

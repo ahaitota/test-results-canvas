@@ -12,7 +12,7 @@ export interface ResultsServerOptions {
     watch?: boolean;
     alsoRegister?: string[];
 }
-interface ResultInput {
+export interface ResultInput {
     name: string;
     status: unknown;
     durationMs?: number;
@@ -37,4 +37,3 @@ export declare function createResultsServer(options?: ResultsServerOptions): Pro
     reload: () => void;
     close(): Promise<void>;
 }>;
-export {};

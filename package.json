@@ -9,16 +9,18 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json",
     "typecheck:e2e": "tsc -p e2e/tsconfig.json",
-    "test": "node --import tsx --test test/labels.test.ts test/trx.test.ts test/junit.test.ts",
-    "test:ci": "node -e \"require('node:fs').mkdirSync('test-results',{recursive:true})\" && node --import tsx --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=test-results/unit-junit.xml test/labels.test.ts test/trx.test.ts test/junit.test.ts",
+    "typecheck:sdk": "node --import tsx scripts/typecheck-sdk.ts",
+    "test": "node --import tsx --test test/labels.test.ts test/trx.test.ts test/junit.test.ts test/validate.test.ts",
+    "test:ci": "node -e \"require('node:fs').mkdirSync('test-results',{recursive:true})\" && node --import tsx --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=test-results/unit-junit.xml test/labels.test.ts test/trx.test.ts test/junit.test.ts test/validate.test.ts",
     "test:e2e": "playwright test",
     "pretest:e2e": "npm run build"
   },
   "engines": {
-    "node": ">=18"
+    "node": "^20.19.0 || >=22.12.0"
   },
   "license": "MIT",
   "devDependencies": {
+    "@github/copilot-sdk": "^1.0.8",
     "@playwright/test": "^1.61.1",
     "@types/node": "^22.10.0",
     "tsx": "^4.19.2",
