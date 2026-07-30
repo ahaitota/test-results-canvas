@@ -97,6 +97,16 @@ and Playwright resolve them to the `.ts` sources. After changing any source, run
 > Note that the build and test suites all import the code directly, so they pass
 > even when discovery is broken.
 
+> **All text from result files must go through `esc()` in `src/view.ts`.** Test
+> names, class names and failure messages are attacker-controlled, and several
+> land inside quoted HTML attributes such as `title="..."` — a name containing a
+> double quote closes the attribute early and injects a live event handler.
+> `esc()` escapes `&`, `<`, `>`, `"` and `'`, so it is safe in element text and
+> in quoted attributes alike. `e2e/xss.spec.ts` renders a hostile fixture and
+> asserts no `on*` attributes reach the DOM. Keep it passing if the renderer is
+> ever rewritten onto a UI framework: `dangerouslySetInnerHTML`, `v-html` and
+> `{@html}` reintroduce exactly this bug.
+
 ### `@github/copilot-sdk`
 
 The SDK is a **devDependency**, so `tsc` type-checks against the real published

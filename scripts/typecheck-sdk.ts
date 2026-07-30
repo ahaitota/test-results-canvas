@@ -1,20 +1,5 @@
-// Version-skew check between the SDK we compile against and the one we run on.
-//
-// `@github/copilot-sdk` is a devDependency, so `tsc` type-checks against the
-// version pinned in package-lock.json. At runtime, though, that copy is never
-// loaded: the Copilot app injects its own bundled SDK via a module resolver
-// hook (see COPILOT_SDK_PATH in the extension log). Those two are usually the
-// same, but they ship on different cadences and can drift apart.
-//
-// This script type-checks the project a second time against the SDK inside the
-// installed app, so a mismatch between compile-time and run-time contracts
-// shows up as a compile error instead of a crash in the panel.
-//
-// It exits 0 with a notice anywhere the app isn't installed (CI runners), so it
-// is safe to run in any environment.
-//
-// Usage: npm run typecheck:sdk
-//        COPILOT_SDK_PATH=/path/to/copilot-sdk npm run typecheck:sdk
+// We compile against the pinned @github/copilot-sdk, but the app injects its own
+// bundled copy at runtime; this catches drift. Exits 0 where the app is absent (CI).
 
 import { existsSync, writeFileSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";

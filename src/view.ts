@@ -234,7 +234,9 @@ function meta(){
     skip: { label:"SKIP", color:tok("--fgColor-muted"),   bg:tok("--bgColor-muted") },
   };
 }
-function esc(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+// Escapes for element text and quoted attributes alike; the quote cases are what
+// stop a name like  probe" onmouseover="...  becoming a live handler.
+function esc(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
 
 const STATUS_WORD = { pass:"Passed", fail:"Failed", skip:"Skipped" };
 function fmtTime(iso){

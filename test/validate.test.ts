@@ -1,10 +1,5 @@
-// Tests for the agent-input validation boundary (src/validate.ts).
-//
-// The SDK rejects input that violates the declared JSON schemas before a
-// handler runs, so these helpers are a second line of defence — they exist to
-// narrow `unknown` for the compiler and to stay correct if a schema and its
-// handler ever drift apart. The cases below are what that drift looks like:
-// missing fields, nulls, and values of the wrong type.
+// Tests for src/validate.ts: the SDK rejects schema violations first, so these
+// helpers narrow `unknown` for the compiler and cover schema/handler drift.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { asString, asNumber, asResultInput, asOpenInput } from "../src/validate.js";
