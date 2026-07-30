@@ -43,17 +43,43 @@ re-run.
 
 ## Project structure
 
+The extension is written in **TypeScript** and compiled to `dist/` with `tsc`.
+The compiled `dist/` output is committed, so cloning the repo is enough to run the
+extension — no build step required for end users.
+
 ```
-extension.mjs            entry point (must stay at the repo root — the app
-                         discovers the extension by this file)
+extension.ts             entry point source (compiled to dist/extension.js, which
+                         package.json "main" points at — the app loads that)
 src/
-  view.mjs               panel UI (CSS + client rendering/filtering/animation)
+  view.ts                panel UI (CSS + client rendering/filtering/animation)
+  server.ts              SDK-free HTTP/SSE server, file loading + watching
+  labels.ts              file-picker label disambiguation
+  types.ts               shared TestResult / TestStatus types
   parsers/
-    trx.mjs              .NET TRX parser
-    junit.mjs            JUnit XML parser
+    trx.ts               .NET TRX parser
+    junit.ts             JUnit XML parser
 test/
-  trx.test.mjs           unit tests for the TRX parser
-  junit.test.mjs         unit tests for the JUnit parser
-.github/workflows/ci.yml CI: syntax-check + `node --test` on Node 20 & 22
+  trx.test.ts            unit tests for the TRX parser
+  junit.test.ts          unit tests for the JUnit parser
+  labels.test.ts         unit tests for the label generator
+e2e/                     Playwright browser tests (load the compiled dist server)
+dist/                    compiled JS + .d.ts (committed; regenerate with `npm run build`)
+tsconfig.json            type-check config (noEmit)
+tsconfig.build.json      build config (emits dist/)
+.github/workflows/ci.yml CI: typecheck + build + `node --test` (Node 20 & 22) + e2e
 ```
+
+## Development
+
+```bash
+npm install          # install the TypeScript toolchain + Playwright
+npm run build        # compile TypeScript to dist/
+npm run typecheck    # type-check without emitting
+npm test             # run unit tests (via tsx)
+npm run test:e2e     # build + run Playwright e2e tests
+```
+
+Intra-project imports use `.js` specifiers (required by NodeNext ESM); `tsc`, `tsx`,
+and Playwright resolve them to the `.ts` sources. After changing any source, run
+`npm run build` and commit the updated `dist/` so clones keep working out of the box.
 

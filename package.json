@@ -4,17 +4,24 @@
   "private": true,
   "description": "GitHub Copilot canvas extension that renders .NET TRX and JUnit XML test runs as a live UI panel.",
   "type": "module",
-  "main": "extension.mjs",
+  "main": "dist/extension.js",
   "scripts": {
-    "test": "node --test",
-    "test:ci": "node -e \"require('node:fs').mkdirSync('test-results',{recursive:true})\" && node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=test-results/unit-junit.xml",
-    "test:e2e": "playwright test"
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "typecheck:e2e": "tsc -p e2e/tsconfig.json",
+    "test": "node --import tsx --test test/labels.test.ts test/trx.test.ts test/junit.test.ts",
+    "test:ci": "node -e \"require('node:fs').mkdirSync('test-results',{recursive:true})\" && node --import tsx --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=test-results/unit-junit.xml test/labels.test.ts test/trx.test.ts test/junit.test.ts",
+    "test:e2e": "playwright test",
+    "pretest:e2e": "npm run build"
   },
   "engines": {
     "node": ">=18"
   },
   "license": "MIT",
   "devDependencies": {
-    "@playwright/test": "^1.61.1"
+    "@playwright/test": "^1.61.1",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
   }
 }

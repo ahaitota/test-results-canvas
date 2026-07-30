@@ -11,6 +11,10 @@ test-results/
 playwright-report/
 .playwright/
 
+# TypeScript build metadata (dist/ itself is committed so the app can load the
+# extension straight from a checkout; remove that exception to require a build).
+*.tsbuildinfo
+
 # Dependencies / editor / OS cruft
 node_modules/
 .DS_Store
