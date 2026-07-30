@@ -48,8 +48,10 @@ The compiled `dist/` output is committed, so cloning the repo is enough to run t
 extension — no build step required for end users.
 
 ```
-extension.ts             entry point source (compiled to dist/extension.js, which
-                         package.json "main" points at — the app loads that)
+extension.mjs            discovery entry point — the Copilot app scans for this
+                         exact filename (it ignores package.json "main"). One
+                         line: it imports dist/extension.js. Never edit.
+extension.ts             the real entry point source (compiled to dist/extension.js)
 src/
   view.ts                panel UI (CSS + client rendering/filtering/animation)
   server.ts              SDK-free HTTP/SSE server, file loading + watching
@@ -82,4 +84,10 @@ npm run test:e2e     # build + run Playwright e2e tests
 Intra-project imports use `.js` specifiers (required by NodeNext ESM); `tsc`, `tsx`,
 and Playwright resolve them to the `.ts` sources. After changing any source, run
 `npm run build` and commit the updated `dist/` so clones keep working out of the box.
+
+> **Don't delete or rename `extension.mjs`.** The app discovers extensions by
+> scanning for that exact filename and never reads `package.json`'s `main`. Without
+> it the extension is skipped silently — no error, the panel just never appears.
+> Note that the build and test suites all import the code directly, so they pass
+> even when discovery is broken.
 
