@@ -6,6 +6,11 @@ on:
     branches: [main]
   pull_request:
 
+# Tests only read the repo and upload results as artifacts; the separate
+# test-report.yml workflow publishes the Check runs.
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Test (Node ${{ matrix.node-version }})
@@ -23,11 +28,56 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
 
-      # No dependency install step: the Copilot SDK is provided by the app at
-      # runtime, and the tests rely only on Node's built-in test runner -- so
-      # there is no package-lock.json and nothing to `npm ci`.
+      # No install step: unit tests use only Node's built-in test runner.
       - name: Syntax-check all ES modules
         run: find . -name '*.mjs' -not -path './node_modules/*' -print0 | xargs -0 -n1 node --check
 
+      # test:ci writes a JUnit XML alongside the console output.
       - name: Run unit tests
-        run: npm test
+        run: npm run test:ci
+
+      # Add the <testsuite> wrapper node:test omits, so the reporter can read it.
+      - name: Normalize unit JUnit
+        if: always()
+        run: node scripts/wrap-junit.mjs test-results/unit-junit.xml
+
+      - name: Upload unit test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results-${{ matrix.node-version }}
+          path: test-results/unit-junit.xml
+          if-no-files-found: warn
+
+  e2e:
+    name: Playwright e2e
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+
+      # Install Playwright and its browser.
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      # Emits JUnit XML (test-results/) and an HTML report (playwright-report/).
+      - name: Run e2e tests
+        run: npm run test:e2e
+
+      - name: Upload e2e report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/e2e-junit.xml
+          if-no-files-found: warn

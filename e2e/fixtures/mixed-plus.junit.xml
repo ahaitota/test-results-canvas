@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="Api.SmokeSuite" hostname="ci-agent-1" timestamp="2026-07-27T13:00:00">
+    <testcase name="health endpoint returns 200" classname="Api.Smoke" time="0.031" />
+    <testcase name="login rejects bad password" classname="Api.Smoke" time="0.052">
+      <failure message="Expected 401 but got 200" type="AssertionError">at Api.Smoke.login (login_test.js:12)</failure>
+    </testcase>
+    <testcase name="feature flag disabled" classname="Api.Smoke" time="0">
+      <skipped message="pending backend support" />
+    </testcase>
+    <testcase name="logout clears session" classname="Api.Smoke" time="0.024" />
+  </testsuite>
+  <testsuite name="Db.RepositoryTests" hostname="ci-agent-1" timestamp="2026-07-27T13:00:05">
+    <testcase name="saves and loads a row" classname="Db.Repository" time="0.140" />
+    <testcase name="rolls back on error" classname="Db.Repository" time="0.090" />
+  </testsuite>
+</testsuites>

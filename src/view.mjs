@@ -184,23 +184,23 @@ export function renderShell(title) {
 </head>
 <body>
   <div class="controls">
-    <select id="file-select" title="Choose which results file to display"></select>
+    <select id="file-select" data-testid="file-select" title="Choose which results file to display"></select>
   </div>
   <div class="head">
-    <h1><span id="title">${title}</span></h1>
+    <h1><span id="title" data-testid="title">${title}</span></h1>
   </div>
-  <div id="banner"></div>
+  <div id="banner" data-testid="banner"></div>
   <hr>
-  <div id="summary"></div>
-  <div id="toolbar" class="toolbar hidden">
+  <div id="summary" data-testid="summary"></div>
+  <div id="toolbar" data-testid="toolbar" class="toolbar hidden">
     <div class="toolbar-row">
-      <input id="search" class="search" type="search" placeholder="Search name, class or message…" autocomplete="off" />
-      <button id="jump-fail" class="link-btn" type="button" title="Jump to next failure (press n)">Next failure ↓</button>
+      <input id="search" data-testid="search" class="search" type="search" placeholder="Search name, class or message…" autocomplete="off" />
+      <button id="jump-fail" data-testid="jump-fail" class="link-btn" type="button" title="Jump to failure (n = next, p = previous)">Next failure ↓</button>
     </div>
     <div class="toolbar-row toolbar-controls">
       <div class="ctl-pair">
         <label class="ctl">Group
-          <select id="group-by">
+          <select id="group-by" data-testid="group-by">
             <option value="none">None</option>
             <option value="status">Status</option>
             <option value="namespace">Namespace</option>
@@ -210,7 +210,7 @@ export function renderShell(title) {
           </select>
         </label>
         <label class="ctl">Sort
-          <select id="sort-by">
+          <select id="sort-by" data-testid="sort-by">
             <option value="default">Default</option>
             <option value="name">Name</option>
             <option value="duration">Duration</option>
@@ -218,10 +218,10 @@ export function renderShell(title) {
           </select>
         </label>
       </div>
-      <span id="showing" class="showing"></span>
+      <span id="showing" data-testid="showing" class="showing"></span>
     </div>
   </div>
-  <div id="list"><p class="empty">No test results yet. Ask the agent to run tests and report the results!</p></div>
+  <div id="list" data-testid="list"><p class="empty" data-testid="empty">No test results yet. Ask the agent to run tests and report the results!</p></div>
 
 <script>
 const css = getComputedStyle(document.documentElement);
@@ -313,7 +313,7 @@ function miniCounts(c){
 function renderRow(t, M){
   const m = M[t.status] || M.skip;
   const dur = t.durationMs!=null ? '<span class="dur">'+fmtDur(t.durationMs)+'</span>' : "";
-  const arrow = '<button class="toggle" type="button" aria-expanded="false" aria-label="Toggle details">&#9654;</button>';
+  const arrow = '<button class="toggle" data-testid="row-toggle" type="button" aria-expanded="false" aria-label="Toggle details">&#9654;</button>';
   const statusWord = STATUS_WORD[t.status] || t.status;
 
   // Collect whichever fields are present in the real result (from the TRX/JUnit).
@@ -345,27 +345,26 @@ function renderRow(t, M){
 
   const primaryGrid = '<div class="dgrid">'+renderFields(primaryFields)+'</div>';
   const moreBlock = secondaryFields.length
-    ? '<button class="more-toggle" type="button" aria-expanded="false">Show more \u25BE</button>'+
-      '<div class="dgrid secondary hidden">'+renderFields(secondaryFields)+'</div>'
+    ? '<button class="more-toggle" data-testid="show-more" type="button" aria-expanded="false">Show more \u25BE</button>'+
+      '<div class="dgrid secondary hidden" data-testid="row-secondary">'+renderFields(secondaryFields)+'</div>'
     : '';
   const msgRow = t.message ? '<div class="msg">'+esc(t.message)+'</div>' : "";
 
-  // Failing tests lead with the trace so it's the first thing you read; other
-  // statuses keep the field grid first (they rarely carry a message).
+  // Failing rows show the message first; other statuses show the field grid first.
   const detailsInner = t.status==="fail"
     ? msgRow + primaryGrid + moreBlock
     : primaryGrid + moreBlock + msgRow;
-  const details = '<div class="details hidden">'+detailsInner+'</div>';
+  const details = '<div class="details hidden" data-testid="row-details">'+detailsInner+'</div>';
 
   // Inline failure headline (first line only) under the name; full trace stays in details.
   const preview = (t.status==="fail" && t.message)
-    ? '<div class="msg-preview" title="Click for full details">'+esc(t.message.split(/\\r?\\n/)[0])+'</div>'
+    ? '<div class="msg-preview" data-testid="msg-preview" title="Click for full details">'+esc(t.message.split(/\\r?\\n/)[0])+'</div>'
     : "";
 
-  return '<div class="row" data-status="'+t.status+'" style="background:'+m.bg+';">'+
-           '<div class="row-head">'+
+  return '<div class="row" data-testid="test-row" data-status="'+t.status+'" style="background:'+m.bg+';">'+
+           '<div class="row-head" data-testid="row-header">'+
              '<span class="label" style="color:'+m.color+';">'+m.label+'</span>'+
-             '<span class="name" title="'+esc(t.name)+'">'+esc(t.name)+'</span>'+
+             '<span class="name" data-testid="test-name" title="'+esc(t.name)+'">'+esc(t.name)+'</span>'+
              dur+
              arrow+
            '</div>'+preview+details+
@@ -399,7 +398,7 @@ function renderList(){
   updateJumpButton(view);
 
   if(view.length===0){
-    list.innerHTML = '<p class="empty">No tests match the current filter or search.</p>';
+    list.innerHTML = '<p class="empty" data-testid="empty">No tests match the current filter or search.</p>';
     return;
   }
 
@@ -421,13 +420,13 @@ function renderList(){
     items.forEach(x=>{ c[x.t.status] = (c[x.t.status]||0)+1; });
     const collapsed = collapsedGroups.has(key);
     html +=
-      '<div class="group">'+
-        '<div class="group-head" data-group="'+esc(key)+'">'+
+      '<div class="group" data-testid="group">'+
+        '<div class="group-head" data-testid="group-header" data-group="'+esc(key)+'">'+
           '<button class="toggle" type="button" aria-expanded="'+(collapsed?"false":"true")+'" aria-label="Toggle group">&#9654;</button>'+
           '<span class="group-name" title="'+esc(key)+'">'+esc(key)+'</span>'+
           '<span class="group-counts">'+miniCounts(c)+'</span>'+
         '</div>'+
-        '<div class="group-body'+(collapsed?' collapsed':'')+'">'+
+        '<div class="group-body'+(collapsed?' collapsed':'')+'" data-testid="group-body">'+
           items.map(x=>renderRow(x.t, M)).join("")+
         '</div>'+
       '</div>';
@@ -443,7 +442,7 @@ function filterChip(status, text){
     skip: [tok("--bgColor-muted"),         tok("--fgColor-muted")],
   };
   const cm = colorMap[status];
-  return '<span class="pill" data-filter="'+status+'" role="button" tabindex="0" '+
+  return '<span class="pill" data-filter="'+status+'" data-testid="chip-'+status+'" role="button" tabindex="0" '+
          'style="background:'+cm[0]+';color:'+cm[1]+';">'+text+'</span>';
 }
 
@@ -466,7 +465,7 @@ function render(state){
   const toolbar = document.getElementById("toolbar");
 
   if(results.length === 0){
-    list.innerHTML = '<p class="empty">No test results yet. Ask the agent to run tests and report the results!</p>';
+    list.innerHTML = '<p class="empty" data-testid="empty">No test results yet. Ask the agent to run tests and report the results!</p>';
     summary.innerHTML = "";
     summary.className = "summary";
     banner.innerHTML = "";
@@ -497,7 +496,7 @@ function render(state){
     filterChip("fail", failed+' failed')+
     filterChip("skip", skipped+' skipped')+
     '<span class="brk"></span>'+
-    '<span class="pill" style="background:'+tok("--bgColor-accent-muted")+';color:'+tok("--fgColor-accent")+';">'+fmtDur(total)+' total</span>';
+    '<span class="pill" data-testid="total" style="background:'+tok("--bgColor-accent-muted")+';color:'+tok("--fgColor-accent")+';">'+fmtDur(total)+' total</span>';
   applyFilterChipStyles();
 
   renderList();
@@ -663,7 +662,7 @@ document.addEventListener("keydown", (e)=>{
   const tag = (e.target && e.target.tagName ? e.target.tagName : "").toUpperCase();
   if(tag==="INPUT"||tag==="SELECT"||tag==="TEXTAREA") return;
   if(e.key==="n"){ e.preventDefault(); jumpToNextFailure(1); }
-  else if(e.key==="p" || e.key==="N"){ e.preventDefault(); jumpToNextFailure(-1); }
+  else if(e.key==="p"){ e.preventDefault(); jumpToNextFailure(-1); }
 });
 
 const source = new EventSource("/events");
