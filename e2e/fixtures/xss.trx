@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Hostile fixture: every text field carries a quote that would break out of
+     an HTML attribute if it were not escaped. Used by xss.spec.ts. -->
+<TestRun id="11111111-1111-1111-1111-111111111111" name="XSS Suite" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Results>
+    <UnitTestResult executionId="22222222-2222-2222-2222-222222222222" testId="33333333-3333-3333-3333-333333333333" testName="probe&quot; onmouseover=&quot;window.__XSS_NAME=1" computerName="localhost" duration="00:00:00.0120000" outcome="Passed" />
+    <UnitTestResult executionId="44444444-4444-4444-4444-444444444444" testId="55555555-5555-5555-5555-555555555555" testName="quoted &quot;name&quot; shows literally" computerName="localhost" duration="00:00:00.0050000" outcome="Failed">
+      <Output>
+        <ErrorInfo><Message>expected &quot;a&quot; but got &quot;b&quot;</Message></ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="probe" id="33333333-3333-3333-3333-333333333333">
+      <Execution id="22222222-2222-2222-2222-222222222222" />
+      <TestMethod codeBase="mock" className="Suite&quot; onmouseover=&quot;window.__XSS_GROUP=1" name="probe" />
+    </UnitTest>
+    <UnitTest name="quoted" id="55555555-5555-5555-5555-555555555555">
+      <Execution id="44444444-4444-4444-4444-444444444444" />
+      <TestMethod codeBase="mock" className="Suite&quot; onmouseover=&quot;window.__XSS_GROUP=1" name="quoted" />
+    </UnitTest>
+  </TestDefinitions>
+  <ResultSummary outcome="Failed">
+    <Counters total="2" executed="2" passed="1" failed="1" />
+  </ResultSummary>
+</TestRun>

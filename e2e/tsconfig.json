@@ -1,0 +1,18 @@
+// Type-check config for the Playwright e2e suite only.
+//
+// The specs run browser-context code inside page.evaluate callbacks, so they need
+// the DOM lib; the rest of the project is Node-only and must NOT see DOM globals.
+// e2e imports the compiled extension from dist/ (its .d.ts), which is also how
+// Playwright loads it at runtime, so this stays isolated from the Node sources.
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    "verbatimModuleSyntax": false,
+    "noEmit": true
+  },
+  "include": ["**/*.ts"]
+}
