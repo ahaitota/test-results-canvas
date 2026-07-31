@@ -16,6 +16,7 @@ import type { TestResult, TestStatus } from "./types.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const VIEW_PATH = join(__dirname, "view.js");
+const CLIENT_BUNDLE = join(__dirname, "..", "client", "app.js");
 
 // Re-imported only when view.js actually changes, so edits show up on a canvas
 // refresh without leaking one cached ESM module per request.
@@ -265,6 +266,17 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
             broadcast();
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ ok: true, file: name }));
+            return;
+        }
+        if (url === "/client.js" || url.startsWith("/client.js?")) {
+            try {
+                const js = readFileSync(CLIENT_BUNDLE);
+                res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store" });
+                res.end(js);
+            } catch {
+                res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+                res.end("client bundle not found — run `npm run build`");
+            }
             return;
         }
         try {

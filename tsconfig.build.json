@@ -7,5 +7,6 @@
     "declaration": true,
     "sourceMap": false
   },
-  "include": ["extension.ts", "src/**/*.ts"]
+  "include": ["extension.ts", "src/**/*.ts"],
+  "exclude": ["src/client"]
 }
