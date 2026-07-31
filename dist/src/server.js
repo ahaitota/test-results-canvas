@@ -1,14 +1,20 @@
 // SDK-free HTTP server for the Test Results canvas: serves the view, streams
 // updates over SSE, loads TRX/JUnit files, and watches the results directory.
 import { createServer } from "node:http";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, basename, resolve as resolvePath } from "node:path";
 import { watch, readFileSync, writeFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { serializeTrx, parseTrx } from "./parsers/trx.js";
 import { parseJUnit } from "./parsers/junit.js";
 import { labelForPath } from "./labels.js";
-import { renderShell } from "./view.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const VIEW_PATH = join(__dirname, "view.js");
+// Loaded fresh on every call so edits to view.js show up on a canvas refresh, with
+// no extension reload; ?t=<timestamp> busts Node's ESM cache so it re-reads disk.
+async function renderShell(title) {
+    const mod = (await import(`${pathToFileURL(VIEW_PATH).href}?t=${Date.now()}`));
+    return mod.renderShell(title);
+}
 // Walk up to the folder that owns package.json so bundled samples and local
 // report files resolve the same whether this runs compiled (dist/src) or straight
 // from source (src) — e.g. the e2e suite loads the compiled dist copy.
@@ -232,7 +238,7 @@ export async function createResultsServer(options = {}) {
     }
     if (!seed({ resultsFile, resultsDir }))
         results = loadFile(file, discovered);
-    const server = createServer((req, res) => {
+    const server = createServer(async (req, res) => {
         const url = req.url ?? "";
         if (url === "/events") {
             res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
@@ -263,7 +269,7 @@ export async function createResultsServer(options = {}) {
             return;
         }
         try {
-            const html = renderShell(title);
+            const html = await renderShell(title);
             res.setHeader("Content-Type", "text/html; charset=utf-8");
             res.end(html);
         }

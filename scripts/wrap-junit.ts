@@ -1,5 +1,5 @@
-// Wraps node:test's <testcase> elements in a <testsuite> so JUnit parsers read
-// them. Idempotent. Usage: node --import tsx scripts/wrap-junit.ts <junit.xml>
+// node:test's junit reporter omits the <testsuite> level that dorny/test-reporter
+// requires, so CI reports come up empty without this. Idempotent. Takes <junit.xml>.
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 
 const file = process.argv[2];

@@ -5,16 +5,24 @@ import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { FSWatcher } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, basename, resolve as resolvePath } from "node:path";
 import { watch, readFileSync, writeFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { serializeTrx, parseTrx } from "./parsers/trx.js";
 import { parseJUnit } from "./parsers/junit.js";
 import { labelForPath } from "./labels.js";
-import { renderShell } from "./view.js";
 import type { TestResult, TestStatus } from "./types.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+const VIEW_PATH = join(__dirname, "view.js");
+
+// Loaded fresh on every call so edits to view.js show up on a canvas refresh, with
+// no extension reload; ?t=<timestamp> busts Node's ESM cache so it re-reads disk.
+async function renderShell(title: string): Promise<string> {
+    const mod = (await import(`${pathToFileURL(VIEW_PATH).href}?t=${Date.now()}`)) as typeof import("./view.js");
+    return mod.renderShell(title);
+}
 
 // Walk up to the folder that owns package.json so bundled samples and local
 // report files resolve the same whether this runs compiled (dist/src) or straight
@@ -223,7 +231,7 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
 
     if (!seed({ resultsFile, resultsDir })) results = loadFile(file, discovered);
 
-    const server = createServer((req: IncomingMessage, res: ServerResponse) => {
+    const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
         const url = req.url ?? "";
         if (url === "/events") {
             res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
@@ -254,7 +262,7 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
             return;
         }
         try {
-            const html = renderShell(title);
+            const html = await renderShell(title);
             res.setHeader("Content-Type", "text/html; charset=utf-8");
             res.end(html);
         } catch (err) {
