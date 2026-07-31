@@ -17,11 +17,17 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const VIEW_PATH = join(__dirname, "view.js");
 
-// Loaded fresh on every call so edits to view.js show up on a canvas refresh, with
-// no extension reload; ?t=<timestamp> busts Node's ESM cache so it re-reads disk.
+// Re-imported only when view.js actually changes, so edits show up on a canvas
+// refresh without leaking one cached ESM module per request.
+let viewModule: typeof import("./view.js") | undefined;
+let viewMtimeMs = -1;
 async function renderShell(title: string): Promise<string> {
-    const mod = (await import(`${pathToFileURL(VIEW_PATH).href}?t=${Date.now()}`)) as typeof import("./view.js");
-    return mod.renderShell(title);
+    const mtimeMs = statSync(VIEW_PATH).mtimeMs;
+    if (!viewModule || mtimeMs !== viewMtimeMs) {
+        viewModule = (await import(`${pathToFileURL(VIEW_PATH).href}?t=${mtimeMs}`)) as typeof import("./view.js");
+        viewMtimeMs = mtimeMs;
+    }
+    return viewModule.renderShell(title);
 }
 
 // Walk up to the folder that owns package.json so bundled samples and local
