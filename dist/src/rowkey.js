@@ -1,17 +1,17 @@
-const US = "\u001f"; // delimiter that never appears in data
+const ROWKEY_SEP = "\u001f"; // ASCII Unit Separator: non-printable, so it never appears in data
 // Stable fields — what makes two rows "the same test" across runs.
 export function rowIdentity(t) {
     return [
         t.framework || "", t.storage || "", t.suite || "", t.className || "", t.name || "",
         t.computerName || "", t.method || "", t.adapter || "",
-    ].join(US);
+    ].join(ROWKEY_SEP);
 }
 // Volatile signature — used only to MATCH a row to its prior key, never keyed on.
 export function occurrenceSig(t) {
     return [
         t.startTime || "", t.endTime || "", t.durationMs == null ? "" : String(t.durationMs),
         t.status || "", t.message || "",
-    ].join(US);
+    ].join(ROWKEY_SEP);
 }
 // Key every row in `next`, reconciling against the previous payload's rows and keys.
 // `seq` (identity -> next ordinal) persists across payloads so a fresh key can never
@@ -23,7 +23,7 @@ export function reconcileRowKeys(next, prev, prevKeys, seq) {
         const key = prevKeys[i];
         if (key == null)
             continue;
-        const sig = rowIdentity(prev[i]) + US + occurrenceSig(prev[i]);
+        const sig = rowIdentity(prev[i]) + ROWKEY_SEP + occurrenceSig(prev[i]);
         let queue = priorBySig.get(sig);
         if (!queue) {
             queue = [];
@@ -35,7 +35,7 @@ export function reconcileRowKeys(next, prev, prevKeys, seq) {
     const reused = new Set();
     for (const t of next) {
         const id = rowIdentity(t);
-        const queue = priorBySig.get(id + US + occurrenceSig(t));
+        const queue = priorBySig.get(id + ROWKEY_SEP + occurrenceSig(t));
         if (queue && queue.length) { // exact identity+signature match -> reuse
             const key = queue.shift();
             keys.push(key);
@@ -44,7 +44,7 @@ export function reconcileRowKeys(next, prev, prevKeys, seq) {
         else { // no proof it's the same row -> fresh key
             const n = seq.get(id) || 0;
             seq.set(id, n + 1);
-            keys.push(id + US + "#" + n);
+            keys.push(id + ROWKEY_SEP + "#" + n);
         }
     }
     return { keys, reused };
