@@ -12,6 +12,7 @@
     "typecheck:client": "tsc -p src/client/tsconfig.json",
     "typecheck:e2e": "tsc -p e2e/tsconfig.json",
     "typecheck:sdk": "node --import tsx scripts/typecheck-sdk.ts",
+    "lint": "eslint .",
     "test": "node --import tsx --test test/labels.test.ts test/trx.test.ts test/junit.test.ts test/validate.test.ts test/rowkey.test.ts",
     "test:ci": "node -e \"require('node:fs').mkdirSync('test-results',{recursive:true})\" && node --import tsx --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=test-results/unit-junit.xml     test/labels.test.ts test/trx.test.ts test/junit.test.ts test/validate.test.ts test/rowkey.test.ts",
     "test:e2e": "playwright test",
@@ -22,12 +23,16 @@
   },
   "license": "MIT",
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@github/copilot-sdk": "^1.0.8",
     "@playwright/test": "^1.61.1",
+    "@stylistic/eslint-plugin": "^5.10.0",
     "@types/node": "^22.10.0",
     "esbuild": "^0.28.1",
+    "eslint": "^10.8.0",
     "preact": "^10.29.7",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.65.0"
   }
 }

@@ -51,7 +51,10 @@ export function reconcileRowKeys(
     if (key == null) continue;
     const sig = rowIdentity(prev[i]) + ROWKEY_SEP + occurrenceSig(prev[i]);
     let queue = priorBySig.get(sig);
-    if (!queue) { queue = []; priorBySig.set(sig, queue); }
+    if (!queue) {
+      queue = [];
+      priorBySig.set(sig, queue);
+    }
     queue.push(key);
   }
 
@@ -77,9 +80,16 @@ export function reconcileRowKeys(
 // transferring. Returns the same set when nothing changed, to avoid a re-render.
 export function pruneKeys(set: Set<string>, reused: Set<string>): Set<string> {
   let stale = false;
-  for (const k of set) if (!reused.has(k)) { stale = true; break; }
+  for (const k of set) {
+    if (!reused.has(k)) {
+      stale = true;
+      break;
+    }
+  }
   if (!stale) return set;
   const next = new Set<string>();
-  for (const k of set) if (reused.has(k)) next.add(k);
+  for (const k of set) {
+    if (reused.has(k)) next.add(k);
+  }
   return next;
 }

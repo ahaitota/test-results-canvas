@@ -53,16 +53,18 @@ export function reconcileRowKeys(next, prev, prevKeys, seq) {
 // transferring. Returns the same set when nothing changed, to avoid a re-render.
 export function pruneKeys(set, reused) {
     let stale = false;
-    for (const k of set)
+    for (const k of set) {
         if (!reused.has(k)) {
             stale = true;
             break;
         }
+    }
     if (!stale)
         return set;
     const next = new Set();
-    for (const k of set)
+    for (const k of set) {
         if (reused.has(k))
             next.add(k);
+    }
     return next;
 }

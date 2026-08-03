@@ -58,7 +58,11 @@ function scanForRecentResults(rootDir: string, sinceMs: number): string | null {
     while (stack.length) {
         const { dir, depth } = stack.pop()!;
         let entries: Dirent[];
-        try { entries = readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+        try {
+            entries = readdirSync(dir, { withFileTypes: true });
+        } catch {
+            continue;
+        }
         for (const ent of entries) {
             if (--budget < 0) return best;
             if (ent.isDirectory()) {
@@ -73,7 +77,8 @@ function scanForRecentResults(rootDir: string, sinceMs: number): string | null {
                 const st = statSync(abs);
                 if (st.mtimeMs <= bestMtime) continue;
                 if (!looksLikeResults(readFileSync(abs, "utf8"))) continue;
-                best = abs; bestMtime = st.mtimeMs;
+                best = abs;
+                bestMtime = st.mtimeMs;
             } catch { /* ignore unreadable */ }
         }
     }
@@ -118,7 +123,7 @@ watchFile(CLIENT_BUNDLE, { interval: 400 }, (curr, prev) => {
     if (curr.mtimeMs !== prev.mtimeMs) for (const h of servers.values()) h.reload();
 });
 
-const session = await joinSession({
+await joinSession({
     canvases: [
         createCanvas({
             id: CANVAS_ID,

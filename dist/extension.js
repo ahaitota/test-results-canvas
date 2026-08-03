@@ -124,7 +124,7 @@ watchFile(CLIENT_BUNDLE, { interval: 400 }, (curr, prev) => {
         for (const h of servers.values())
             h.reload();
 });
-const session = await joinSession({
+await joinSession({
     canvases: [
         createCanvas({
             id: CANVAS_ID,

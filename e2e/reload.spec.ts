@@ -14,7 +14,9 @@ test.describe("reload and reopen", () => {
     await expect(page.getByTestId("test-row")).toHaveCount(6);
   
     // Sentinel is cleared by a real reload (fresh JS context).
-    await page.evaluate(() => { window.__keep = true; });
+    await page.evaluate(() => {
+      window.__keep = true;
+    });
     const reloaded = page.waitForEvent("load");
     await s.reload();
     await reloaded;

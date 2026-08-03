@@ -47,7 +47,7 @@ export function looksLikeResults(xml) {
 // Newest results file directly inside a directory (non-recursive).
 export function newestResultsFileIn(dir) {
     let best = null, bestMtime = -1;
-    let names = [];
+    let names;
     try {
         names = readdirSync(dir);
     }
@@ -209,7 +209,10 @@ export async function createResultsServer(options = {}) {
                     return;
                 const abs = resolvePath(dir, name);
                 clearTimeout(debounce.get(abs));
-                debounce.set(abs, setTimeout(() => { debounce.delete(abs); refreshFromDir(dir); }, 400));
+                debounce.set(abs, setTimeout(() => {
+                    debounce.delete(abs);
+                    refreshFromDir(dir);
+                }, 400));
             });
             watcher.on("error", (err) => console.error("[server] watcher error:", err?.message || err));
         }
@@ -252,7 +255,10 @@ export async function createResultsServer(options = {}) {
             clients.add(res);
             res.write(`data: ${statePayload()}\n\n`);
             const keepAlive = setInterval(() => res.write(": keep-alive\n\n"), 15000);
-            req.on("close", () => { clearInterval(keepAlive); clients.delete(res); });
+            req.on("close", () => {
+                clearInterval(keepAlive);
+                clients.delete(res);
+            });
             return;
         }
         if (url.startsWith("/files")) {
@@ -300,9 +306,15 @@ export async function createResultsServer(options = {}) {
     // Prefer the requested port for a stable URL; fall back to an ephemeral one.
     const boundPort = await new Promise((resolve) => {
         const addr = () => server.address().port;
-        const onError = () => { server.removeListener("error", onError); server.listen(0, "127.0.0.1", () => resolve(addr())); };
+        const onError = () => {
+            server.removeListener("error", onError);
+            server.listen(0, "127.0.0.1", () => resolve(addr()));
+        };
         server.once("error", onError);
-        server.listen(port || 0, "127.0.0.1", () => { server.removeListener("error", onError); resolve(addr()); });
+        server.listen(port || 0, "127.0.0.1", () => {
+            server.removeListener("error", onError);
+            resolve(addr());
+        });
     });
     return {
         server,
@@ -322,7 +334,11 @@ export async function createResultsServer(options = {}) {
             broadcast();
             return results.length;
         },
-        clearResults() { results = []; persist(results, file, discovered); broadcast(); },
+        clearResults() {
+            results = [];
+            persist(results, file, discovered);
+            broadcast();
+        },
         loadNamed(name) {
             if (!resolveResultPath(name, discovered))
                 return false;

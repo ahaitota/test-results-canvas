@@ -58,15 +58,20 @@ export function looksLikeResults(xml: unknown): boolean {
 // Newest results file directly inside a directory (non-recursive).
 export function newestResultsFileIn(dir: string): string | null {
     let best: string | null = null, bestMtime = -1;
-    let names: string[] = [];
-    try { names = readdirSync(dir); } catch { return null; }
+    let names: string[];
+    try {
+        names = readdirSync(dir);
+    } catch {
+        return null;
+    }
     for (const n of names) {
         if (!RESULT_EXTS.some((e) => n.toLowerCase().endsWith(e))) continue;
         const abs = resolvePath(dir, n);
         try {
             const st = statSync(abs);
             if (st.isFile() && st.mtimeMs > bestMtime && looksLikeResults(readFileSync(abs, "utf8"))) {
-                best = abs; bestMtime = st.mtimeMs;
+                best = abs;
+                bestMtime = st.mtimeMs;
             }
         } catch { /* ignore unreadable */ }
     }
@@ -81,15 +86,21 @@ export function normalizeStatus(raw: unknown): TestStatus {
 }
 
 function listLocalNames(): string[] {
-    try { return readdirSync(EXTENSION_ROOT).filter((f) => RESULT_EXTS.some((e) => f.toLowerCase().endsWith(e))); }
-    catch { return []; }
+    try {
+        return readdirSync(EXTENSION_ROOT).filter((f) => RESULT_EXTS.some((e) => f.toLowerCase().endsWith(e)));
+    } catch {
+        return [];
+    }
 }
 
 // Selectable files = local extension-folder reports + discovered project files.
 function listResultFiles(discovered: Map<string, string>): string[] {
     let local: string[] = [];
-    try { local = readdirSync(EXTENSION_ROOT).filter((f) => RESULT_EXTS.some((e) => f.toLowerCase().endsWith(e))).sort(); }
-    catch { local = []; }
+    try {
+        local = readdirSync(EXTENSION_ROOT).filter((f) => RESULT_EXTS.some((e) => f.toLowerCase().endsWith(e))).sort();
+    } catch {
+        local = [];
+    }
     const extras = [...discovered.keys()].filter((l) => !local.includes(l)).sort();
     return [...local, ...extras];
 }
@@ -98,7 +109,10 @@ function listResultFiles(discovered: Map<string, string>): string[] {
 // inside the extension folder — no path traversal). null if missing/unsupported.
 function resolveResultPath(name: unknown, discovered: Map<string, string>): string | null {
     const raw = String(name || "");
-    if (discovered.has(raw)) { const abs = discovered.get(raw)!; return existsSync(abs) ? abs : null; }
+    if (discovered.has(raw)) {
+        const abs = discovered.get(raw)!;
+        return existsSync(abs) ? abs : null;
+    }
     const base = basename(raw);
     if (!RESULT_EXTS.some((e) => base.toLowerCase().endsWith(e))) return null;
     const full = join(EXTENSION_ROOT, base);
@@ -121,8 +135,11 @@ function persist(results: TestResult[], name: string, discovered: Map<string, st
     if (discovered.has(String(name || ""))) return;
     const base = basename(String(name || DEFAULT_FILE)) || DEFAULT_FILE;
     if (!base.toLowerCase().endsWith(".trx")) return;
-    try { writeFileSync(join(EXTENSION_ROOT, base), serializeTrx(results, { runName: "Test Results" }), "utf8"); }
-    catch (err) { console.error("[server] failed to write TRX:", err instanceof Error ? err.message : err); }
+    try {
+        writeFileSync(join(EXTENSION_ROOT, base), serializeTrx(results, { runName: "Test Results" }), "utf8");
+    } catch (err) {
+        console.error("[server] failed to write TRX:", err instanceof Error ? err.message : err);
+    }
 }
 
 function registerSamples(discovered: Map<string, string>): void {
@@ -185,7 +202,9 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
 
     function stopWatcher() {
         if (!watcher) return;
-        try { watcher.close(); } catch { /* already closed */ }
+        try {
+            watcher.close();
+        } catch { /* already closed */ }
         watcher = null;
     }
     function refreshFromDir(dir: string): void {
@@ -207,7 +226,10 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
                 if (!RESULT_EXTS.some((e) => name.toLowerCase().endsWith(e))) return;
                 const abs = resolvePath(dir, name);
                 clearTimeout(debounce.get(abs));
-                debounce.set(abs, setTimeout(() => { debounce.delete(abs); refreshFromDir(dir); }, 400));
+                debounce.set(abs, setTimeout(() => {
+                    debounce.delete(abs);
+                    refreshFromDir(dir);
+                }, 400));
             });
             watcher.on("error", (err) => console.error("[server] watcher error:", err?.message || err));
         } catch (err) {
@@ -220,8 +242,9 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         let abs: string | null = null;
         if (input.resultsFile) {
             const p = resolvePath(String(input.resultsFile));
-            try { if (existsSync(p) && statSync(p).isFile() && looksLikeResults(readFileSync(p, "utf8"))) abs = p; }
-            catch { /* unreadable */ }
+            try {
+                if (existsSync(p) && statSync(p).isFile() && looksLikeResults(readFileSync(p, "utf8"))) abs = p;
+            } catch { /* unreadable */ }
         }
         if (!abs && input.resultsDir) {
             const d = resolvePath(String(input.resultsDir));
@@ -245,7 +268,10 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
             clients.add(res);
             res.write(`data: ${statePayload()}\n\n`);
             const keepAlive = setInterval(() => res.write(": keep-alive\n\n"), 15000);
-            req.on("close", () => { clearInterval(keepAlive); clients.delete(res); });
+            req.on("close", () => {
+                clearInterval(keepAlive);
+                clients.delete(res);
+            });
             return;
         }
         if (url.startsWith("/files")) {
@@ -292,9 +318,15 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
     // Prefer the requested port for a stable URL; fall back to an ephemeral one.
     const boundPort = await new Promise<number>((resolve) => {
         const addr = () => (server.address() as AddressInfo).port;
-        const onError = () => { server.removeListener("error", onError); server.listen(0, "127.0.0.1", () => resolve(addr())); };
+        const onError = () => {
+            server.removeListener("error", onError);
+            server.listen(0, "127.0.0.1", () => resolve(addr()));
+        };
         server.once("error", onError);
-        server.listen(port || 0, "127.0.0.1", () => { server.removeListener("error", onError); resolve(addr()); });
+        server.listen(port || 0, "127.0.0.1", () => {
+            server.removeListener("error", onError);
+            resolve(addr());
+        });
     });
 
     return {
@@ -315,10 +347,17 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
             broadcast();
             return results.length;
         },
-        clearResults() { results = []; persist(results, file, discovered); broadcast(); },
+        clearResults() {
+            results = [];
+            persist(results, file, discovered);
+            broadcast();
+        },
         loadNamed(name: string) {
             if (!resolveResultPath(name, discovered)) return false;
-            file = name; results = loadFile(name, discovered); broadcast(); return true;
+            file = name;
+            results = loadFile(name, discovered);
+            broadcast();
+            return true;
         },
         // Re-seed from fresh open input (e.g. a re-open pointing at a new file).
         loadInput(input: { resultsFile?: string; resultsDir?: string } = {}) {
@@ -330,7 +369,11 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         reload,
         async close() {
             stopWatcher();
-            for (const res of clients) { try { res.end(); } catch { /* ignore */ } }
+            for (const res of clients) {
+                try {
+                    res.end();
+                } catch { /* ignore */ }
+            }
             clients.clear();
             const closed = new Promise<void>((r) => server.close(() => r()));
             // Force-close open SSE connections so the server can finish closing.
