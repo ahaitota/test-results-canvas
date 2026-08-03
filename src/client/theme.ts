@@ -12,12 +12,16 @@ function toneFromColor(css: string | null): "light" | "dark" | null {
     let h = css.slice(1);
     if (h.length === 3) h = h.charAt(0) + h.charAt(0) + h.charAt(1) + h.charAt(1) + h.charAt(2) + h.charAt(2);
     if (h.length < 6) return null;
-    r = parseInt(h.slice(0, 2), 16); g = parseInt(h.slice(2, 4), 16); b = parseInt(h.slice(4, 6), 16);
+    r = parseInt(h.slice(0, 2), 16);
+    g = parseInt(h.slice(2, 4), 16);
+    b = parseInt(h.slice(4, 6), 16);
   } else {
     const o = css.indexOf("("), e = css.indexOf(")");
     if (o < 0 || e < 0) return null;
     const p = css.slice(o + 1, e).split(",");
-    r = parseFloat(p[0]); g = parseFloat(p[1]); b = parseFloat(p[2]);
+    r = parseFloat(p[0]);
+    g = parseFloat(p[1]);
+    b = parseFloat(p[2]);
     if (p.length > 3) a = parseFloat(p[3]);
   }
   if (isNaN(r) || isNaN(g) || isNaN(b)) return null;
