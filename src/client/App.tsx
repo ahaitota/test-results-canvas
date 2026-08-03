@@ -3,7 +3,8 @@
 import { useState, useEffect, useRef } from "preact/hooks";
 import type { TestResult, TestStatus } from "../types";
 import type { Row } from "./format";
-import { STATUS_WORD, STATUS_LABEL, fmtDur, fmtTime, matchesSearch, groupKeyOf, sortView } from "./format";
+import { STATUS_WORD, STATUS_LABEL, fmtDur, fmtTime, matchesSearch, groupKeyOf, sortView, GROUP_OPTIONS, SORT_OPTIONS } from "./format";
+import type { GroupBy, SortBy } from "./format";
 import { reconcileRowKeys, pruneKeys } from "../rowkey.js";
 
 // What the server pushes over SSE.
@@ -111,8 +112,8 @@ export function App() {
   const [state, setState] = useState<AppState>({ title: INITIAL_TITLE, results: [], file: "", files: [], keys: [] });
   const [filterStatuses, setFilterStatuses] = useState<Set<TestStatus>>(new Set());
   const [searchText, setSearchText] = useState("");
-  const [groupBy, setGroupBy] = useState("suite");
-  const [sortBy, setSortBy] = useState("status");
+  const [groupBy, setGroupBy] = useState<GroupBy>("suite");
+  const [sortBy, setSortBy] = useState<SortBy>("status");
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [expandedSecondary, setExpandedSecondary] = useState<Set<string>>(new Set());
@@ -333,21 +334,13 @@ export function App() {
         <div class="toolbar-row toolbar-controls">
           <div class="ctl-pair">
             <label class="ctl">Group
-              <select data-testid="group-by" value={groupBy} onChange={(e) => setGroupBy((e.currentTarget as HTMLSelectElement).value)}>
-                <option value="none">None</option>
-                <option value="status">Status</option>
-                <option value="namespace">Namespace</option>
-                <option value="class">Class</option>
-                <option value="suite">Suite</option>
-                <option value="framework">Framework</option>
+              <select data-testid="group-by" value={groupBy} onChange={(e) => setGroupBy((e.currentTarget as HTMLSelectElement).value as GroupBy)}>
+                {GROUP_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </label>
             <label class="ctl">Sort
-              <select data-testid="sort-by" value={sortBy} onChange={(e) => setSortBy((e.currentTarget as HTMLSelectElement).value)}>
-                <option value="default">Default</option>
-                <option value="name">Name</option>
-                <option value="duration">Duration</option>
-                <option value="status">Outcome</option>
+              <select data-testid="sort-by" value={sortBy} onChange={(e) => setSortBy((e.currentTarget as HTMLSelectElement).value as SortBy)}>
+                {SORT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </label>
           </div>
