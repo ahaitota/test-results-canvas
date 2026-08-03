@@ -6,8 +6,8 @@
   "type": "module",
   "main": "dist/extension.js",
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && node scripts/build-client.mjs",
-    "build:client": "node scripts/build-client.mjs",
+    "build": "tsc -p tsconfig.build.json && npm run build:client",
+    "build:client": "esbuild src/client/main.tsx --bundle --outfile=dist/client/app.js --format=esm --target=es2022 --jsx=automatic --jsx-import-source=preact --minify",
     "typecheck": "tsc -p tsconfig.json",
     "typecheck:client": "tsc -p src/client/tsconfig.json",
     "typecheck:e2e": "tsc -p e2e/tsconfig.json",

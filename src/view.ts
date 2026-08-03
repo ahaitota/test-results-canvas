@@ -6,9 +6,9 @@
 // classes keyed off data-theme, so a theme flip needs no re-render.
 //
 // server.ts imports renderShell statically; in dev, `tsc --watch` rebuilds this
-// file and `build-client --watch` rebuilds the bundle, and extension.ts watches
-// both compiled outputs and reloads every open panel — so UI edits appear on the
-// next refresh with no extension reload.
+// file and `npm run build:client -- --watch` rebuilds the bundle, and extension.ts
+// watches both compiled outputs and reloads every open panel — so UI edits appear
+// on the next refresh with no extension reload.
 
 export function renderShell(title: string): string {
     return `<!doctype html>
