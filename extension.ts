@@ -135,7 +135,6 @@ const session = await joinSession({
             inputSchema: {
                 type: "object",
                 properties: {
-                    title: { type: "string", description: "Title for the test run (e.g. the suite or command)" },
                     resultsFile: {
                         type: "string",
                         description:
