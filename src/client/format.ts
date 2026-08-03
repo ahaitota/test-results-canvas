@@ -1,7 +1,7 @@
 // Pure, typed helpers ported from the old inline view script.
 import type { TestResult, TestStatus } from "../types";
 
-export type Row = { t: TestResult; i: number };
+export type Row = { t: TestResult; i: number; k: string };
 
 export const STATUS_WORD: Record<TestStatus, string> = { pass: "Passed", fail: "Failed", skip: "Skipped" };
 export const STATUS_LABEL: Record<TestStatus, string> = { pass: "PASS", fail: "FAIL", skip: "SKIP" };

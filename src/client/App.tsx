@@ -4,12 +4,20 @@ import { useState, useEffect, useRef } from "preact/hooks";
 import type { TestResult, TestStatus } from "../types";
 import type { Row } from "./format";
 import { STATUS_WORD, STATUS_LABEL, fmtDur, fmtTime, matchesSearch, groupKeyOf, sortView } from "./format";
+import { reconcileRowKeys, pruneKeys } from "../rowkey.js";
 
-interface AppState {
+// What the server pushes over SSE.
+interface ServerState {
   title: string;
   results: TestResult[];
   file: string;
   files: string[];
+}
+
+// Plus the row keys reconciled for that payload — stored together so a row and its
+// key can never come from different payloads.
+interface AppState extends ServerState {
+  keys: string[];
 }
 
 interface Field {
@@ -100,14 +108,14 @@ function MiniCounts({ c }: { c: { pass: number; fail: number; skip: number } }) 
 }
 
 export function App() {
-  const [state, setState] = useState<AppState>({ title: INITIAL_TITLE, results: [], file: "", files: [] });
+  const [state, setState] = useState<AppState>({ title: INITIAL_TITLE, results: [], file: "", files: [], keys: [] });
   const [filterStatuses, setFilterStatuses] = useState<Set<TestStatus>>(new Set());
   const [searchText, setSearchText] = useState("");
   const [groupBy, setGroupBy] = useState("suite");
   const [sortBy, setSortBy] = useState("status");
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
-  const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
-  const [expandedSecondary, setExpandedSecondary] = useState<Set<number>>(new Set());
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const [expandedSecondary, setExpandedSecondary] = useState<Set<string>>(new Set());
   const [jumpTarget, setJumpTarget] = useState<{ i: number; nonce: number } | null>(null);
 
   const rowRefs = useRef(new Map<number, HTMLElement>());
@@ -115,11 +123,24 @@ export function App() {
   const rowGroupRef = useRef(new Map<number, string>());
   const failCursor = useRef(-1);
   const jumpNonce = useRef(0);
+  const prevPayload = useRef<{ results: TestResult[]; keys: string[] }>({ results: [], keys: [] });
+  const keySeq = useRef(new Map<string, number>());
 
-  // Live state stream from the server.
+  // Live state stream from the server. Keys are reconciled once per payload, so a
+  // row's expansion follows the test itself rather than its position in the array.
   useEffect(() => {
     const source = new EventSource("/events");
-    source.onmessage = (e) => { try { setState(JSON.parse(e.data)); } catch { /* ignore */ } };
+    source.onmessage = (e) => {
+      let next: ServerState;
+      try { next = JSON.parse(e.data); } catch { return; }
+      const results = next.results || [];
+      const prev = prevPayload.current;
+      const { keys, reused } = reconcileRowKeys(results, prev.results, prev.keys, keySeq.current);
+      prevPayload.current = { results, keys };
+      setState({ ...next, results, keys });
+      setExpandedRows((p) => pruneKeys(p, reused));
+      setExpandedSecondary((p) => pruneKeys(p, reused));
+    };
     source.addEventListener("reload", () => location.reload());
     return () => source.close();
   }, []);
@@ -179,7 +200,7 @@ export function App() {
   const passRate = executed ? Math.round((passed / executed) * 100) : null;
 
   const q = searchText.trim().toLowerCase();
-  let view: Row[] = all.map((t, i) => ({ t, i }));
+  let view: Row[] = all.map((t, i) => ({ t, i, k: state.keys[i] }));
   if (filterStatuses.size) view = view.filter((x) => filterStatuses.has(x.t.status));
   if (q) view = view.filter((x) => matchesSearch(x.t, q));
   view = sortView(view, sortBy);
@@ -210,12 +231,12 @@ export function App() {
   };
   const renderRow = (x: Row) => (
     <TestRow
-      key={x.i}
+      key={x.k}
       t={x.t}
-      expanded={expandedRows.has(x.i)}
-      secondaryOpen={expandedSecondary.has(x.i)}
-      onToggle={() => toggleSet(setExpandedRows, x.i)}
-      onToggleMore={() => toggleSet(setExpandedSecondary, x.i)}
+      expanded={expandedRows.has(x.k)}
+      secondaryOpen={expandedSecondary.has(x.k)}
+      onToggle={() => toggleSet(setExpandedRows, x.k)}
+      onToggleMore={() => toggleSet(setExpandedSecondary, x.k)}
       innerRef={setRowRef(x.i)}
     />
   );
