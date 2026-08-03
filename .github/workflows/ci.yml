@@ -47,6 +47,11 @@ jobs:
       - name: Type-check
         run: npm run typecheck
 
+      # src/client is excluded from the root tsconfig and esbuild strips its types without checking them,
+      # so run a separate typecheck for it.
+      - name: Type-check client
+        run: npm run typecheck:client
+
       - name: Build
         run: npm run build
 
