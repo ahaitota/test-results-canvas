@@ -57,11 +57,10 @@ writeFileSync(
     ),
 );
 
-let status = 1;
 try {
     const tsc = join(ROOT, "node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
     const run = spawnSync(tsc, ["-p", TMP_CONFIG], { cwd: ROOT, stdio: "inherit", shell: process.platform === "win32" });
-    status = run.status ?? 1;
+    const status = run.status ?? 1;
     if (status === 0) {
         console.log("typecheck:sdk — OK, the pinned SDK agrees with the installed app.");
     } else {
@@ -70,8 +69,8 @@ try {
         console.error("bundled with your installed Copilot app, in a way that affects this code.");
         console.error("Bump the devDependency to match the app, then fix the errors above.");
     }
+    // exitCode rather than exit() so the finally block below still runs.
+    process.exitCode = status;
 } finally {
-    // Must run before process.exit(), which would skip a finally block.
     rmSync(TMP_CONFIG, { force: true });
 }
-process.exit(status);

@@ -19,5 +19,6 @@
     "test/**/*.ts",
     "scripts/**/*.ts",
     "playwright.config.ts"
-  ]
+  ],
+  "exclude": ["src/client"]
 }

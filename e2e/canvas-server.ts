@@ -25,6 +25,9 @@ type MakeServer = (opts?: ResultsServerOptions) => Promise<ResultsServerHandle>;
 // makeServer(opts): boots a results server on an ephemeral port; closes every
 // server it made when the test ends.
 export const test = base.extend<{ makeServer: MakeServer }>({
+    // Playwright reads the destructured names to resolve fixture dependencies;
+    // an empty pattern is how you declare "no dependencies".
+    // eslint-disable-next-line no-empty-pattern
   makeServer: async ({}, use) => {
     const started: ResultsServerHandle[] = [];
     await use(async (opts: ResultsServerOptions = {}) => {

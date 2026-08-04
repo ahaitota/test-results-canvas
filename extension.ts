@@ -21,6 +21,7 @@ import { asResultInput, asOpenInput } from "./src/validate.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const VIEW_PATH = join(__dirname, "src", "view.js");
+const CLIENT_BUNDLE = join(__dirname, "client", "app.js");
 
 // The canvas id declared below (used when programmatically opening the panel).
 const CANVAS_ID = "example-canvas";
@@ -57,7 +58,11 @@ function scanForRecentResults(rootDir: string, sinceMs: number): string | null {
     while (stack.length) {
         const { dir, depth } = stack.pop()!;
         let entries: Dirent[];
-        try { entries = readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+        try {
+            entries = readdirSync(dir, { withFileTypes: true });
+        } catch {
+            continue;
+        }
         for (const ent of entries) {
             if (--budget < 0) return best;
             if (ent.isDirectory()) {
@@ -72,7 +77,8 @@ function scanForRecentResults(rootDir: string, sinceMs: number): string | null {
                 const st = statSync(abs);
                 if (st.mtimeMs <= bestMtime) continue;
                 if (!looksLikeResults(readFileSync(abs, "utf8"))) continue;
-                best = abs; bestMtime = st.mtimeMs;
+                best = abs;
+                bestMtime = st.mtimeMs;
             } catch { /* ignore unreadable */ }
         }
     }
@@ -107,14 +113,17 @@ function surfaceIfResults(input: { toolArgs?: unknown; workingDirectory?: string
     }
 }
 
-// When the compiled view (dist/src/view.js) changes on disk, reload every open
-// panel so UI edits appear with
-// no extension reload.
+// When the compiled view (dist/src/view.js) or the Preact bundle
+// (dist/client/app.js) changes on disk, reload every open panel so UI edits
+// appear with no extension reload.
 watchFile(VIEW_PATH, { interval: 400 }, (curr, prev) => {
     if (curr.mtimeMs !== prev.mtimeMs) for (const h of servers.values()) h.reload();
 });
+watchFile(CLIENT_BUNDLE, { interval: 400 }, (curr, prev) => {
+    if (curr.mtimeMs !== prev.mtimeMs) for (const h of servers.values()) h.reload();
+});
 
-const session = await joinSession({
+await joinSession({
     canvases: [
         createCanvas({
             id: CANVAS_ID,
@@ -131,7 +140,6 @@ const session = await joinSession({
             inputSchema: {
                 type: "object",
                 properties: {
-                    title: { type: "string", description: "Title for the test run (e.g. the suite or command)" },
                     resultsFile: {
                         type: "string",
                         description:

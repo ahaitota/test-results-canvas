@@ -47,6 +47,16 @@ jobs:
       - name: Type-check
         run: npm run typecheck
 
+      # src/client is excluded from the root tsconfig and esbuild strips its types without checking them,
+      # so run a separate typecheck for it.
+      - name: Type-check client
+        run: npm run typecheck:client
+
+      # Catches what the type-checker cannot: dead assignments, unused bindings
+      # and unreadable one-liners. Covers src, test, e2e and scripts.
+      - name: Lint
+        run: npm run lint
+
       - name: Build
         run: npm run build
 

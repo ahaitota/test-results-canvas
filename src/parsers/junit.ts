@@ -67,12 +67,22 @@ export function parseJUnit(xml: string): TestResult[] {
         if (lt < 0) break;
 
         // Comments and CDATA are opaque: never scan their contents as markup.
-        if (text.startsWith("<!--", lt)) { i = skipPast(text, lt + 4, "-->"); continue; }
-        if (text.startsWith("<![CDATA[", lt)) { i = skipPast(text, lt + 9, "]]>"); continue; }
+        if (text.startsWith("<!--", lt)) {
+            i = skipPast(text, lt + 4, "-->");
+            continue;
+        }
+        if (text.startsWith("<![CDATA[", lt)) {
+            i = skipPast(text, lt + 9, "]]>");
+            continue;
+        }
 
         // </testsuite ...> closes the nearest open suite.
         const closed = matchCloseTag(text, lt, "testsuite");
-        if (closed >= 0) { suiteStack.pop(); i = closed; continue; }
+        if (closed >= 0) {
+            suiteStack.pop();
+            i = closed;
+            continue;
+        }
 
         // <testsuite ...> opens a suite (self-closed ones hold no cases).
         const suite = matchOpenTag(text, lt, "testsuite");
@@ -151,8 +161,14 @@ function findCloseTag(text: string, from: number, name: string): { start: number
     while (i < text.length) {
         const lt = text.indexOf("<", i);
         if (lt < 0) break;
-        if (text.startsWith("<!--", lt)) { i = skipPast(text, lt + 4, "-->"); continue; }
-        if (text.startsWith("<![CDATA[", lt)) { i = skipPast(text, lt + 9, "]]>"); continue; }
+        if (text.startsWith("<!--", lt)) {
+            i = skipPast(text, lt + 4, "-->");
+            continue;
+        }
+        if (text.startsWith("<![CDATA[", lt)) {
+            i = skipPast(text, lt + 9, "]]>");
+            continue;
+        }
         const after = matchCloseTag(text, lt, name);
         if (after >= 0) return { start: lt, after };
         i = lt + 1;
