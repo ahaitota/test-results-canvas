@@ -4,9 +4,9 @@ import type { TestResult, TestStatus } from "../types";
 import { STATUS_WORD, STATUS_LABEL, fmtDur, fmtTime } from "./format";
 
 // One labelled value shown in the details grid, e.g. "Duration" -> "1.2s".
-interface TestResultProperty {
-  propertyName: string;
-  propertyValue: string;
+interface TestResultPropertyProps {
+  name: string;
+  value?: string | null;
   // Take a whole grid row instead of one ~200px column, for values too long to
   // read when squeezed (fully-qualified class names, adapter URIs).
   spansFullWidth?: boolean;
@@ -16,13 +16,15 @@ interface TestResultProperty {
   statusColor?: TestStatus;
 }
 
-function renderProperties(list: TestResultProperty[]) {
-  return list.map((p, idx) => (
-    <div class={"field" + (p.spansFullWidth ? " full" : "")} key={idx}>
-      <span class="k">{p.propertyName}</span>
-      <span class={"v" + (p.mono ? " mono" : "") + (p.statusColor ? " status-" + p.statusColor : "")}>{p.propertyValue}</span>
+// Renders nothing when the report didn't carry the value.
+function TestResultProperty({ name, value, spansFullWidth, mono, statusColor }: TestResultPropertyProps) {
+  if (value == null || value === "") return null;
+  return (
+    <div class={"field" + (spansFullWidth ? " full" : "")}>
+      <span class="k">{name}</span>
+      <span class={"v" + (mono ? " mono" : "") + (statusColor ? " status-" + statusColor : "")}>{value}</span>
     </div>
-  ));
+  );
 }
 
 export interface RowProps {
@@ -35,34 +37,33 @@ export interface RowProps {
 }
 
 export function TestRow({ t, expanded, secondaryOpen, onToggle, onToggleMore, innerRef }: RowProps) {
-  const primary: TestResultProperty[] = [];
-  const secondary: TestResultProperty[] = [];
-  const add = (
-    list: TestResultProperty[],
-    propertyName: string,
-    propertyValue: string | undefined | null,
-    opts: Partial<TestResultProperty> = {},
-  ) => {
-    if (propertyValue == null || propertyValue === "") return;
-    list.push({ propertyName, propertyValue: String(propertyValue), ...opts });
-  };
-  add(primary, "Class", t.className, { spansFullWidth: true, mono: true });
-  add(primary, "Status", STATUS_WORD[t.status] || t.status, { statusColor: t.status });
-  add(primary, "Duration", t.durationMs != null ? fmtDur(t.durationMs) : null);
-  add(primary, "Start time", fmtTime(t.startTime));
-  add(secondary, "Method", t.method || t.name, { mono: true });
-  add(secondary, "Framework", t.framework);
-  add(secondary, "End time", fmtTime(t.endTime));
-  add(secondary, "Computer", t.computerName);
-  add(secondary, "Adapter", t.adapter, { spansFullWidth: true, mono: true });
+  // "Method" falls back to the test name, which every source guarantees, so the
+  // panel is populated in practice; the check stops the toggle from ever opening
+  // an empty box if that fallback or these fields change.
+  const method = t.method || t.name;
+  const endTime = fmtTime(t.endTime);
+  const hasSecondary = Boolean(method || t.framework || endTime || t.computerName || t.adapter);
 
-  const primaryGrid = <div class="dgrid">{renderProperties(primary)}</div>;
-  const moreBlock = secondary.length ? (
+  const primaryGrid = (
+    <div class="dgrid">
+      <TestResultProperty name="Class" value={t.className} spansFullWidth mono />
+      <TestResultProperty name="Status" value={STATUS_WORD[t.status] || t.status} statusColor={t.status} />
+      <TestResultProperty name="Duration" value={t.durationMs != null ? fmtDur(t.durationMs) : null} />
+      <TestResultProperty name="Start time" value={fmtTime(t.startTime)} />
+    </div>
+  );
+  const moreBlock = hasSecondary ? (
     <>
       <button class="more-toggle" data-testid="show-more" type="button" aria-expanded={secondaryOpen ? "true" : "false"} onClick={onToggleMore}>
         {secondaryOpen ? "Show less \u25B4" : "Show more \u25BE"}
       </button>
-      <div class={"dgrid secondary" + (secondaryOpen ? "" : " hidden")} data-testid="row-secondary">{renderProperties(secondary)}</div>
+      <div class={"dgrid secondary" + (secondaryOpen ? "" : " hidden")} data-testid="row-secondary">
+        <TestResultProperty name="Method" value={method} mono />
+        <TestResultProperty name="Framework" value={t.framework} />
+        <TestResultProperty name="End time" value={endTime} />
+        <TestResultProperty name="Computer" value={t.computerName} />
+        <TestResultProperty name="Adapter" value={t.adapter} spansFullWidth mono />
+      </div>
     </>
   ) : null;
   const msgRow = t.message ? <div class="msg">{t.message}</div> : null;
