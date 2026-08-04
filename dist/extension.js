@@ -25,6 +25,12 @@ const CANVAS_ID = "example-canvas";
 const FIXED_PORT = 4830;
 // One server per open canvas instance: instanceId -> handle from createResultsServer.
 const servers = new Map();
+// The joined session, reachable from canvas handlers so a panel can post a
+// message back into its own conversation. Held in an object rather than a plain
+// binding because the host re-opens already-open panels as soon as the canvas is
+// declared -- which can happen before joinSession() resolves, when a `const`
+// would still be in its temporal dead zone.
+const joined = {};
 // --- Automatic surfacing (the cross-project "no extra work" path) ---
 //
 // An extension can't open its own canvas, but a tool hook CAN see the agent's
@@ -124,7 +130,7 @@ watchFile(CLIENT_BUNDLE, { interval: 400 }, (curr, prev) => {
         for (const h of servers.values())
             h.reload();
 });
-await joinSession({
+joined.session = await joinSession({
     canvases: [
         createCanvas({
             id: CANVAS_ID,
@@ -268,6 +274,13 @@ await joinSession({
                         port: FIXED_PORT,
                         resultsFile: seed.resultsFile,
                         resultsDir: seed.resultsDir,
+                        // The server composed this prompt from its own results;
+                        // nothing here is supplied by the page.
+                        onAsk: async ({ prompt }) => {
+                            if (!joined.session)
+                                throw new Error("session not joined yet");
+                            await joined.session.send({ prompt });
+                        },
                     });
                     servers.set(ctx.instanceId, handle);
                 }

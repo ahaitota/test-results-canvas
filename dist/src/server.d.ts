@@ -11,6 +11,11 @@ export interface ResultsServerOptions {
     port?: number;
     watch?: boolean;
     alsoRegister?: string[];
+    onAsk?: (req: AskRequest) => void | Promise<void>;
+}
+export interface AskRequest {
+    prompt: string;
+    test: TestResult;
 }
 export interface ResultInput {
     name: string;
@@ -23,6 +28,7 @@ export declare function createResultsServer(options?: ResultsServerOptions): Pro
     server: import("http").Server<typeof IncomingMessage, typeof ServerResponse>;
     url: string;
     port: number;
+    askToken: string;
     currentFile: () => string;
     getResults: () => TestResult[];
     setResults(list: ResultInput[]): number;

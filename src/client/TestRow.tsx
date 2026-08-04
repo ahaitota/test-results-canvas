@@ -1,7 +1,9 @@
 // One test row: header, optional failure preview, and the expandable details
 // grid (primary fields always, secondary behind "Show more").
 import type { TestResult, TestStatus } from "../types";
+import { useState, useEffect } from "preact/hooks";
 import { STATUS_WORD, STATUS_LABEL, fmtDur, fmtTime } from "./format";
+import { askAgent } from "./askAgent";
 
 // One labelled value shown in the details grid, e.g. "Duration" -> "1.2s".
 interface TestResultPropertyProps {
@@ -27,8 +29,55 @@ function TestResultProperty({ name, value, spansFullWidth, mono, statusColor }: 
   );
 }
 
+type AskState = "idle" | "sending" | "sent" | "error";
+
+const ASK_LABEL: Record<AskState, string> = {
+  idle: "Ask agent to investigate",
+  sending: "Sending\u2026",
+  sent: "Sent \u2713",
+  error: "Couldn't send \u2014 retry",
+};
+
+// Button that asks the agent to look into a failure. The outcome is only ever
+// "the message was accepted": the extension can't tell us what the agent does
+// with it, so the label never promises more than that.
+function AskAgentButton({ index, name }: { index: number; name: string }) {
+  const [state, setState] = useState<AskState>("idle");
+
+  // Return to "idle" so the row can be asked about again after a re-run.
+  useEffect(() => {
+    if (state !== "sent" && state !== "error") return;
+    const timer = setTimeout(() => setState("idle"), 2500);
+    return () => clearTimeout(timer);
+  }, [state]);
+
+  const onClick = async (e: Event) => {
+    e.stopPropagation(); // the row header toggles on click; don't collapse the row
+    if (state === "sending") return;
+    setState("sending");
+    setState(await askAgent(index, name) ? "sent" : "error");
+  };
+
+  return (
+    <div class="ask-bar">
+      <button
+        class={"ask-btn ask-" + state}
+        data-testid="ask-agent"
+        data-ask-state={state}
+        type="button"
+        disabled={state === "sending"}
+        onClick={onClick}
+      >
+        {ASK_LABEL[state]}
+      </button>
+    </div>
+  );
+}
+
 export interface RowProps {
   t: TestResult;
+  // Position in the payload the server broadcast; identifies the row to /ask.
+  index: number;
   expanded: boolean;
   secondaryOpen: boolean;
   onToggle: () => void;
@@ -36,7 +85,7 @@ export interface RowProps {
   innerRef: (el: HTMLElement | null) => void;
 }
 
-export function TestRow({ t, expanded, secondaryOpen, onToggle, onToggleMore, innerRef }: RowProps) {
+export function TestRow({ t, index, expanded, secondaryOpen, onToggle, onToggleMore, innerRef }: RowProps) {
   // "Method" falls back to the test name, which every source guarantees, so the
   // panel is populated in practice; the check stops the toggle from ever opening
   // an empty box if that fallback or these fields change.
@@ -67,8 +116,10 @@ export function TestRow({ t, expanded, secondaryOpen, onToggle, onToggleMore, in
     </>
   ) : null;
   const msgRow = t.message ? <div class="msg">{t.message}</div> : null;
+  // Only failures get the button: that's the case worth handing to the agent.
+  const askBar = t.status === "fail" ? <AskAgentButton index={index} name={t.name} /> : null;
   // Failures lead with the message; everything else leads with the field grid.
-  const detailsInner = t.status === "fail" ? <>{msgRow}{primaryGrid}{moreBlock}</> : <>{primaryGrid}{moreBlock}{msgRow}</>;
+  const detailsInner = t.status === "fail" ? <>{msgRow}{askBar}{primaryGrid}{moreBlock}</> : <>{primaryGrid}{moreBlock}{msgRow}</>;
 
   const preview = t.status === "fail" && t.message && !expanded ? (
     <div class="msg-preview" data-testid="msg-preview" title="Click for full details" onClick={onToggle}>
