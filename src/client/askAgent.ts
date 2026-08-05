@@ -9,8 +9,8 @@ export async function askAgent(index: number, name: string): Promise<boolean> {
   try {
     const res = await fetch("/ask", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: ASK_TOKEN, index, name }),
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${ASK_TOKEN}` },
+      body: JSON.stringify({ index, name }),
     });
     return res.ok;
   } catch {

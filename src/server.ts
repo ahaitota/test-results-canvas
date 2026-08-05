@@ -278,30 +278,28 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
 
     if (!seed({ resultsFile, resultsDir })) results = loadFile(file, discovered);
 
-    // Read a small JSON body. Capped because the only legitimate payload is a
-    // token plus a row reference.
-    function readJsonBody(req: IncomingMessage): Promise<unknown> {
-        return new Promise((resolve, reject) => {
-            let size = 0;
-            const chunks: Buffer[] = [];
-            req.on("data", (c: Buffer) => {
-                size += c.length;
-                if (size > 8192) {
-                    reject(new Error("body too large"));
-                    req.destroy();
-                    return;
-                }
-                chunks.push(c);
-            });
-            req.on("end", () => {
-                try {
-                    resolve(JSON.parse(Buffer.concat(chunks).toString("utf8") || "null"));
-                } catch {
-                    reject(new Error("invalid JSON"));
-                }
-            });
-            req.on("error", reject);
-        });
+    // Read a small JSON body. Still capped even though callers are authenticated
+    // by this point, so a wedged page cannot grow the buffer without limit.
+    async function readJsonBody(req: IncomingMessage): Promise<unknown> {
+        let size = 0;
+        let text = "";
+        for await (const chunk of req) {
+            size += (chunk as Buffer).length;
+            if (size > 8192) throw new Error("body too large");
+            text += chunk;
+        }
+        try {
+            return JSON.parse(text || "null");
+        } catch {
+            throw new Error("invalid JSON");
+        }
+    }
+
+    // `Authorization: Bearer <token>` rather than a body field so the check below
+    // can run before the body is read.
+    function bearerToken(req: IncomingMessage): string {
+        const header = req.headers.authorization ?? "";
+        return header.startsWith("Bearer ") ? header.slice(7) : "";
     }
 
     function sendJson(res: ServerResponse, status: number, body: unknown) {
@@ -316,6 +314,9 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
     async function handleAsk(req: IncomingMessage, res: ServerResponse) {
         if (req.method !== "POST") return sendJson(res, 405, { ok: false, error: "POST required" });
         if (!onAsk) return sendJson(res, 501, { ok: false, error: "asking the agent is not available" });
+        // Before the body is touched, so an unauthenticated caller cannot make
+        // this server buffer anything.
+        if (bearerToken(req) !== askToken) return sendJson(res, 403, { ok: false, error: "bad token" });
 
         let body: unknown;
         try {
@@ -323,10 +324,7 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         } catch (err) {
             return sendJson(res, 400, { ok: false, error: err instanceof Error ? err.message : "bad request" });
         }
-        const payload = (body ?? {}) as { token?: unknown; index?: unknown; name?: unknown };
-        if (typeof payload.token !== "string" || payload.token !== askToken) {
-            return sendJson(res, 403, { ok: false, error: "bad token" });
-        }
+        const payload = (body ?? {}) as { index?: unknown; name?: unknown };
         if (typeof payload.index !== "number" || !Number.isInteger(payload.index)) {
             return sendJson(res, 400, { ok: false, error: "index must be an integer" });
         }

@@ -22,7 +22,7 @@ async function withServer(run: (ctx: {
   url: string;
   token: string;
   calls: AskRequest[];
-  ask: (body: unknown) => Promise<Response>;
+  ask: (token: string | undefined, body: unknown) => Promise<Response>;
 }) => Promise<void>, opts: { onAsk?: boolean } = {}) {
   const calls: AskRequest[] = [];
   const handle = await createResultsServer({
@@ -32,9 +32,12 @@ async function withServer(run: (ctx: {
   });
   try {
     handle.setResults([{ name: failing.name, status: "fail", durationMs: 12, message: failing.message }]);
-    const ask = (body: unknown) => fetch(new URL("/ask", handle.url), {
+    const ask = (token: string | undefined, body: unknown) => fetch(new URL("/ask", handle.url), {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(token === undefined ? {} : { Authorization: `Bearer ${token}` }),
+      },
       body: JSON.stringify(body),
     });
     await run({ url: handle.url, token: handle.askToken, calls, ask });
@@ -45,7 +48,7 @@ async function withServer(run: (ctx: {
 
 test("a valid ask reaches onAsk once with the composed prompt", async () => {
   await withServer(async ({ token, calls, ask }) => {
-    const res = await ask({ token, index: 0, name: failing.name });
+    const res = await ask(token, { index: 0, name: failing.name });
     assert.equal(res.status, 200);
     assert.equal(calls.length, 1);
     assert.equal(calls[0].test.name, failing.name);
@@ -55,7 +58,7 @@ test("a valid ask reaches onAsk once with the composed prompt", async () => {
 
 test("a wrong token is rejected and never reaches onAsk", async () => {
   await withServer(async ({ calls, ask }) => {
-    const res = await ask({ token: "not-the-token", index: 0, name: failing.name });
+    const res = await ask("not-the-token", { index: 0, name: failing.name });
     assert.equal(res.status, 403);
     assert.equal(calls.length, 0);
   });
@@ -63,7 +66,7 @@ test("a wrong token is rejected and never reaches onAsk", async () => {
 
 test("a missing token is rejected", async () => {
   await withServer(async ({ calls, ask }) => {
-    const res = await ask({ index: 0, name: failing.name });
+    const res = await ask(undefined, { index: 0, name: failing.name });
     assert.equal(res.status, 403);
     assert.equal(calls.length, 0);
   });
@@ -71,7 +74,7 @@ test("a missing token is rejected", async () => {
 
 test("an out-of-range row is rejected", async () => {
   await withServer(async ({ token, calls, ask }) => {
-    const res = await ask({ token, index: 99 });
+    const res = await ask(token, { index: 99 });
     assert.equal(res.status, 404);
     assert.equal(calls.length, 0);
   });
@@ -79,23 +82,33 @@ test("an out-of-range row is rejected", async () => {
 
 test("a name that no longer matches the index is rejected as stale", async () => {
   await withServer(async ({ token, calls, ask }) => {
-    const res = await ask({ token, index: 0, name: "some other test" });
+    const res = await ask(token, { index: 0, name: "some other test" });
     assert.equal(res.status, 409);
     assert.equal(calls.length, 0);
   });
 });
 
 test("GET is rejected", async () => {
-  await withServer(async ({ url, token, calls }) => {
-    const res = await fetch(new URL(`/ask?token=${token}&index=0`, url));
+  await withServer(async ({ url, calls }) => {
+    const res = await fetch(new URL("/ask?index=0", url));
     assert.equal(res.status, 405);
+    assert.equal(calls.length, 0);
+  });
+});
+
+// Pins the ordering: an oversized body from an unauthenticated caller must come
+// back 403 (token checked first), not 400 "body too large" (body read first).
+test("an unauthenticated caller is rejected before the body is read", async () => {
+  await withServer(async ({ calls, ask }) => {
+    const res = await ask("not-the-token", { index: 0, pad: "x".repeat(20000) });
+    assert.equal(res.status, 403);
     assert.equal(calls.length, 0);
   });
 });
 
 test("without an onAsk host the endpoint reports it is unavailable", async () => {
   await withServer(async ({ token, ask }) => {
-    const res = await ask({ token, index: 0 });
+    const res = await ask(token, { index: 0 });
     assert.equal(res.status, 501);
   }, { onAsk: false });
 });
