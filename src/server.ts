@@ -343,7 +343,27 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         return sendJson(res, 200, { ok: true });
     }
 
+    // A page cannot set `Host` from JavaScript, so requiring the loopback address
+    // this server actually bound is what stops a DNS-rebinding page: it would
+    // arrive under its own name, and the browser would then treat our replies --
+    // including the token embedded in the page -- as same-origin and readable.
+    function fromLoopback(req: IncomingMessage): boolean {
+        const addr = server.address() as AddressInfo | null;
+        if (!addr) return false;
+        const allowed = [`127.0.0.1:${addr.port}`, `localhost:${addr.port}`, `[::1]:${addr.port}`];
+        if (!allowed.includes(req.headers.host ?? "")) return false;
+        // Absent on same-origin navigations and on non-browser callers, so it is
+        // only meaningful when the caller actually sends one.
+        const origin = req.headers.origin;
+        return !origin || allowed.some((h) => origin === `http://${h}`);
+    }
+
     const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+        if (!fromLoopback(req)) {
+            res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });
+            res.end("forbidden");
+            return;
+        }
         const url = req.url ?? "";
         if (url === "/events") {
             res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });

@@ -3,10 +3,30 @@
 // never reach onAsk.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import net from "node:net";
 import { createResultsServer } from "../src/server.js";
 import { composeAskPrompt, testPath } from "../src/ask.js";
 import type { AskRequest } from "../src/server.js";
 import type { TestResult } from "../src/types.js";
+
+// A raw socket, because fetch() refuses to let a caller forge `Host`. Returns the
+// status line so a test can assert on it.
+function rawPost(port: number, headers: string, body = JSON.stringify({ index: 0 })): Promise<string> {
+  return new Promise((resolve) => {
+    const sock = net.connect(port, "127.0.0.1", () => {
+      sock.write(
+        `POST /ask HTTP/1.1\r\n${headers}\r\n`
+        + `Content-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\n`
+        + `Connection: close\r\n\r\n${body}`,
+      );
+    });
+    let out = "";
+    sock.on("data", (d) => {
+      out += d;
+    });
+    sock.on("close", () => resolve(out.split("\r\n")[0]));
+  });
+}
 
 const failing: TestResult = {
   name: "rejects negative amount",
@@ -20,6 +40,7 @@ const failing: TestResult = {
 // Start a server with no file/dir seeding and a recording onAsk.
 async function withServer(run: (ctx: {
   url: string;
+  port: number;
   token: string;
   calls: AskRequest[];
   ask: (token: string | undefined, body: unknown) => Promise<Response>;
@@ -40,7 +61,7 @@ async function withServer(run: (ctx: {
       },
       body: JSON.stringify(body),
     });
-    await run({ url: handle.url, token: handle.askToken, calls, ask });
+    await run({ url: handle.url, port: handle.port, token: handle.askToken, calls, ask });
   } finally {
     await handle.close();
   }
@@ -103,6 +124,58 @@ test("an unauthenticated caller is rejected before the body is read", async () =
     const res = await ask("not-the-token", { index: 0, pad: "x".repeat(20000) });
     assert.equal(res.status, 403);
     assert.equal(calls.length, 0);
+  });
+});
+
+// A DNS-rebinding page reaches this server under its own name, which makes our
+// replies readable to it as same-origin -- including the token in the page. The
+// browser sets `Host` and script cannot override it, so it is the one thing such
+// a page cannot fake.
+test("a forged Host is rejected even with a valid token", async () => {
+  await withServer(async ({ port, token, calls }) => {
+    const status = await rawPost(port, `Host: evil.example\r\nAuthorization: Bearer ${token}`);
+    assert.match(status, /403/);
+    assert.equal(calls.length, 0);
+  });
+});
+
+test("a cross-site Origin is rejected even with a valid Host and token", async () => {
+  await withServer(async ({ port, token, calls }) => {
+    const status = await rawPost(
+      port,
+      `Host: 127.0.0.1:${port}\r\nOrigin: https://evil.example\r\nAuthorization: Bearer ${token}`,
+    );
+    assert.match(status, /403/);
+    assert.equal(calls.length, 0);
+  });
+});
+
+test("the loopback host and our own origin still reach onAsk", async () => {
+  await withServer(async ({ port, token, calls }) => {
+    const status = await rawPost(
+      port,
+      `Host: 127.0.0.1:${port}\r\nOrigin: http://127.0.0.1:${port}\r\nAuthorization: Bearer ${token}`,
+    );
+    assert.match(status, /200/);
+    assert.equal(calls.length, 1);
+  });
+});
+
+// The page itself carries the token, so rebinding must not be able to read it.
+test("a forged Host cannot read the page that carries the token", async () => {
+  await withServer(async ({ port }) => {
+    const status = await new Promise<string>((resolve) => {
+      const sock = net.connect(port, "127.0.0.1", () => {
+        sock.write("GET / HTTP/1.1\r\nHost: evil.example\r\nConnection: close\r\n\r\n");
+      });
+      let out = "";
+      sock.on("data", (d) => {
+        out += d;
+      });
+      sock.on("close", () => resolve(out));
+    });
+    assert.match(status.split("\r\n")[0], /403/);
+    assert.ok(!/__ASK_TOKEN__/.test(status), "the token must not be served to a forged host");
   });
 });
 
