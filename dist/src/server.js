@@ -258,13 +258,18 @@ export async function createResultsServer(options = {}) {
     // by this point, so a wedged page cannot grow the buffer without limit.
     async function readJsonBody(req) {
         let size = 0;
-        let text = "";
+        const chunks = [];
         for await (const chunk of req) {
-            size += chunk.length;
+            const buf = chunk;
+            size += buf.length;
             if (size > 8192)
                 throw new Error("body too large");
-            text += chunk;
+            chunks.push(buf);
         }
+        // Decoded once at the end: a chunk boundary can fall inside a multi-byte
+        // character, and decoding each chunk alone would turn its halves into
+        // replacement characters.
+        const text = Buffer.concat(chunks).toString("utf8");
         try {
             return JSON.parse(text || "null");
         }

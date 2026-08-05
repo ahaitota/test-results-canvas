@@ -10,15 +10,23 @@ import type { AskRequest } from "../src/server.js";
 import type { TestResult } from "../src/types.js";
 
 // A raw socket, because fetch() refuses to let a caller forge `Host`. Returns the
-// status line so a test can assert on it.
-function rawPost(port: number, headers: string, body = JSON.stringify({ index: 0 })): Promise<string> {
+// status line so a test can assert on it. When `splitAt` is set the body is sent
+// as two writes, which is how a chunk boundary lands mid-character in practice.
+function rawPost(port: number, headers: string, body = JSON.stringify({ index: 0 }), splitAt?: number): Promise<string> {
   return new Promise((resolve) => {
+    const bytes = Buffer.from(body, "utf8");
     const sock = net.connect(port, "127.0.0.1", () => {
       sock.write(
         `POST /ask HTTP/1.1\r\n${headers}\r\n`
-        + `Content-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\n`
-        + `Connection: close\r\n\r\n${body}`,
+        + `Content-Type: application/json\r\nContent-Length: ${bytes.length}\r\n`
+        + "Connection: close\r\n\r\n",
       );
+      if (splitAt === undefined) {
+        sock.write(bytes);
+        return;
+      }
+      sock.write(bytes.subarray(0, splitAt));
+      setTimeout(() => sock.write(bytes.subarray(splitAt)), 20);
     });
     let out = "";
     sock.on("data", (d) => {
@@ -159,6 +167,47 @@ test("the loopback host and our own origin still reach onAsk", async () => {
     assert.match(status, /200/);
     assert.equal(calls.length, 1);
   });
+});
+
+// A non-ASCII name spans several bytes, and a chunk boundary can fall inside one
+// of them. Decoding per chunk turns those halves into replacement characters, so
+// the name no longer matches the row and the ask is refused as stale.
+test("a multi-byte character split across chunks still matches its row", async () => {
+  const name = "rejeita valor negativo (café)";
+  const withServerNamed = async (split: boolean) => {
+    const calls: AskRequest[] = [];
+    const handle = await createResultsServer({
+      port: 0,
+      watch: false,
+      onAsk: (r) => {
+        calls.push(r);
+      },
+    });
+    try {
+      handle.setResults([{ name, status: "fail", message: "boom" }]);
+      const body = JSON.stringify({ index: 0, name });
+      // Cut one byte into the two-byte "é" so its halves land in separate chunks.
+      const cut = Buffer.from(body, "utf8").indexOf(Buffer.from("é", "utf8")) + 1;
+      const status = await rawPost(
+        handle.port,
+        `Host: 127.0.0.1:${handle.port}\r\nAuthorization: Bearer ${handle.askToken}`,
+        body,
+        split ? cut : undefined,
+      );
+      return { status, calls };
+    } finally {
+      await handle.close();
+    }
+  };
+
+  const single = await withServerNamed(false);
+  assert.match(single.status, /200/, "a single write must succeed");
+
+  const chunked = await withServerNamed(true);
+  assert.match(chunked.status, /200/, "a split write must behave identically");
+  assert.equal(chunked.calls.length, 1);
+  assert.equal(chunked.calls[0].test.name, name, "the name must survive the split intact");
+  assert.ok(!chunked.calls[0].prompt.includes("\uFFFD"), "no replacement characters in the prompt");
 });
 
 // The page itself carries the token, so rebinding must not be able to read it.
