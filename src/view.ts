@@ -31,6 +31,7 @@ export function renderShell(title: string, askToken = ""): string {
     --fgColor-danger: var(--true-color-red, #f85149);
     --bgColor-default: var(--background-color-default, #0d1117);
     --bgColor-muted: #151b23;
+    --button-default-bgColor-hover: #262c36;
     --bgColor-inset: #010409;
     --bgColor-accent-muted: var(--true-color-blue-muted, #388bfd1a);
     --bgColor-success-muted: #2ea04326;
@@ -50,6 +51,7 @@ export function renderShell(title: string, askToken = ""): string {
     --fgColor-danger: var(--true-color-red, #d1242f);
     --bgColor-default: var(--background-color-default, #ffffff);
     --bgColor-muted: #f6f8fa;
+    --button-default-bgColor-hover: #eff2f5;
     --bgColor-inset: #f6f8fa;
     --bgColor-accent-muted: var(--true-color-blue-muted, #ddf4ff);
     --bgColor-success-muted: #dafbe1;
@@ -207,7 +209,7 @@ export function renderShell(title: string, askToken = ""): string {
     border: 1px solid var(--borderColor-default);
     background: var(--bgColor-muted); color: var(--fgColor-default);
   }
-  .ask-btn:hover:not(:disabled) { background: var(--bgColor-neutral-muted); }
+  .ask-btn:hover:not(:disabled) { background: var(--button-default-bgColor-hover, #eff2f5); }
   .ask-btn:disabled { cursor: default; opacity: .7; }
   .ask-btn.ask-sent { color: var(--fgColor-success); border-color: var(--fgColor-success); }
   .ask-btn.ask-error { color: var(--fgColor-danger); border-color: var(--fgColor-danger); }

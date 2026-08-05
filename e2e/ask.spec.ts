@@ -97,4 +97,25 @@ test.describe("ask agent", () => {
     await row.getByTestId("ask-agent").click();
     await expect(row.getByTestId("row-details")).toBeVisible();
   });
+
+  // A hover rule naming an undefined custom property is not ignored: it resets
+  // the background to its initial value, which is transparent.
+  test("hovering keeps a visible background in both themes", async ({ page, makeServer }) => {
+    const s = await makeServer({ resultsFile: get_fixture_path("empty.trx"), onAsk: () => {} });
+    await openCanvas(page, s);
+    s.setResults(RUN);
+    await expand(page, "rejects negative amount");
+
+    const button = rowFor(page, "rejects negative amount").getByTestId("ask-agent");
+    const bg = () => button.evaluate((e) => getComputedStyle(e).backgroundColor);
+    for (const theme of ["light", "dark"]) {
+      await page.evaluate((t) => document.documentElement.setAttribute("data-theme", t), theme);
+      await page.mouse.move(0, 0);
+      const resting = await bg();
+      await button.hover();
+      const hovered = await bg();
+      expect(hovered, `${theme} hover background`).not.toBe("rgba(0, 0, 0, 0)");
+      expect(hovered, `${theme} hover is distinguishable`).not.toBe(resting);
+    }
+  });
 });
