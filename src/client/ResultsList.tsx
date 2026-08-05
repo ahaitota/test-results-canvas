@@ -35,6 +35,7 @@ export function ResultsList(props: ResultsListProps) {
     <TestRow
       key={x.k}
       t={x.t}
+      index={x.i}
       expanded={expandedRows.has(x.k)}
       secondaryOpen={expandedSecondary.has(x.k)}
       onToggle={() => props.onToggleRow(x.k)}

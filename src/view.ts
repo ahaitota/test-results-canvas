@@ -10,7 +10,7 @@
 // watches both compiled outputs and reloads every open panel — so UI edits appear
 // on the next refresh with no extension reload.
 
-export function renderShell(title: string): string {
+export function renderShell(title: string, askToken = ""): string {
     return `<!doctype html>
 <html>
 <head>
@@ -31,6 +31,7 @@ export function renderShell(title: string): string {
     --fgColor-danger: var(--true-color-red, #f85149);
     --bgColor-default: var(--background-color-default, #0d1117);
     --bgColor-muted: #151b23;
+    --button-default-bgColor-hover: #262c36;
     --bgColor-inset: #010409;
     --bgColor-accent-muted: var(--true-color-blue-muted, #388bfd1a);
     --bgColor-success-muted: #2ea04326;
@@ -50,6 +51,7 @@ export function renderShell(title: string): string {
     --fgColor-danger: var(--true-color-red, #d1242f);
     --bgColor-default: var(--background-color-default, #ffffff);
     --bgColor-muted: #f6f8fa;
+    --button-default-bgColor-hover: #eff2f5;
     --bgColor-inset: #f6f8fa;
     --bgColor-accent-muted: var(--true-color-blue-muted, #ddf4ff);
     --bgColor-success-muted: #dafbe1;
@@ -200,11 +202,22 @@ export function renderShell(title: string): string {
   @media (prefers-reduced-motion: reduce){
     .row.flash { animation:none; box-shadow:0 0 0 2px var(--fgColor-accent); }
   }
+  .ask-bar { margin: 8px 0 4px; }
+  .ask-btn {
+    font: inherit; font-size: 12px; cursor: pointer;
+    padding: 4px 10px; border-radius: 6px;
+    border: 1px solid var(--borderColor-default);
+    background: var(--bgColor-muted); color: var(--fgColor-default);
+  }
+  .ask-btn:hover:not(:disabled) { background: var(--button-default-bgColor-hover, #eff2f5); }
+  .ask-btn:disabled { cursor: default; opacity: .7; }
+  .ask-btn.ask-sent { color: var(--fgColor-success); border-color: var(--fgColor-success); }
+  .ask-btn.ask-error { color: var(--fgColor-danger); border-color: var(--fgColor-danger); }
 </style>
 </head>
 <body>
   <div id="app"></div>
-  <script>window.__INITIAL_TITLE__ = ${JSON.stringify(title)};</script>
+  <script>window.__INITIAL_TITLE__ = ${JSON.stringify(title)};window.__ASK_TOKEN__ = ${JSON.stringify(askToken)};</script>
   <script type="module" src="/client.js"></script>
 </body>
 </html>`;

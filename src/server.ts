@@ -11,6 +11,8 @@ import { watch, readFileSync, writeFileSync, existsSync, readdirSync, statSync }
 import { serializeTrx, parseTrx } from "./parsers/trx.js";
 import { parseJUnit } from "./parsers/junit.js";
 import { labelForPath } from "./labels.js";
+import { composeAskPrompt } from "./ask.js";
+import { randomBytes } from "node:crypto";
 import type { TestResult, TestStatus } from "./types.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -22,13 +24,13 @@ const CLIENT_BUNDLE = join(__dirname, "..", "client", "app.js");
 // refresh without leaking one cached ESM module per request.
 let viewModule: typeof import("./view.js") | undefined;
 let viewMtimeMs = -1;
-async function renderShell(title: string): Promise<string> {
+async function renderShell(title: string, askToken: string): Promise<string> {
     const mtimeMs = statSync(VIEW_PATH).mtimeMs;
     if (!viewModule || mtimeMs !== viewMtimeMs) {
         viewModule = (await import(`${pathToFileURL(VIEW_PATH).href}?t=${mtimeMs}`)) as typeof import("./view.js");
         viewMtimeMs = mtimeMs;
     }
-    return viewModule.renderShell(title);
+    return viewModule.renderShell(title, askToken);
 }
 
 // Walk up to the folder that owns package.json so bundled samples and local
@@ -157,6 +159,16 @@ export interface ResultsServerOptions {
     port?: number;
     watch?: boolean;
     alsoRegister?: string[];
+    // Called when the user clicks "Ask agent" on a row. Injected rather than
+    // imported so this module stays host-free: the extension passes a closure
+    // over session.send, tests pass a spy.
+    onAsk?: (req: AskRequest) => void | Promise<void>;
+}
+
+// What POST /ask hands to the host once the row has been resolved server-side.
+export interface AskRequest {
+    prompt: string;
+    test: TestResult;
 }
 
 // A single result as accepted from SDK actions before its status is normalized.
@@ -174,7 +186,12 @@ export type ResultsServerHandle = Awaited<ReturnType<typeof createResultsServer>
 // SDK actions (and tests) use to mutate state and tear down.
 export async function createResultsServer(options: ResultsServerOptions = {}) {
     // watch=false disables the results-dir watcher.
-    const { resultsFile, resultsDir, title = "Test Results", port = 0, watch: watchEnabled = true } = options;
+    const { resultsFile, resultsDir, title = "Test Results", port = 0, watch: watchEnabled = true, onAsk } = options;
+
+    // The server listens on a fixed, guessable port, so /ask -- which can drive
+    // the user's agent -- is gated on a secret minted per instance and handed
+    // only to the page this server rendered.
+    const askToken = randomBytes(16).toString("hex");
 
     const discovered = new Map<string, string>();
     registerSamples(discovered);
@@ -261,7 +278,97 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
 
     if (!seed({ resultsFile, resultsDir })) results = loadFile(file, discovered);
 
+    // Read a small JSON body. Still capped even though callers are authenticated
+    // by this point, so a wedged page cannot grow the buffer without limit.
+    async function readJsonBody(req: IncomingMessage): Promise<unknown> {
+        let size = 0;
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) {
+            const buf = chunk as Buffer;
+            size += buf.length;
+            if (size > 8192) throw new Error("body too large");
+            chunks.push(buf);
+        }
+        // Decoded once at the end: a chunk boundary can fall inside a multi-byte
+        // character, and decoding each chunk alone would turn its halves into
+        // replacement characters.
+        const text = Buffer.concat(chunks).toString("utf8");
+        try {
+            return JSON.parse(text || "null");
+        } catch {
+            throw new Error("invalid JSON");
+        }
+    }
+
+    // `Authorization: Bearer <token>` rather than a body field so the check below
+    // can run before the body is read.
+    function bearerToken(req: IncomingMessage): string {
+        const header = req.headers.authorization ?? "";
+        return header.startsWith("Bearer ") ? header.slice(7) : "";
+    }
+
+    function sendJson(res: ServerResponse, status: number, body: unknown) {
+        res.writeHead(status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(body));
+    }
+
+    // The page posts a row reference, never prompt text: the message is composed
+    // here from this server's own results, so nothing that reaches the agent is
+    // caller-supplied. `name` is checked against the index to catch a click that
+    // raced a refresh, which would otherwise ask about the wrong test.
+    async function handleAsk(req: IncomingMessage, res: ServerResponse) {
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, error: "POST required" });
+        if (!onAsk) return sendJson(res, 501, { ok: false, error: "asking the agent is not available" });
+        // Before the body is touched, so an unauthenticated caller cannot make
+        // this server buffer anything.
+        if (bearerToken(req) !== askToken) return sendJson(res, 403, { ok: false, error: "bad token" });
+
+        let body: unknown;
+        try {
+            body = await readJsonBody(req);
+        } catch (err) {
+            return sendJson(res, 400, { ok: false, error: err instanceof Error ? err.message : "bad request" });
+        }
+        const payload = (body ?? {}) as { index?: unknown; name?: unknown };
+        if (typeof payload.index !== "number" || !Number.isInteger(payload.index)) {
+            return sendJson(res, 400, { ok: false, error: "index must be an integer" });
+        }
+        const test = results[payload.index];
+        if (!test) return sendJson(res, 404, { ok: false, error: "no such row" });
+        if (typeof payload.name === "string" && payload.name !== test.name) {
+            return sendJson(res, 409, { ok: false, error: "results changed, reopen the row" });
+        }
+
+        try {
+            await onAsk({ prompt: composeAskPrompt(test), test });
+        } catch (err) {
+            console.error("[server] onAsk failed:", err instanceof Error ? err.message : err);
+            return sendJson(res, 502, { ok: false, error: "could not reach the session" });
+        }
+        return sendJson(res, 200, { ok: true });
+    }
+
+    // A page cannot set `Host` from JavaScript, so requiring the loopback address
+    // this server actually bound is what stops a DNS-rebinding page: it would
+    // arrive under its own name, and the browser would then treat our replies --
+    // including the token embedded in the page -- as same-origin and readable.
+    function fromLoopback(req: IncomingMessage): boolean {
+        const addr = server.address() as AddressInfo | null;
+        if (!addr) return false;
+        const allowed = [`127.0.0.1:${addr.port}`, `localhost:${addr.port}`, `[::1]:${addr.port}`];
+        if (!allowed.includes(req.headers.host ?? "")) return false;
+        // Absent on same-origin navigations and on non-browser callers, so it is
+        // only meaningful when the caller actually sends one.
+        const origin = req.headers.origin;
+        return !origin || allowed.some((h) => origin === `http://${h}`);
+    }
+
     const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+        if (!fromLoopback(req)) {
+            res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });
+            res.end("forbidden");
+            return;
+        }
         const url = req.url ?? "";
         if (url === "/events") {
             res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
@@ -294,6 +401,10 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
             res.end(JSON.stringify({ ok: true, file: name }));
             return;
         }
+        if (url === "/ask" || url.startsWith("/ask?")) {
+            await handleAsk(req, res);
+            return;
+        }
         if (url === "/client.js" || url.startsWith("/client.js?")) {
             try {
                 const js = readFileSync(CLIENT_BUNDLE);
@@ -306,7 +417,7 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
             return;
         }
         try {
-            const html = await renderShell(title);
+            const html = await renderShell(title, askToken);
             res.setHeader("Content-Type", "text/html; charset=utf-8");
             res.end(html);
         } catch (err) {
@@ -333,6 +444,8 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         server,
         url: `http://127.0.0.1:${boundPort}/`,
         port: boundPort,
+        // Exposed so tests can post to /ask without scraping it out of the HTML.
+        askToken,
         currentFile: () => file,
         getResults: () => results,
         setResults(list: ResultInput[]) {

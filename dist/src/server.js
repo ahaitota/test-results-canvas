@@ -7,6 +7,8 @@ import { watch, readFileSync, writeFileSync, existsSync, readdirSync, statSync }
 import { serializeTrx, parseTrx } from "./parsers/trx.js";
 import { parseJUnit } from "./parsers/junit.js";
 import { labelForPath } from "./labels.js";
+import { composeAskPrompt } from "./ask.js";
+import { randomBytes } from "node:crypto";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const VIEW_PATH = join(__dirname, "view.js");
 const CLIENT_BUNDLE = join(__dirname, "..", "client", "app.js");
@@ -14,13 +16,13 @@ const CLIENT_BUNDLE = join(__dirname, "..", "client", "app.js");
 // refresh without leaking one cached ESM module per request.
 let viewModule;
 let viewMtimeMs = -1;
-async function renderShell(title) {
+async function renderShell(title, askToken) {
     const mtimeMs = statSync(VIEW_PATH).mtimeMs;
     if (!viewModule || mtimeMs !== viewMtimeMs) {
         viewModule = (await import(`${pathToFileURL(VIEW_PATH).href}?t=${mtimeMs}`));
         viewMtimeMs = mtimeMs;
     }
-    return viewModule.renderShell(title);
+    return viewModule.renderShell(title, askToken);
 }
 // Walk up to the folder that owns package.json so bundled samples and local
 // report files resolve the same whether this runs compiled (dist/src) or straight
@@ -152,7 +154,11 @@ function registerSamples(discovered) {
 // SDK actions (and tests) use to mutate state and tear down.
 export async function createResultsServer(options = {}) {
     // watch=false disables the results-dir watcher.
-    const { resultsFile, resultsDir, title = "Test Results", port = 0, watch: watchEnabled = true } = options;
+    const { resultsFile, resultsDir, title = "Test Results", port = 0, watch: watchEnabled = true, onAsk } = options;
+    // The server listens on a fixed, guessable port, so /ask -- which can drive
+    // the user's agent -- is gated on a secret minted per instance and handed
+    // only to the page this server rendered.
+    const askToken = randomBytes(16).toString("hex");
     const discovered = new Map();
     registerSamples(discovered);
     for (const p of options.alsoRegister || []) {
@@ -248,7 +254,100 @@ export async function createResultsServer(options = {}) {
     }
     if (!seed({ resultsFile, resultsDir }))
         results = loadFile(file, discovered);
+    // Read a small JSON body. Still capped even though callers are authenticated
+    // by this point, so a wedged page cannot grow the buffer without limit.
+    async function readJsonBody(req) {
+        let size = 0;
+        const chunks = [];
+        for await (const chunk of req) {
+            const buf = chunk;
+            size += buf.length;
+            if (size > 8192)
+                throw new Error("body too large");
+            chunks.push(buf);
+        }
+        // Decoded once at the end: a chunk boundary can fall inside a multi-byte
+        // character, and decoding each chunk alone would turn its halves into
+        // replacement characters.
+        const text = Buffer.concat(chunks).toString("utf8");
+        try {
+            return JSON.parse(text || "null");
+        }
+        catch {
+            throw new Error("invalid JSON");
+        }
+    }
+    // `Authorization: Bearer <token>` rather than a body field so the check below
+    // can run before the body is read.
+    function bearerToken(req) {
+        const header = req.headers.authorization ?? "";
+        return header.startsWith("Bearer ") ? header.slice(7) : "";
+    }
+    function sendJson(res, status, body) {
+        res.writeHead(status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(body));
+    }
+    // The page posts a row reference, never prompt text: the message is composed
+    // here from this server's own results, so nothing that reaches the agent is
+    // caller-supplied. `name` is checked against the index to catch a click that
+    // raced a refresh, which would otherwise ask about the wrong test.
+    async function handleAsk(req, res) {
+        if (req.method !== "POST")
+            return sendJson(res, 405, { ok: false, error: "POST required" });
+        if (!onAsk)
+            return sendJson(res, 501, { ok: false, error: "asking the agent is not available" });
+        // Before the body is touched, so an unauthenticated caller cannot make
+        // this server buffer anything.
+        if (bearerToken(req) !== askToken)
+            return sendJson(res, 403, { ok: false, error: "bad token" });
+        let body;
+        try {
+            body = await readJsonBody(req);
+        }
+        catch (err) {
+            return sendJson(res, 400, { ok: false, error: err instanceof Error ? err.message : "bad request" });
+        }
+        const payload = (body ?? {});
+        if (typeof payload.index !== "number" || !Number.isInteger(payload.index)) {
+            return sendJson(res, 400, { ok: false, error: "index must be an integer" });
+        }
+        const test = results[payload.index];
+        if (!test)
+            return sendJson(res, 404, { ok: false, error: "no such row" });
+        if (typeof payload.name === "string" && payload.name !== test.name) {
+            return sendJson(res, 409, { ok: false, error: "results changed, reopen the row" });
+        }
+        try {
+            await onAsk({ prompt: composeAskPrompt(test), test });
+        }
+        catch (err) {
+            console.error("[server] onAsk failed:", err instanceof Error ? err.message : err);
+            return sendJson(res, 502, { ok: false, error: "could not reach the session" });
+        }
+        return sendJson(res, 200, { ok: true });
+    }
+    // A page cannot set `Host` from JavaScript, so requiring the loopback address
+    // this server actually bound is what stops a DNS-rebinding page: it would
+    // arrive under its own name, and the browser would then treat our replies --
+    // including the token embedded in the page -- as same-origin and readable.
+    function fromLoopback(req) {
+        const addr = server.address();
+        if (!addr)
+            return false;
+        const allowed = [`127.0.0.1:${addr.port}`, `localhost:${addr.port}`, `[::1]:${addr.port}`];
+        if (!allowed.includes(req.headers.host ?? ""))
+            return false;
+        // Absent on same-origin navigations and on non-browser callers, so it is
+        // only meaningful when the caller actually sends one.
+        const origin = req.headers.origin;
+        return !origin || allowed.some((h) => origin === `http://${h}`);
+    }
     const server = createServer(async (req, res) => {
+        if (!fromLoopback(req)) {
+            res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });
+            res.end("forbidden");
+            return;
+        }
         const url = req.url ?? "";
         if (url === "/events") {
             res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
@@ -281,6 +380,10 @@ export async function createResultsServer(options = {}) {
             res.end(JSON.stringify({ ok: true, file: name }));
             return;
         }
+        if (url === "/ask" || url.startsWith("/ask?")) {
+            await handleAsk(req, res);
+            return;
+        }
         if (url === "/client.js" || url.startsWith("/client.js?")) {
             try {
                 const js = readFileSync(CLIENT_BUNDLE);
@@ -294,7 +397,7 @@ export async function createResultsServer(options = {}) {
             return;
         }
         try {
-            const html = await renderShell(title);
+            const html = await renderShell(title, askToken);
             res.setHeader("Content-Type", "text/html; charset=utf-8");
             res.end(html);
         }
@@ -320,6 +423,8 @@ export async function createResultsServer(options = {}) {
         server,
         url: `http://127.0.0.1:${boundPort}/`,
         port: boundPort,
+        // Exposed so tests can post to /ask without scraping it out of the HTML.
+        askToken,
         currentFile: () => file,
         getResults: () => results,
         setResults(list) {
