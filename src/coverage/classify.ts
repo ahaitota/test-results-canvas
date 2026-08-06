@@ -22,7 +22,19 @@ const TEST_DIR_RE = /(^|\/)(tests?|specs?|__tests__|__specs__|e2e|integration-te
 const TEST_FILE_RE = /(^|\/)(test_[^/]*|[^/]*_test|[^/]*[.-](test|spec)s?)\.[a-z0-9]+$/i;
 const TEST_SUFFIX_RE = /(tests?|spec|specs|testcase|testfixture)\.[a-z0-9]+$/i;
 
-const GENERATED_RE = /(\.(g|generated|designer)\.[a-z0-9]+$)|(\.min\.(js|css)$)|(\.pb\.go$)|(_pb2\.py$)|(\.freezed\.dart$)|((^|\/)(migrations|generated|__generated__|node_modules|obj|bin)(\/|$))/i;
+// Machine-written code. Uncovered lines here are expected, not a finding.
+//
+// Build output matters as much as codegen: a repo that commits its `dist/` (as
+// this extension does, so the app can load it straight from a checkout) would
+// otherwise see every changed source file counted twice -- once as source and
+// once as its compiled copy -- burying the real answer under build artefacts.
+// `.d.ts` files go too: declarations have no executable lines to cover.
+//
+// Deliberately absent: `coverage`. It reads like an output directory but is
+// just as often real source -- this extension's own `src/coverage/` would
+// vanish from its own report. `build` is only matched at the repo root for the
+// same reason, since a nested `src/build/` is usually a module.
+const GENERATED_RE = /(\.(g|generated|designer)\.[a-z0-9]+$)|(\.min\.(js|css)$)|(\.pb\.go$)|(_pb2\.py$)|(\.freezed\.dart$)|(\.d\.[cm]?ts$)|(^build\/)|((^|\/)(migrations|generated|__generated__|node_modules|obj|bin|dist|out|target|vendor|__pycache__|venv|\.venv|\.next|\.nuxt)(\/|$))/i;
 
 export function fileExt(path: string): string {
     const name = normalizeSlashes(path).split("/").pop() ?? "";
@@ -41,7 +53,7 @@ export function isTestPath(path: string): boolean {
     return TEST_DIR_RE.test(p) || TEST_FILE_RE.test(p) || TEST_SUFFIX_RE.test(p);
 }
 
-// Machine-written code. Uncovered lines here are expected, not a finding.
+// Machine-written code -- see GENERATED_RE for what counts and why.
 export function isGeneratedPath(path: string): boolean {
     return GENERATED_RE.test(normalizeSlashes(path));
 }

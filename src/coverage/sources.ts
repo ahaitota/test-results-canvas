@@ -201,6 +201,15 @@ export function createSourceResolver(options: ResolverOptions = {}): SourceResol
 // is left untouched so a parse result stays reusable.
 export function resolveReportSources(report: CoverageReport, options: ResolverOptions = {}): CoverageReport {
     const resolver = createSourceResolver({ sourceRoots: report.sourceRoots, ...options });
-    const files: CoverageFile[] = report.files.map((f) => ({ ...f, absPath: resolver.resolve(f.path) }));
+    // The path is also what the UI displays and groups by, so it is settled on
+    // forward slashes here rather than per format. A Windows LCOV writes
+    // "src\ask.ts" while git always says "src/ask.ts"; left alone, the same file
+    // shows up under two spellings in patch coverage and the folder tree fails
+    // to nest at all.
+    const files: CoverageFile[] = report.files.map((f) => ({
+        ...f,
+        path: normalizeSlashes(f.path),
+        absPath: resolver.resolve(f.path),
+    }));
     return { ...report, files };
 }

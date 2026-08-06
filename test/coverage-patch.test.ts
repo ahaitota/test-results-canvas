@@ -225,6 +225,26 @@ test("classify separates production code from tests and generated output", () =>
   assert.equal(isProductionSource("obj/Form1.Designer.cs"), false);
 });
 
+test("classify treats committed build output as generated, but not source that merely reads like it", () => {
+  // This repo commits dist/, so a changed src file would otherwise be counted
+  // twice -- once as source, once as its compiled copy.
+  assert.equal(isGeneratedPath("dist/src/server.js"), true);
+  assert.equal(isGeneratedPath("dist/src/server.d.ts"), true);
+  assert.equal(isGeneratedPath("src/types.d.ts"), true);
+  assert.equal(isGeneratedPath("target/classes/Calc.java"), true);
+  assert.equal(isGeneratedPath("vendor/pkg/lib.go"), true);
+  assert.equal(isGeneratedPath("build/out.js"), true);
+  assert.equal(isProductionSource("dist/src/server.js"), false);
+
+  // ...and the false positives that would hide real code, including this
+  // extension's own src/coverage/.
+  assert.equal(isGeneratedPath("src/coverage/rank.ts"), false);
+  assert.equal(isGeneratedPath("coverage-sample/src/Calc.cs"), false);
+  assert.equal(isGeneratedPath("src/build/pipeline.ts"), false);
+  assert.equal(isGeneratedPath("src/distance.ts"), false);
+  assert.equal(isProductionSource("src/coverage/rank.ts"), true);
+});
+
 test("rankUncovered puts a changed file ahead of a bigger untouched gap", () => {
   const rep = report([
     { path: "src/quiet.ts", lines: Object.fromEntries(Array.from({ length: 30 }, (_, i) => [i + 1, 0])) },

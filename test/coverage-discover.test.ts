@@ -138,6 +138,20 @@ test("report paths resolve to real files, and unknown ones are left unresolved",
   assert.equal(resolved.files.find((f) => f.path === "src/ghost.ts")!.absPath, undefined);
 });
 
+test("report paths are normalised to forward slashes so git and the UI agree", () => {
+  // A Windows LCOV writes "src\calc.ts" while git always says "src/calc.ts".
+  // Left as-is the same file appears under two spellings in patch coverage,
+  // and the folder tree -- which splits on "/" -- refuses to nest.
+  const parsed = parseCobertura(coberturaFor("src/calc.ts", [[2, 1]]));
+  assert.ok(parsed);
+  parsed.files[0].path = "src\\calc.ts";
+
+  const resolved = resolveReportSources(parsed, { projectRoot: root });
+  assert.equal(resolved.files[0].path, "src/calc.ts");
+  // Still resolves to the real file: normalising display must not cost lookup.
+  assert.equal(resolved.files[0].absPath, resolvePath(root, "src", "calc.ts"));
+});
+
 test("loadCoverageFile produces a payload with resolved sources", () => {
   // skipGit: the fixture lives in a temp dir, and the surrounding repository's
   // own diff would be noise.
