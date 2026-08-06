@@ -12,6 +12,8 @@ Closes #
 
 - [ ] `npm run lint` passes
 - [ ] `npm run typecheck` passes
+- [ ] `npm run typecheck:client` passes
+- [ ] `npm run typecheck:e2e` passes
 - [ ] `npm test` passes
 - [ ] `npm run test:e2e` passes
 - [ ] Tests added or updated for the changed behaviour

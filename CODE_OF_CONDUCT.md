@@ -38,11 +38,15 @@ public.
 
 ## Enforcement
 
-Report unacceptable behaviour to the maintainers by opening a
-[private security advisory](https://github.com/ahaitota/test-results-canvas/security/advisories/new),
-which is the only private channel available on this repository, or by contacting
-a maintainer directly through their GitHub profile. All reports will be reviewed
-and handled confidentially.
+Report unacceptable behaviour to the maintainers by email at
+**gaitota2002@gmail.com**. Reports are received only by the maintainers, and all
+reports will be reviewed and handled confidentially. You will get an
+acknowledgement within 7 days.
+
+When reporting, please include what happened, where it happened (links to the
+issue, pull request or comment if applicable), and anything else you think is
+relevant. You do not need to have a formal complaint prepared — if something
+felt wrong, that is enough to raise it.
 
 Maintainers may remove, edit or reject comments, commits, code, issues and pull
 requests that violate this Code of Conduct, and may temporarily or permanently
