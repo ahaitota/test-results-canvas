@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Every string a coverage report can put on screen, made hostile. A report is
+     attacker-controlled input: it can be written by a dependency's test run, or
+     pasted in from a build someone else produced. None of these paths exist on
+     disk, which is deliberate -- the assertion is about how the *path text* is
+     rendered, not about opening a source view. -->
+<coverage line-rate="0" version="1.9">
+  <sources>
+    <source>&lt;script&gt;window.__ROOT_XSS__=1&lt;/script&gt;</source>
+  </sources>
+  <packages>
+    <package name="&lt;img src=x onerror=&quot;window.__PKG_XSS__=1&quot;&gt;">
+      <classes>
+        <class name="Evil" filename="src/&lt;img src=x onerror=&quot;window.__PATH_XSS__=1&quot;&gt;.ts">
+          <lines>
+            <line number="1" hits="0" />
+            <line number="2" hits="0" />
+          </lines>
+        </class>
+        <class name="Quoted" filename="src/&quot; onmouseover=&quot;window.__ATTR_XSS__=1&quot; x=&quot;.ts">
+          <lines>
+            <line number="1" hits="0" />
+          </lines>
+        </class>
+        <class name="Closer" filename="src/&lt;/style&gt;&lt;script&gt;window.__STYLE_XSS__=1&lt;/script&gt;.ts">
+          <lines>
+            <line number="1" hits="0" />
+          </lines>
+        </class>
+      </classes>
+    </package>
+  </packages>
+</coverage>

@@ -17,3 +17,21 @@ export async function askAgent(index: number, name: string): Promise<boolean> {
     return false;
   }
 }
+
+// The coverage equivalent. The page names a scope -- and, for "file", a path
+// that must already appear in the server's own report -- and the server
+// composes the prompt from its own data. Same token, same rule as above.
+export type CoverageAskScope = "file" | "patch" | "enable";
+
+export async function askAgentCoverage(scope: CoverageAskScope, path?: string): Promise<boolean> {
+  try {
+    const res = await fetch("/ask-coverage", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${ASK_TOKEN}` },
+      body: JSON.stringify(path ? { scope, path } : { scope }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}

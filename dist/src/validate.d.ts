@@ -7,4 +7,6 @@ export declare function asOpenInput(input: {
 } | undefined): {
     resultsFile?: string;
     resultsDir?: string;
+    coverageFile?: string;
+    coverageDir?: string;
 };

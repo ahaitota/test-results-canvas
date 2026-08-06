@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!DOCTYPE report PUBLIC "-//JACOCO//DTD Report 1.1//EN" "report.dtd">
+<!-- JaCoCo fixture. The package name and the sourcefile name combine into the
+     path, which is the shape the parser has to reassemble; the counters are
+     instructions and branches, never execution counts. -->
+<report name="fixture">
+  <package name="coverage-sample/src">
+    <sourcefile name="Calc.cs">
+      <line nr="14" mi="0" ci="4" mb="0" cb="0" />
+      <line nr="19" mi="0" ci="4" mb="0" cb="0" />
+      <line nr="24" mi="0" ci="3" mb="1" cb="1" />
+      <line nr="26" mi="2" ci="0" mb="0" cb="0" />
+      <line nr="29" mi="0" ci="3" mb="0" cb="0" />
+    </sourcefile>
+    <sourcefile name="Dead.cs">
+      <line nr="7" mi="3" ci="0" mb="0" cb="0" />
+      <line nr="8" mi="3" ci="0" mb="0" cb="0" />
+      <line nr="9" mi="2" ci="0" mb="0" cb="0" />
+    </sourcefile>
+  </package>
+</report>

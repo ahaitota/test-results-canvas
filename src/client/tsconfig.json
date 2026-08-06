@@ -12,5 +12,5 @@
     "types": [],
     "noEmit": true
   },
-  "include": ["**/*.ts", "**/*.tsx", "../types.ts", "../rowkey.ts"]
+  "include": ["**/*.ts", "**/*.tsx", "../types.ts", "../rowkey.ts", "../coverage/types.ts", "../coverage/payload.ts"]
 }

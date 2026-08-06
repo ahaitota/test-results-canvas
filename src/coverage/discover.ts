@@ -1,0 +1,174 @@
+// Finds the coverage report that belongs with a results file.
+//
+// The canvas is already pointed at a `.trx`/JUnit `.xml`; coverage is written by
+// the same run into a sibling or a well-known reporting folder, so the report
+// can be found without asking the user for anything. Each ecosystem has its own
+// habit:
+//
+//   dotnet test --collect:"XPlat Code Coverage"
+//       TestResults/<guid>/coverage.cobertura.xml   (sibling of the .trx)
+//   vitest / jest / c8 / nyc --coverage
+//       coverage/lcov.info
+//   maven + jacoco / gradle jacocoTestReport
+//       target/site/jacoco/jacoco.xml, build/reports/jacoco/test/jacocoTestReport.xml
+//   coverage.py xml
+//       coverage.xml at the project root
+//
+// The search is bounded the same way the extension's results scan is: a small
+// depth limit, an entry budget, and the usual build/vcs folders skipped, so it
+// stays cheap in a large repo.
+
+import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
+import type { Dirent } from "node:fs";
+import { dirname, join, resolve as resolvePath } from "node:path";
+import { hasCoverageExt, looksLikeCoverage, nameScore } from "./detect.js";
+
+const IGNORE_DIRS = new Set([
+    "node_modules", ".git", ".hg", ".svn", ".vs", ".idea", ".venv", "venv",
+    "packages", ".nuget", ".gradle", ".next", ".nuxt", "__pycache__",
+]);
+
+// Folders that exist specifically to hold reports; worth descending into even
+// though sibling folders like bin/obj are skipped.
+const REPORT_DIRS = new Set(["coverage", "testresults", "test-results", "target", "build", "site", "jacoco", "reports", "out", "artifacts", "htmlcov", "test"]);
+
+const MAX_DEPTH = 5;
+const MAX_ENTRIES = 6000;
+// A coverage report for a big solution is large but not unbounded; anything past
+// this is not something the panel can usefully render.
+const MAX_REPORT_BYTES = 64 * 1024 * 1024;
+
+export interface CoverageCandidate {
+    path: string;
+    mtimeMs: number;
+    score: number;
+}
+
+// Read a candidate and confirm it really is a coverage report.
+function isCoverageFile(abs: string): boolean {
+    try {
+        const st = statSync(abs);
+        if (!st.isFile() || st.size > MAX_REPORT_BYTES) return false;
+        // Only the head is needed to identify the dialect.
+        return looksLikeCoverage(readFileSync(abs, "utf8").slice(0, 8192));
+    } catch {
+        return false;
+    }
+}
+
+// Every coverage report under `root`, bounded in depth and entries.
+export function findCoverageFiles(root: string, opts: { maxDepth?: number } = {}): CoverageCandidate[] {
+    const maxDepth = opts.maxDepth ?? MAX_DEPTH;
+    const found: CoverageCandidate[] = [];
+    let budget = MAX_ENTRIES;
+    const stack: { dir: string; depth: number }[] = [{ dir: root, depth: 0 }];
+    const seen = new Set<string>();
+
+    while (stack.length) {
+        const { dir, depth } = stack.pop()!;
+        if (seen.has(dir)) continue;
+        seen.add(dir);
+
+        let entries: Dirent[];
+        try {
+            entries = readdirSync(dir, { withFileTypes: true });
+        } catch {
+            continue;
+        }
+
+        for (const ent of entries) {
+            if (--budget < 0) return found;
+            const abs = resolvePath(dir, ent.name);
+            if (ent.isDirectory()) {
+                if (depth >= maxDepth) continue;
+                const lower = ent.name.toLowerCase();
+                if (IGNORE_DIRS.has(lower)) continue;
+                // bin/obj hold build output, but `dotnet test` also drops
+                // TestResults under them; descend only via known report folders.
+                if ((lower === "bin" || lower === "obj" || lower === "dist") && !REPORT_DIRS.has(lower)) continue;
+                stack.push({ dir: abs, depth: depth + 1 });
+                continue;
+            }
+            if (!ent.isFile() || !hasCoverageExt(ent.name)) continue;
+            if (!isCoverageFile(abs)) continue;
+            try {
+                found.push({ path: abs, mtimeMs: statSync(abs).mtimeMs, score: nameScore(ent.name) });
+            } catch { /* vanished between readdir and stat */ }
+        }
+    }
+    return found;
+}
+
+// Best candidate: newest wins, and a recognisable name breaks ties between
+// reports written in the same instant (a single run can emit several).
+export function pickBest(candidates: readonly CoverageCandidate[]): string | null {
+    let best: CoverageCandidate | null = null;
+    for (const c of candidates) {
+        if (!best || c.mtimeMs > best.mtimeMs || (c.mtimeMs === best.mtimeMs && c.score > best.score)) best = c;
+    }
+    return best ? best.path : null;
+}
+
+// Newest coverage report directly inside one directory (non-recursive).
+export function newestCoverageFileIn(dir: string): string | null {
+    let names: string[];
+    try {
+        names = readdirSync(dir);
+    } catch {
+        return null;
+    }
+    const candidates: CoverageCandidate[] = [];
+    for (const n of names) {
+        if (!hasCoverageExt(n)) continue;
+        const abs = resolvePath(dir, n);
+        if (!isCoverageFile(abs)) continue;
+        try {
+            candidates.push({ path: abs, mtimeMs: statSync(abs).mtimeMs, score: nameScore(n) });
+        } catch { /* ignore */ }
+    }
+    return pickBest(candidates);
+}
+
+// Locate the report that belongs with `resultsFile`.
+//
+// Searched nearest-first, because proximity is a much stronger signal than
+// recency: the `.trx` and its `coverage.cobertura.xml` are written into the same
+// TestResults tree seconds apart, while a stale report from another project
+// elsewhere in the repo could easily be newer than both.
+export function discoverCoverageFor(resultsFile: string, projectRoot?: string): string | null {
+    const startDir = dirname(resolvePath(resultsFile));
+
+    // 1. Alongside the results file, then in its parent -- `dotnet test` writes
+    //    TestResults/<guid>/coverage.cobertura.xml next to TestResults/*.trx.
+    const sibling = newestCoverageFileIn(startDir);
+    if (sibling) return sibling;
+
+    const nearby = pickBest(findCoverageFiles(startDir, { maxDepth: 2 }));
+    if (nearby) return nearby;
+
+    const parent = dirname(startDir);
+    if (parent !== startDir) {
+        const fromParent = pickBest(findCoverageFiles(parent, { maxDepth: 2 }));
+        if (fromParent) return fromParent;
+    }
+
+    // 2. The conventional reporting folders, checked directly before paying for
+    //    a full walk.
+    if (projectRoot && existsSync(projectRoot)) {
+        const conventional = [
+            join(projectRoot, "coverage"),
+            join(projectRoot, "target", "site", "jacoco"),
+            join(projectRoot, "build", "reports", "jacoco", "test"),
+            join(projectRoot, "htmlcov"),
+            projectRoot,
+        ];
+        for (const dir of conventional) {
+            const hit = newestCoverageFileIn(dir);
+            if (hit) return hit;
+        }
+        // 3. Last resort: a bounded walk of the project.
+        return pickBest(findCoverageFiles(projectRoot));
+    }
+
+    return null;
+}

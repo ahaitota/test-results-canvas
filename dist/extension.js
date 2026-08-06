@@ -13,6 +13,9 @@ import { dirname, join, resolve as resolvePath } from "node:path";
 import { watchFile, readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { joinSession, createCanvas } from "@github/copilot-sdk/extension";
 import { createResultsServer, looksLikeResults, RESULT_EXTS } from "./src/server.js";
+import { discoverCoverageFor } from "./src/coverage/discover.js";
+import { findProjectRoot } from "./src/coverage/sources.js";
+import { suggestCoverageCommand } from "./src/coverage/suggest.js";
 // Action/open input reaches handlers typed as `unknown`; narrow it here first.
 import { asResultInput, asOpenInput } from "./src/validate.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -100,16 +103,38 @@ function surfaceIfResults(input) {
         const abs = scanForRecentResults(root, Date.now() - 120000);
         if (!abs)
             return undefined;
-        const key = `${abs}:${statSync(abs).mtimeMs}`;
+        // The coverage report the same run wrote, if any. Discovery is bounded
+        // and only runs once we already know a test run happened.
+        let coverage = null;
+        let projectRoot;
+        try {
+            projectRoot = findProjectRoot(dirname(abs));
+            coverage = discoverCoverageFor(abs, projectRoot);
+        }
+        catch { /* coverage is best-effort; results still surface */ }
+        // Keyed on the coverage file too: a re-run that adds coverage to an
+        // otherwise unchanged report is worth surfacing again.
+        const key = `${abs}:${statSync(abs).mtimeMs}:${coverage ?? ""}`;
         if (lastSurfaced.get(root) === key)
             return undefined; // already told the agent
         lastSurfaced.set(root, key);
-        console.error(`[example-canvas] hook surfacing results: ${abs}`);
+        console.error(`[example-canvas] hook surfacing results: ${abs}${coverage ? ` (+ coverage ${coverage})` : ""}`);
+        const openInput = coverage
+            ? `{ "resultsFile": ${JSON.stringify(abs)}, "coverageFile": ${JSON.stringify(coverage)} }`
+            : `{ "resultsFile": ${JSON.stringify(abs)} }`;
+        // With no coverage report, name the command that would produce one --
+        // most runners collect nothing unless asked, and the panel is far more
+        // useful once it can show which code the run actually exercised.
+        const suggestion = coverage ? "" : (() => {
+            const hint = suggestCoverageCommand(projectRoot, abs);
+            return ` This run produced no code-coverage report. After opening the canvas, offer to re-run the tests with coverage collected (${hint.ecosystem}: \`${hint.command}\`, which writes ${hint.outputHint}) so the panel can also show which code is covered.`;
+        })();
         return {
             additionalContext: `The test run just produced a results file at "${abs}". ` +
                 `Immediately open the "Test Results" canvas (canvasId "${CANVAS_ID}") with ` +
-                `input { "resultsFile": ${JSON.stringify(abs)} } so the user sees the results UI. ` +
-                `Open it right away without asking, and don't print the results as text instead.`,
+                `input ${openInput} so the user sees the results UI. ` +
+                `Open it right away without asking, and don't print the results as text instead.` +
+                suggestion,
         };
     }
     catch (err) {
@@ -135,13 +160,17 @@ joined.session = await joinSession({
         createCanvas({
             id: CANVAS_ID,
             displayName: "Test Results",
-            description: "A visual test-results canvas that renders .NET TRX and JUnit XML runs. " +
+            description: "A visual test-results and code-coverage canvas that renders .NET TRX and JUnit XML runs. " +
                 "IMPORTANT: after running a project's tests, open this canvas and pass the " +
                 "results file as input so it appears automatically — set `resultsFile` to the " +
                 "absolute path of the generated .trx/.xml, or `resultsDir` to the folder that " +
-                "contains it (the newest results file is picked). The canvas then watches that " +
-                "folder and refreshes live over SSE on every re-run — no need to reopen it. " +
-                "Shows pass/fail/skip status, per-test duration, failure messages, and a summary. " +
+                "contains it (the newest results file is picked). If the run also produced a " +
+                "coverage report (Cobertura, LCOV or JaCoCo), pass `coverageFile` too — otherwise " +
+                "the canvas discovers it next to the results file. The canvas then watches those " +
+                "folders and refreshes live over SSE on every re-run — no need to reopen it. " +
+                "Shows pass/fail/skip status, per-test duration, failure messages, a summary, and " +
+                "a coverage view with which lines are covered, how much of the newly changed code " +
+                "is tested, and the uncovered code most worth testing. " +
                 "Actions can also report individual results, load a full batch, or clear them.",
             inputSchema: {
                 type: "object",
@@ -156,6 +185,19 @@ joined.session = await joinSession({
                         description: "Absolute path to a folder containing test-results files. The newest valid " +
                             ".trx/.xml is loaded and the folder is watched for re-runs. Ignored if " +
                             "resultsFile is given and valid.",
+                    },
+                    coverageFile: {
+                        type: "string",
+                        description: "Absolute path to a code-coverage report produced by the same run: Cobertura " +
+                            "XML (dotnet test --collect:\"XPlat Code Coverage\", coverage.py), LCOV " +
+                            "(vitest/jest/c8/nyc), or JaCoCo XML (Maven/Gradle). Optional — when omitted " +
+                            "the canvas looks for one next to the results file.",
+                    },
+                    coverageDir: {
+                        type: "string",
+                        description: "Absolute path to a folder containing a coverage report. The newest valid " +
+                            "report is loaded and the folder is watched for re-runs. Ignored if " +
+                            "coverageFile is given and valid.",
                     },
                 },
             },
@@ -274,6 +316,8 @@ joined.session = await joinSession({
                         port: FIXED_PORT,
                         resultsFile: seed.resultsFile,
                         resultsDir: seed.resultsDir,
+                        coverageFile: seed.coverageFile,
+                        coverageDir: seed.coverageDir,
                         // The server composed this prompt from its own results;
                         // nothing here is supplied by the page.
                         onAsk: async ({ prompt }) => {

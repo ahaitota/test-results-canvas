@@ -47,7 +47,7 @@ test.describe("ask agent", () => {
 
     await expect(button).toHaveAttribute("data-ask-state", "sent");
     expect(asks).toHaveLength(1);
-    expect(asks[0].test.name).toBe("rejects negative amount");
+    expect(asks[0].test?.name).toBe("rejects negative amount");
     // The page sent a row reference; the prompt is the server's own words.
     expect(asks[0].prompt).toContain("rejects negative amount");
     expect(asks[0].prompt).toContain("Expected ArgumentException");

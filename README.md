@@ -17,6 +17,49 @@ Once installed, you don't have to do anything special. In **any** project:
 Supported report formats: `.trx` (VSTest/`dotnet test --logger trx`) and JUnit
 `.xml` (Maven Surefire, Gradle, pytest, jest-junit, etc.).
 
+## Coverage
+
+A results file records *which tests ran*, never *which code they exercised* —
+that comes from a separate report written by a coverage collector during the same
+run. The canvas finds that report next to the results it already loaded and adds
+a **Coverage** tab beside **Tests**.
+
+| Results loaded | Coverage format it looks for | Produced by |
+| --- | --- | --- |
+| `.trx` (.NET) | Cobertura XML | `dotnet test --collect:"XPlat Code Coverage"` |
+| JUnit `.xml` (Java) | JaCoCo XML | Maven + jacoco-maven-plugin, `gradle jacocoTestReport` |
+| JUnit `.xml` (JS/TS, Python, Go, Rust) | LCOV or Cobertura | `vitest --coverage`, `jest --coverage`, `c8`, `nyc`, `pytest --cov --cov-report=xml` |
+
+The format is detected by **content**, not filename, because Cobertura and JaCoCo
+both use `.xml` and would otherwise collide with JUnit results.
+
+The tab leads with what is actionable rather than with a project-wide number:
+
+1. **New code** — coverage of just the lines `git` says changed (uncommitted work
+   against `HEAD`, or the branch against its merge-base when the tree is clean).
+   This is what answers *"the agent wrote new code — did it test it?"*; a repo-wide
+   percentage cannot, because forty new untested lines barely move it.
+2. **Worth covering** — untested blocks ranked with changed files first, then the
+   largest contiguous gaps, skipping tests and generated files.
+3. **All files** — grouped by folder, worst first. Expanding any file shows the
+   real source with a per-line gutter: green = executed (with its hit count),
+   red = executable but never ran, dim = not executable.
+
+When a run produced **no** coverage — by far the most common case, since almost no
+runner collects it unless asked — the tab names the exact command for the project
+in front of you and offers one click to have the agent re-run with it.
+
+> **The `/source` route serves files by allow-list, never by path filtering.**
+> A request is answered only if the resolved path is already present in the loaded
+> coverage report, so traversal is impossible by construction rather than by
+> sanitising — the same approach `resolveResultPath` takes for results files. The
+> "ask agent" prompts are composed server-side from the server's own report; the
+> page only ever posts a file reference, gated on the per-instance ask token.
+> `git` is spawned with a fixed argument list (never a shell string) inside the
+> resolved project root, and its absence degrades to "no New code section" rather
+> than an error.
+
+
 ## Install (once, per user — works in every project)
 ### Step 1:
 
@@ -53,20 +96,55 @@ extension.mjs            discovery entry point — the Copilot app scans for thi
                          line: it imports dist/extension.js. Never edit.
 extension.ts             the real entry point source (compiled to dist/extension.js)
 src/
-  view.ts                panel UI (CSS + client rendering/filtering/animation)
+  view.ts                panel HTML shell + all CSS
   server.ts              SDK-free HTTP/SSE server, file loading + watching
+  ask.ts                 server-side composition of the "ask agent" prompts
   validate.ts            narrows untrusted agent input at the action/open boundary
   labels.ts              file-picker label disambiguation
+  rowkey.ts              stable row identity across live payloads
   types.ts               shared TestResult / TestStatus types
   parsers/
     trx.ts               .NET TRX parser
     junit.ts             JUnit XML parser
+  coverage/
+    payload.ts           the SSE wire contract, shared with the client (host-free)
+    types.ts             CoverageReport / CoverageFile model + tallying
+    xml.ts               minimal shared XML scanner
+    cobertura.ts         Cobertura parser
+    lcov.ts              LCOV parser
+    jacoco.ts            JaCoCo parser
+    detect.ts            content sniffing — format is never inferred from a name
+    discover.ts          find the report paired with a results file (nearest first)
+    sources.ts           report paths -> real files; project-root detection
+    classify.ts          production vs test vs generated code
+    gitdiff.ts           changed lines per file (git exec is injectable)
+    patch.ts             changed lines x hit map = patch coverage
+    rank.ts              "worth covering" ranking
+    suggest.ts           the coverage command for the detected ecosystem
+    source.ts            allow-listed source reads behind /source
+    load.ts              loads + derives one report end to end
+  client/                Preact app, bundled by esbuild to dist/client/app.js
+    App.tsx              cross-cutting state; Tests / Coverage branch
+    ViewTabs.tsx         the Tests | Coverage switcher
+    CoverageView.tsx     New code -> Worth covering -> All files
+    SourceView.tsx       gutter-annotated source for one file
+    CoverageEmpty.tsx    the no-coverage state and its ask-agent button
+    coverageDerive.ts    pure grouping/percentage/ranking derivations
+    (Summary, Toolbar, ResultsList, TestRow, derive, ...)  the results view
 test/
   trx.test.ts            unit tests for the TRX parser
   junit.test.ts          unit tests for the JUnit parser
   labels.test.ts         unit tests for the label generator
+  rowkey.test.ts         unit tests for row identity
+  ask.test.ts            unit tests for prompt composition
   validate.test.ts       unit tests for the input-validation boundary
+  coverage-parsers.test.ts   the three coverage parsers + format detection
+  coverage-patch.test.ts     diff parsing, patch intersection, ranking, /source
+  coverage-discover.test.ts  discovery, path resolution, project roots
 e2e/                     Playwright browser tests (load the compiled dist server)
+coverage-sample/         fixture sources the coverage reports point at. Outside
+                         e2e/ on purpose: anything under a test folder is
+                         classified as test code and excluded from ranking.
 scripts/
   typecheck-sdk.ts       checks the pinned SDK against the installed app's copy
   wrap-junit.ts          adds the <testsuite> wrapper node:test omits
@@ -97,15 +175,14 @@ and Playwright resolve them to the `.ts` sources. After changing any source, run
 > Note that the build and test suites all import the code directly, so they pass
 > even when discovery is broken.
 
-> **All text from result files must go through `esc()` in `src/view.ts`.** Test
-> names, class names and failure messages are attacker-controlled, and several
-> land inside quoted HTML attributes such as `title="..."` — a name containing a
-> double quote closes the attribute early and injects a live event handler.
-> `esc()` escapes `&`, `<`, `>`, `"` and `'`, so it is safe in element text and
-> in quoted attributes alike. `e2e/xss.spec.ts` renders a hostile fixture and
-> asserts no `on*` attributes reach the DOM. Keep it passing if the renderer is
-> ever rewritten onto a UI framework: `dangerouslySetInnerHTML`, `v-html` and
-> `{@html}` reintroduce exactly this bug.
+> **Everything that comes out of a report is untrusted text.** Test names, class
+> names, failure messages, coverage file paths and source file contents are all
+> attacker-controlled. The client renders them as Preact text nodes and
+> attributes, which escape on the way in, so the rule is simply: never reach for
+> `dangerouslySetInnerHTML` (or `v-html`, or `{@html}`) to display any of it —
+> that reintroduces exactly this bug. `e2e/xss.spec.ts` and
+> `e2e/coverage-xss.spec.ts` render hostile fixtures and assert that no `on*`
+> attribute and no injected element reaches the DOM. Keep them passing.
 
 ### `@github/copilot-sdk`
 

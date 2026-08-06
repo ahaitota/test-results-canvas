@@ -23,8 +23,18 @@ export function asResultInput(value: unknown): ResultInput | null {
     return { name, status: raw.status, durationMs: asNumber(raw.durationMs), message: asString(raw.message) };
 }
 
-// The optional resultsFile/resultsDir seed from a canvas open input; `input`
-// itself is optional, since opening with no input is legal.
-export function asOpenInput(input: { [k: string]: unknown } | undefined): { resultsFile?: string; resultsDir?: string } {
-    return { resultsFile: asString(input?.resultsFile), resultsDir: asString(input?.resultsDir) };
+// The optional file/folder seeds from a canvas open input; `input` itself is
+// optional, since opening with no input is legal.
+export function asOpenInput(input: { [k: string]: unknown } | undefined): {
+    resultsFile?: string;
+    resultsDir?: string;
+    coverageFile?: string;
+    coverageDir?: string;
+} {
+    return {
+        resultsFile: asString(input?.resultsFile),
+        resultsDir: asString(input?.resultsDir),
+        coverageFile: asString(input?.coverageFile),
+        coverageDir: asString(input?.coverageDir),
+    };
 }

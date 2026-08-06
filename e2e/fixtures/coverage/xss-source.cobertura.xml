@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Points at a real fixture file whose contents are hostile, so the source
+     view is exercised with markup inside the code it renders. -->
+<coverage line-rate="0" version="1.9">
+  <sources />
+  <packages>
+    <package name="Hostile">
+      <classes>
+        <class name="Hostile" filename="coverage-sample/src/Hostile.cs">
+          <lines>
+            <line number="7" hits="0" />
+            <line number="9" hits="0" />
+          </lines>
+        </class>
+      </classes>
+    </package>
+  </packages>
+</coverage>

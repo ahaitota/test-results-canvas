@@ -7,7 +7,13 @@ import { watch, readFileSync, writeFileSync, existsSync, readdirSync, statSync }
 import { serializeTrx, parseTrx } from "./parsers/trx.js";
 import { parseJUnit } from "./parsers/junit.js";
 import { labelForPath } from "./labels.js";
-import { composeAskPrompt } from "./ask.js";
+import { composeAskPrompt, composeCoveragePrompt, composePatchCoveragePrompt, composeEnableCoveragePrompt } from "./ask.js";
+import { loadCoverageFile } from "./coverage/load.js";
+import { discoverCoverageFor, newestCoverageFileIn } from "./coverage/discover.js";
+import { findProjectRoot } from "./coverage/sources.js";
+import { suggestCoverageCommand } from "./coverage/suggest.js";
+import { readSourceView } from "./coverage/source.js";
+import { hasCoverageExt } from "./coverage/detect.js";
 import { randomBytes } from "node:crypto";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const VIEW_PATH = join(__dirname, "view.js");
@@ -155,6 +161,7 @@ function registerSamples(discovered) {
 export async function createResultsServer(options = {}) {
     // watch=false disables the results-dir watcher.
     const { resultsFile, resultsDir, title = "Test Results", port = 0, watch: watchEnabled = true, onAsk } = options;
+    const coverageEnabled = options.coverage !== false;
     // The server listens on a fixed, guessable port, so /ask -- which can drive
     // the user's agent -- is gated on a secret minted per instance and handed
     // only to the page this server rendered.
@@ -173,8 +180,36 @@ export async function createResultsServer(options = {}) {
     let file = DEFAULT_FILE;
     let results = [];
     let watcher = null;
+    // --- Coverage state ---
+    // `coverage` is the fully derived report; `coverageWatcher` follows the
+    // folder it came from so a re-run with coverage refreshes the panel the same
+    // way results already do.
+    let coverage = null;
+    let coverageWatcher = null;
+    let projectRoot;
+    let coverageHint = null;
+    // Absolute path of the results file currently loaded, used to find the
+    // coverage report that belongs with it.
+    let resultsAbsPath = null;
+    // `gitExec: null` disables changed-line detection; undefined means "use a
+    // real git", which loadCoverageFile() does by default.
+    const loadOptions = () => ({
+        projectRoot,
+        skipGit: options.gitExec === null,
+        diff: options.gitExec ? { exec: options.gitExec } : undefined,
+    });
+    function refreshCoverageHint() {
+        coverageHint = coverageEnabled ? suggestCoverageCommand(projectRoot, resultsAbsPath ?? undefined) : null;
+    }
     function statePayload() {
-        return JSON.stringify({ title, results, file, files: listResultFiles(discovered) });
+        return JSON.stringify({
+            title,
+            results,
+            file,
+            files: listResultFiles(discovered),
+            coverage: coverage?.payload ?? null,
+            coverageHint,
+        });
     }
     function broadcast() {
         for (const res of clients)
@@ -193,6 +228,85 @@ export async function createResultsServer(options = {}) {
         catch { /* already closed */ }
         watcher = null;
     }
+    function stopCoverageWatcher() {
+        if (!coverageWatcher)
+            return;
+        try {
+            coverageWatcher.close();
+        }
+        catch { /* already closed */ }
+        coverageWatcher = null;
+    }
+    // --- Coverage loading ---
+    // Re-read the report currently loaded (a re-run overwrites it in place).
+    function reloadCoverage() {
+        if (!coverage)
+            return false;
+        const next = loadCoverageFile(coverage.path, loadOptions());
+        if (!next)
+            return false;
+        coverage = next;
+        return true;
+    }
+    // Point at a report, deriving everything from it. Returns false when the
+    // path is not a readable coverage report, leaving the previous state alone.
+    function setCoverage(absPath) {
+        const loaded = loadCoverageFile(absPath, loadOptions());
+        if (!loaded)
+            return false;
+        coverage = loaded;
+        if (!projectRoot)
+            projectRoot = loaded.projectRoot;
+        refreshCoverageHint();
+        if (watchEnabled)
+            watchCoverageDir(dirname(absPath));
+        return true;
+    }
+    // Watch the folder holding the report so the next run refreshes the panel.
+    // Separate from the results watcher because the two files usually live in
+    // different folders (`coverage/lcov.info` vs `test-results/junit.xml`).
+    function watchCoverageDir(dir) {
+        stopCoverageWatcher();
+        let timer;
+        try {
+            coverageWatcher = watch(dir, { persistent: false }, (_event, filename) => {
+                if (!filename || !hasCoverageExt(String(filename)))
+                    return;
+                clearTimeout(timer);
+                timer = setTimeout(() => {
+                    // A re-run can write a different file in the same folder
+                    // (dotnet uses a fresh guid folder, but c8 and jacoco
+                    // overwrite), so re-discover rather than assume.
+                    const next = newestCoverageFileIn(dir);
+                    if (next && next !== coverage?.path) {
+                        if (setCoverage(next))
+                            broadcast();
+                        return;
+                    }
+                    if (reloadCoverage())
+                        broadcast();
+                }, 400);
+            });
+            coverageWatcher.on("error", (err) => console.error("[server] coverage watcher error:", err?.message || err));
+        }
+        catch (err) {
+            console.error(`[server] coverage watch failed for ${dir}:`, err instanceof Error ? err.message : err);
+        }
+    }
+    // Find and load the report that belongs with the results file just loaded.
+    function attachCoverage(resultsAbs) {
+        if (!coverageEnabled)
+            return;
+        resultsAbsPath = resultsAbs;
+        if (resultsAbs)
+            projectRoot = findProjectRoot(dirname(resultsAbs));
+        refreshCoverageHint();
+        if (!resultsAbs)
+            return;
+        const found = discoverCoverageFor(resultsAbs, projectRoot);
+        if (found)
+            setCoverage(found);
+    }
     function refreshFromDir(dir) {
         const abs = newestResultsFileIn(dir);
         if (!abs)
@@ -201,6 +315,10 @@ export async function createResultsServer(options = {}) {
         discovered.set(label, abs);
         file = label;
         results = loadFile(label, discovered);
+        // A fresh run usually rewrites coverage too; re-derive from the new
+        // results file so a moved report (dotnet's per-run guid folder) is
+        // picked up rather than going stale.
+        attachCoverage(abs);
         broadcast();
     }
     function watchDir(dir) {
@@ -242,6 +360,10 @@ export async function createResultsServer(options = {}) {
             if (existsSync(d))
                 abs = newestResultsFileIn(d);
         }
+        // An explicit coverage report wins over discovery, and is honoured even
+        // when no results file resolved -- the agent may be pointing the panel
+        // at coverage for a run whose report it could not find.
+        const explicitCoverage = seedCoverage(input, abs);
         if (!abs)
             return null;
         const label = labelForPath(abs, discovered, listLocalNames());
@@ -250,10 +372,42 @@ export async function createResultsServer(options = {}) {
         results = loadFile(label, discovered);
         if (watchEnabled)
             watchDir(dirname(abs));
+        if (!explicitCoverage)
+            attachCoverage(abs);
         return abs;
     }
-    if (!seed({ resultsFile, resultsDir }))
+    // Apply an explicit coverageFile/coverageDir from the open input. Returns
+    // true when one of them produced a report.
+    function seedCoverage(input, resultsAbs) {
+        if (!coverageEnabled)
+            return false;
+        resultsAbsPath = resultsAbs ?? resultsAbsPath;
+        if (input.coverageFile) {
+            const p = resolvePath(String(input.coverageFile));
+            if (!projectRoot)
+                projectRoot = findProjectRoot(dirname(p));
+            if (setCoverage(p))
+                return true;
+        }
+        if (input.coverageDir) {
+            const d = resolvePath(String(input.coverageDir));
+            const found = existsSync(d) ? newestCoverageFileIn(d) : null;
+            if (found) {
+                if (!projectRoot)
+                    projectRoot = findProjectRoot(dirname(found));
+                if (setCoverage(found))
+                    return true;
+            }
+        }
+        return false;
+    }
+    if (!seed({ resultsFile, resultsDir, coverageFile: options.coverageFile, coverageDir: options.coverageDir })) {
         results = loadFile(file, discovered);
+        // No results file resolved, but an explicit coverage report may still
+        // have been given, and the hint needs a project root either way.
+        if (coverageEnabled && !coverage)
+            refreshCoverageHint();
+    }
     // Read a small JSON body. Still capped even though callers are authenticated
     // by this point, so a wedged page cannot grow the buffer without limit.
     async function readJsonBody(req) {
@@ -326,6 +480,79 @@ export async function createResultsServer(options = {}) {
         }
         return sendJson(res, 200, { ok: true });
     }
+    // Coverage asks follow exactly the same rule as /ask: the page names a scope
+    // (and, for a file, a path that must already appear in this server's own
+    // report), and the prompt is composed here from server-held data. Nothing
+    // the caller sends is forwarded to the agent.
+    async function handleAskCoverage(req, res) {
+        if (req.method !== "POST")
+            return sendJson(res, 405, { ok: false, error: "POST required" });
+        if (!onAsk)
+            return sendJson(res, 501, { ok: false, error: "asking the agent is not available" });
+        if (bearerToken(req) !== askToken)
+            return sendJson(res, 403, { ok: false, error: "bad token" });
+        let body;
+        try {
+            body = await readJsonBody(req);
+        }
+        catch (err) {
+            return sendJson(res, 400, { ok: false, error: err instanceof Error ? err.message : "bad request" });
+        }
+        const payload = (body ?? {});
+        const scope = payload.scope;
+        if (scope !== "file" && scope !== "patch" && scope !== "enable") {
+            return sendJson(res, 400, { ok: false, error: "scope must be 'file', 'patch' or 'enable'" });
+        }
+        let prompt;
+        if (scope === "enable") {
+            const hint = coverageHint ?? suggestCoverageCommand(projectRoot, resultsAbsPath ?? undefined);
+            prompt = composeEnableCoveragePrompt(hint.command, hint.ecosystem);
+        }
+        else if (scope === "patch") {
+            const patch = coverage?.payload.patch;
+            if (!patch)
+                return sendJson(res, 404, { ok: false, error: "no changed-code coverage to ask about" });
+            prompt = composePatchCoveragePrompt(patch);
+        }
+        else {
+            if (typeof payload.path !== "string")
+                return sendJson(res, 400, { ok: false, error: "path must be a string" });
+            // Looked up in the report rather than trusted: an unknown path is
+            // rejected, so the prompt can only ever describe measured code.
+            const entry = coverage?.report.files.find((f) => f.path === payload.path);
+            if (!entry)
+                return sendJson(res, 404, { ok: false, error: "no such file in the coverage report" });
+            const uncoveredLines = Object.entries(entry.lines).filter(([, hits]) => hits === 0).map(([line]) => Number(line));
+            prompt = composeCoveragePrompt({
+                path: entry.path,
+                uncoveredLines,
+                percent: entry.totalLines ? Math.round((entry.coveredLines / entry.totalLines) * 100) : null,
+            });
+        }
+        try {
+            await onAsk({ prompt, coverage: { scope, path: scope === "file" ? String(payload.path) : undefined } });
+        }
+        catch (err) {
+            console.error("[server] onAsk (coverage) failed:", err instanceof Error ? err.message : err);
+            return sendJson(res, 502, { ok: false, error: "could not reach the session" });
+        }
+        return sendJson(res, 200, { ok: true });
+    }
+    // Source text plus per-line hits for one file in the loaded report.
+    function handleSource(url, res) {
+        const u = new URL(url, "http://localhost");
+        const path = u.searchParams.get("file") || "";
+        if (!coverage)
+            return sendJson(res, 404, { ok: false, error: "no coverage loaded" });
+        const view = readSourceView(coverage, path);
+        if (view === "unknown-file")
+            return sendJson(res, 404, { ok: false, error: "no such file in the coverage report" });
+        if (view === "no-source")
+            return sendJson(res, 404, { ok: false, error: "the file could not be found on this machine" });
+        if (view === "unreadable")
+            return sendJson(res, 404, { ok: false, error: "the file could not be read" });
+        return sendJson(res, 200, { ok: true, ...view });
+    }
     // A page cannot set `Host` from JavaScript, so requiring the loopback address
     // this server actually bound is what stops a DNS-rebinding page: it would
     // arrive under its own name, and the browser would then treat our replies --
@@ -368,13 +595,16 @@ export async function createResultsServer(options = {}) {
         if (url.startsWith("/load")) {
             const u = new URL(url, "http://localhost");
             const name = u.searchParams.get("file") || "";
-            if (!resolveResultPath(name, discovered)) {
+            const abs = resolveResultPath(name, discovered);
+            if (!abs) {
                 res.writeHead(400, { "Content-Type": "application/json" });
                 res.end(JSON.stringify({ ok: false, error: "unknown file" }));
                 return;
             }
             file = name;
             results = loadFile(name, discovered);
+            // Picking a different run means a different coverage report.
+            attachCoverage(abs);
             broadcast();
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ ok: true, file: name }));
@@ -382,6 +612,14 @@ export async function createResultsServer(options = {}) {
         }
         if (url === "/ask" || url.startsWith("/ask?")) {
             await handleAsk(req, res);
+            return;
+        }
+        if (url === "/ask-coverage" || url.startsWith("/ask-coverage?")) {
+            await handleAskCoverage(req, res);
+            return;
+        }
+        if (url.startsWith("/source")) {
+            handleSource(url, res);
             return;
         }
         if (url === "/client.js" || url.startsWith("/client.js?")) {
@@ -445,24 +683,39 @@ export async function createResultsServer(options = {}) {
             broadcast();
         },
         loadNamed(name) {
-            if (!resolveResultPath(name, discovered))
+            const abs = resolveResultPath(name, discovered);
+            if (!abs)
                 return false;
             file = name;
             results = loadFile(name, discovered);
+            attachCoverage(abs);
             broadcast();
             return true;
         },
         // Re-seed from fresh open input (e.g. a re-open pointing at a new file).
         loadInput(input = {}) {
             const abs = seed(input);
-            if (abs)
+            // An explicit coverage report can resolve even when no results file
+            // does, and that still changes what the panel shows.
+            if (abs || input.coverageFile || input.coverageDir)
                 broadcast();
             return abs;
+        },
+        // Coverage accessors, mirroring the results ones above.
+        getCoverage: () => coverage?.payload ?? null,
+        coveragePath: () => coverage?.path ?? null,
+        projectRoot: () => projectRoot,
+        loadCoverage(path) {
+            if (!setCoverage(resolvePath(path)))
+                return false;
+            broadcast();
+            return true;
         },
         broadcast,
         reload,
         async close() {
             stopWatcher();
+            stopCoverageWatcher();
             for (const res of clients) {
                 try {
                     res.end();

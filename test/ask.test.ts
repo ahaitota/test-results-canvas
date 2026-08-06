@@ -80,7 +80,7 @@ test("a valid ask reaches onAsk once with the composed prompt", async () => {
     const res = await ask(token, { index: 0, name: failing.name });
     assert.equal(res.status, 200);
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].test.name, failing.name);
+    assert.equal(calls[0].test?.name, failing.name);
     assert.match(calls[0].prompt, /rejects negative amount/);
   });
 });
@@ -206,7 +206,7 @@ test("a multi-byte character split across chunks still matches its row", async (
   const chunked = await withServerNamed(true);
   assert.match(chunked.status, /200/, "a split write must behave identically");
   assert.equal(chunked.calls.length, 1);
-  assert.equal(chunked.calls[0].test.name, name, "the name must survive the split intact");
+  assert.equal(chunked.calls[0].test?.name, name, "the name must survive the split intact");
   assert.ok(!chunked.calls[0].prompt.includes("\uFFFD"), "no replacement characters in the prompt");
 });
 

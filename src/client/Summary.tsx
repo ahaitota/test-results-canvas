@@ -31,11 +31,14 @@ export function Banner({ total, failed, passRate }: { total: number; failed: num
   );
 }
 
-export function Summary({ total, counts, filterStatuses, onToggleStatus }: {
+export function Summary({ total, counts, filterStatuses, onToggleStatus, coveragePercent, onCoverage }: {
   total: number;
   counts: SummaryCounts;
   filterStatuses: Set<TestStatus>;
   onToggleStatus: (s: TestStatus) => void;
+  // Null when the run produced no coverage, in which case no chip is shown.
+  coveragePercent?: number | null;
+  onCoverage?: () => void;
 }) {
   const chip = (status: TestStatus, text: string) => (
     <span
@@ -65,6 +68,24 @@ export function Summary({ total, counts, filterStatuses, onToggleStatus }: {
           {chip("skip", counts.skipped + " skipped")}
           <span class="brk"></span>
           <span class="pill pill-total" data-testid="total">{fmtDur(counts.totalDur) + " total"}</span>
+          {coveragePercent != null && (
+            <span
+              class="pill pill-coverage"
+              data-testid="chip-coverage"
+              role="button"
+              tabIndex={0}
+              title="Show code coverage for this run"
+              onClick={onCoverage}
+              onKeyDown={(e: KeyboardEvent) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onCoverage?.();
+                }
+              }}
+            >
+              {coveragePercent + "% covered"}
+            </span>
+          )}
         </>
       )}
     </div>

@@ -212,6 +212,106 @@ export function renderShell(title, askToken = "") {
   .ask-btn:disabled { cursor: default; opacity: .7; }
   .ask-btn.ask-sent { color: var(--fgColor-success); border-color: var(--fgColor-success); }
   .ask-btn.ask-error { color: var(--fgColor-danger); border-color: var(--fgColor-danger); }
+
+  /* --- Coverage --- */
+  .pill-coverage { background:var(--bgColor-accent-muted); color:var(--fgColor-accent); cursor:pointer; }
+  .pill-coverage:hover { border-color:var(--fgColor-accent); }
+  .view-tabs { display:flex; gap:2px; margin:4px 0 12px; padding:2px;
+               border:1px solid var(--borderColor-default); border-radius:8px; width:fit-content; }
+  .view-tab { font:inherit; font-size:13px; font-weight:600; cursor:pointer;
+              padding:5px 14px; border-radius:6px; border:1px solid transparent;
+              background:transparent; color:var(--fgColor-muted); display:flex; gap:6px; align-items:center; }
+  .view-tab:hover { color:var(--fgColor-default); background:var(--button-default-bgColor-hover, #eff2f5); }
+  .view-tab.active { background:var(--bgColor-muted); color:var(--fgColor-default);
+                     border-color:var(--borderColor-muted); }
+  .view-tab-badge { font-size:11px; font-weight:600; padding:0 6px; border-radius:999px;
+                    background:var(--bgColor-accent-muted); color:var(--fgColor-accent); }
+
+  /* Coverage bands drive both the bar fill and the percentage text, so the
+     colour always agrees with the number next to it. */
+  .cov-band-high { --cov-color: var(--fgColor-success); }
+  .cov-band-medium { --cov-color: var(--fgColor-attention); }
+  .cov-band-low { --cov-color: var(--fgColor-danger); }
+  .cov-band-none { --cov-color: var(--fgColor-muted); }
+  .cov-bar { display:inline-block; width:72px; height:6px; flex-shrink:0;
+             border-radius:999px; background:var(--bgColor-muted);
+             border:1px solid var(--borderColor-muted); overflow:hidden; }
+  .cov-bar-fill { display:block; height:100%; background:var(--cov-color); }
+  .cov-pct { font-size:12px; font-weight:600; color:var(--cov-color);
+             min-width:38px; text-align:right; flex-shrink:0; }
+
+  .cov-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+              padding:10px 12px; margin-bottom:16px; border-radius:8px;
+              border:1px solid var(--borderColor-default); background:var(--bgColor-muted); }
+  .cov-headline { display:flex; align-items:baseline; gap:8px; }
+  .cov-headline .cov-pct { font-size:22px; min-width:0; }
+  .cov-headline-label { font-size:13px; color:var(--fgColor-muted); }
+  .cov-meta { font-size:12px; color:var(--fgColor-muted); }
+  .cov-spacer { flex:1 1 auto; min-width:8px; }
+
+  .cov-section { margin:0 0 22px; }
+  .cov-h { font-size:14px; font-weight:600; margin:0 0 6px; color:var(--fgColor-default); }
+  .cov-note { font-size:12px; color:var(--fgColor-muted); margin:4px 0 8px; }
+  .cov-lines { font-family:var(--fontStack-mono); }
+  .cov-list { display:flex; flex-direction:column; gap:2px; }
+
+  .cov-patch-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+                    font-size:13px; font-weight:600; padding:8px 12px; border-radius:6px;
+                    border:1px solid var(--borderColor-muted); }
+  .cov-patch-head.ok { background:var(--bgColor-success-muted); color:var(--fgColor-success); }
+  .cov-patch-head.warn { background:var(--bgColor-danger-muted); color:var(--fgColor-danger); }
+
+  .cov-file, .cov-folder, .cov-hotspot { border-bottom:1px solid var(--borderColor-muted); }
+  .cov-folder { margin-bottom:6px; }
+  .cov-file-head, .cov-folder-head { display:flex; align-items:center; gap:8px;
+                                     padding:6px 8px; cursor:pointer; font-size:13px; }
+  .cov-file-head:hover, .cov-folder-head:hover { background:var(--bgColor-muted); }
+  .cov-file-head.no-source { cursor:default; }
+  .cov-file-head.is-test .cov-name { color:var(--fgColor-muted); }
+  .cov-folder-head { font-weight:600; background:var(--bgColor-muted); border-radius:6px; }
+  .cov-folder-name { font-family:var(--fontStack-mono); font-size:12px; min-width:0;
+                     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .cov-caret { color:var(--fgColor-muted); width:10px; flex-shrink:0; }
+  .cov-name { font-family:var(--fontStack-mono); min-width:0;
+              overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .cov-range { font-size:11px; color:var(--fgColor-muted); font-family:var(--fontStack-mono); flex-shrink:0; }
+  .cov-counts { font-size:11px; color:var(--fgColor-muted); flex-shrink:0; }
+  .cov-tag { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.04em;
+             padding:1px 6px; border-radius:999px; flex-shrink:0;
+             background:var(--bgColor-muted); color:var(--fgColor-muted);
+             border:1px solid var(--borderColor-muted); }
+  .cov-tag-changed { background:var(--bgColor-accent-muted); color:var(--fgColor-accent); }
+
+  /* Source view: a fixed-width gutter keeps line numbers and hit counts from
+     shifting the code as counts grow. */
+  .cov-source { margin:0 0 8px; border-radius:6px; overflow:hidden;
+                border:1px solid var(--borderColor-muted); }
+  .cov-source-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+                     padding:6px 10px; background:var(--bgColor-muted);
+                     font-size:12px; color:var(--fgColor-muted); }
+  .cov-source-stat { flex:1 1 auto; }
+  .cov-source-msg { padding:8px 10px; font-size:12px; color:var(--fgColor-muted); }
+  .cov-code { max-height:420px; overflow:auto; background:var(--bgColor-inset);
+              font-family:var(--fontStack-mono); font-size:12px; line-height:1.55; }
+  .cov-line { display:flex; align-items:flex-start; white-space:pre; border-left:3px solid transparent; }
+  .cov-line.cov-hit { background:var(--bgColor-success-muted); border-left-color:var(--fgColor-success); }
+  .cov-line.cov-miss { background:var(--bgColor-danger-muted); border-left-color:var(--fgColor-danger); }
+  .cov-line.cov-changed .cov-ln { color:var(--fgColor-accent); font-weight:600; }
+  .cov-ln { width:44px; padding-right:8px; text-align:right; flex-shrink:0;
+            color:var(--fgColor-muted); user-select:none; }
+  .cov-hits { width:40px; padding-right:10px; text-align:right; flex-shrink:0;
+              color:var(--fgColor-muted); user-select:none; }
+  .cov-line.cov-miss .cov-hits { color:var(--fgColor-danger); font-weight:600; }
+  .cov-text { flex:1 1 auto; padding-right:10px; }
+
+  .cov-empty { padding:20px; border-radius:8px; border:1px dashed var(--borderColor-default);
+               background:var(--bgColor-muted); }
+  .cov-empty-title { font-size:14px; font-weight:600; margin:0 0 8px; }
+  .cov-empty-body { font-size:13px; color:var(--fgColor-muted); margin:0 0 8px; max-width:64ch; }
+  .cov-empty-note { font-size:12px; color:var(--fgColor-muted); margin:0 0 12px; }
+  .cov-cmd { font-family:var(--fontStack-mono); font-size:12px; margin:0 0 8px;
+             padding:8px 10px; border-radius:6px; overflow-x:auto;
+             background:var(--bgColor-inset); border:1px solid var(--borderColor-muted); }
 </style>
 </head>
 <body>

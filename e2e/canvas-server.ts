@@ -31,7 +31,11 @@ export const test = base.extend<{ makeServer: MakeServer }>({
   makeServer: async ({}, use) => {
     const started: ResultsServerHandle[] = [];
     await use(async (opts: ResultsServerOptions = {}) => {
-      const s = await createResultsServer({ port: 0, watch: false, ...opts });
+      // Coverage is opt-in for specs. The server discovers a report near the
+      // results file, and e2e/fixtures/coverage/ holds several -- so leaving it
+      // on would silently attach a coverage report to every unrelated spec (and
+      // shell out to git on each one). Coverage specs pass `coverage: true`.
+      const s = await createResultsServer({ port: 0, watch: false, coverage: false, ...opts });
       started.push(s);
       return s;
     });

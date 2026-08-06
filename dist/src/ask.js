@@ -1,3 +1,4 @@
+import { toRanges } from "./coverage/patch.js";
 // Failure output can be a full stack trace. Cap it so the injected message stays
 // readable in the conversation; the agent can always open the file for the rest.
 const MAX_MESSAGE_CHARS = 1500;
@@ -57,4 +58,64 @@ export function composeAskPrompt(t) {
     if (t.message && t.message.trim())
         parts.push(`Reported output:\n${fenced(clip(t.message))}`);
     return parts.join("\n\n");
+}
+// --- Coverage prompts ---
+//
+// Same rules as above: every value here comes out of a coverage report, so it is
+// data, not instructions. Paths are flattened and capped exactly like test
+// labels, and line numbers are rendered from parsed integers rather than from
+// report text.
+// Ranges kept short so the message stays readable in the conversation; the agent
+// can open the file for the rest.
+const MAX_RANGES = 12;
+function rangeList(lines) {
+    const ranges = toRanges(lines);
+    const shown = ranges.slice(0, MAX_RANGES)
+        .map((r) => (r.start === r.end ? `${r.start}` : `${r.start}-${r.end}`))
+        .join(", ");
+    return ranges.length > MAX_RANGES ? `${shown}, and ${ranges.length - MAX_RANGES} more` : shown;
+}
+// "Write tests for this file's uncovered lines."
+export function composeCoveragePrompt(file) {
+    const path = label(file.path) || "(unknown file)";
+    const parts = [`Add tests that cover the untested code in "${path}".`];
+    const facts = [];
+    if (file.percent != null)
+        facts.push(`- Current line coverage: ${file.percent}%`);
+    if (file.uncoveredLines.length) {
+        facts.push(`- Uncovered lines: ${rangeList(file.uncoveredLines)}`);
+    }
+    if (facts.length)
+        parts.push(facts.join("\n"));
+    parts.push("Read those lines first, then add tests to the project's existing test suite that exercise them. " +
+        "Re-run the tests with coverage afterwards so this panel updates.");
+    return parts.join("\n\n");
+}
+// "The code that just changed isn't covered -- write tests for it."
+export function composePatchCoveragePrompt(patch) {
+    const gaps = patch.files.filter((f) => f.unmeasured || f.uncoveredLines.length > 0);
+    const headline = patch.percent == null
+        ? `None of the changed code in the ${label(patch.against)} is covered by tests.`
+        : `Only ${patch.percent}% of the changed code in the ${label(patch.against)} is covered by tests (${patch.covered} of ${patch.total} lines).`;
+    const parts = [`${headline} Add tests for the untested changes.`];
+    const lines = gaps.slice(0, MAX_RANGES).map((f) => {
+        const path = label(f.path) || "(unknown file)";
+        return f.unmeasured
+            ? `- ${path}: changed, but no test touches this file at all`
+            : `- ${path}: uncovered lines ${rangeList(f.uncoveredLines)}`;
+    });
+    if (gaps.length > MAX_RANGES)
+        lines.push(`- and ${gaps.length - MAX_RANGES} more files`);
+    if (lines.length)
+        parts.push(lines.join("\n"));
+    parts.push("Re-run the tests with coverage afterwards so this panel updates.");
+    return parts.join("\n\n");
+}
+// "This run produced no coverage at all -- re-run collecting it."
+export function composeEnableCoveragePrompt(command, ecosystem) {
+    return [
+        `Re-run this project's tests with code coverage collection enabled, then open the "Test Results" canvas with the coverage report so I can see what is covered.`,
+        `Detected toolchain: ${label(ecosystem)}. Suggested command:\n${fenced(label(command))}`,
+        "If that command is not right for this project, use the equivalent that produces a Cobertura, LCOV or JaCoCo report.",
+    ].join("\n\n");
 }
