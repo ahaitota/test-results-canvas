@@ -96,6 +96,47 @@ test("changedLines falls back to the merge-base when the tree is clean", () => {
   assert.deepEqual([...result.files[0].lines], [7]);
 });
 
+test("changedLines ignores a working tree holding nothing but docs and config", () => {
+  // Editing a README beside committed work is routine. Treating that as the
+  // change under review left New code empty even though the branch had 33
+  // changed source files -- so the branch diff has to win here.
+  const calls: string[][] = [];
+  const git: GitExec = (args) => {
+    calls.push(args);
+    if (args[0] === "rev-parse" && args[1] === "--is-inside-work-tree") return "true\n";
+    if (args[0] === "ls-files") return "notes.txt\n";
+    if (args[0] === "diff" && args[args.length - 1] === "HEAD") {
+      return "--- a/README.md\n+++ b/README.md\n@@ -1,0 +2 @@\n+docs\n";
+    }
+    if (args[0] === "symbolic-ref") return "origin/main\n";
+    if (args[0] === "merge-base") return "abc123\n";
+    if (args[0] === "diff") return "--- a/src/x.ts\n+++ b/src/x.ts\n@@ -0,0 +7 @@\n+n\n";
+    return null;
+  };
+  const result = changedLines("/repo", { exec: git });
+  assert.ok(result);
+  assert.equal(result.against, "this branch vs origin/main");
+  assert.deepEqual(result.files.map((f) => f.path), ["src/x.ts"]);
+  assert.ok(calls.some((c) => c[0] === "merge-base"));
+});
+
+test("changedLines still prefers the working tree when one source file is in it", () => {
+  // The fallback must not overreach: a single touched source file means the
+  // user is mid-change, and that is the more urgent comparison.
+  const git: GitExec = (args) => {
+    if (args[0] === "rev-parse" && args[1] === "--is-inside-work-tree") return "true\n";
+    if (args[0] === "ls-files") return "";
+    if (args[0] === "diff" && args[args.length - 1] === "HEAD") {
+      return "--- a/README.md\n+++ b/README.md\n@@ -1,0 +2 @@\n+docs\n"
+        + "--- a/src/calc.ts\n+++ b/src/calc.ts\n@@ -1,0 +3 @@\n+code\n";
+    }
+    return null;
+  };
+  const result = changedLines("/repo", { exec: git });
+  assert.ok(result);
+  assert.equal(result.against, "uncommitted changes");
+});
+
 test("changedLines resolves paths against git's own top level, not the folder it was given", () => {
   // Called with a monorepo package directory, git still reports repo-relative
   // paths; resolving them against the package would fabricate paths that match

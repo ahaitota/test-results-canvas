@@ -18,6 +18,7 @@
 import { execFileSync } from "node:child_process";
 import { resolve as resolvePath } from "node:path";
 import { normalizeSlashes } from "./sources.js";
+import { isProductionSource } from "./classify.js";
 
 // Injected so the unit tests can drive the parser with canned git output
 // instead of building throwaway repositories.
@@ -174,9 +175,13 @@ export function changedLines(root: string, options: DiffOptions = {}): DiffResul
     // Uncommitted edits (staged and unstaged) against HEAD.
     const working = git(["diff", "--unified=0", "--no-color", "--no-ext-diff", "HEAD"]);
     const workingChanges = parseUnifiedDiff(working ?? "");
-    if (workingChanges.size || files.length) {
-        files.push(...toFileChanges(base, workingChanges, false));
-        return { root: base, against: "uncommitted changes", files };
+    const workingFiles = [...files, ...toFileChanges(base, workingChanges, false)];
+    // Only let the working tree win when it actually holds code. Editing a
+    // README or a lockfile next to committed work is routine, and treating that
+    // as "the change under review" made the whole New code section disappear
+    // mid-edit even though the branch had plenty to say.
+    if (workingFiles.some((f) => isProductionSource(f.path))) {
+        return { root: base, against: "uncommitted changes", files: workingFiles };
     }
 
     // Clean tree: compare the branch against where it forked from.
