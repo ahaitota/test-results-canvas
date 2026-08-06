@@ -163,7 +163,15 @@ npm run typecheck    # type-check without emitting
 npm run typecheck:sdk # re-check against the installed app's SDK (see below)
 npm test             # run unit tests (via tsx)
 npm run test:e2e     # build + run Playwright e2e tests
+npm run test:coverage # unit tests + JUnit + LCOV in test-results/, to dogfood the coverage tab
 ```
+
+To see the coverage tab against this project's own code, run `npm run
+test:coverage` and open the canvas on `test-results/unit-junit.xml`; the LCOV
+report lands beside it and is discovered automatically. It uses Node's built-in
+`--experimental-test-coverage`, so it costs no extra dependency — and it is
+worth doing before touching `src/coverage/`, since running the feature on a real
+repository is what caught both of the bugs the fixtures could not.
 
 Intra-project imports use `.js` specifiers (required by NodeNext ESM); `tsc`, `tsx`,
 and Playwright resolve them to the `.ts` sources. After changing any source, run
