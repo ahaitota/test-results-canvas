@@ -127,3 +127,16 @@ fails if the pinned version no longer agrees with it. Run it before opening a PR
 that touches SDK-facing code; on a machine without the app it prints a notice
 and exits 0, so it is safe to run anywhere.
 
+## Contributing
+
+Bug reports, feature ideas and pull requests are welcome — see
+[CONTRIBUTING.md](CONTRIBUTING.md) for setup, the checks to run before opening a
+PR, and the two invariants that break the extension silently. Participation is
+governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+Found a security issue? Please report it privately — see [SECURITY.md](SECURITY.md).
+
+## License
+
+[MIT](LICENSE) © Alina Haitota
+

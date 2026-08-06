@@ -1,0 +1,48 @@
+name: Feature request
+description: Suggest a new capability, format or improvement.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: >
+        Describe the situation you hit, not just the feature you want. Knowing
+        the underlying problem often leads to a better solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like to happen?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which area does this touch?
+      options:
+        - Report parsing (TRX / JUnit)
+        - Panel UI (rendering, filtering, search)
+        - Live refresh / file watching
+        - Install and setup
+        - Support for a new report format
+        - Something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you have considered
+      description: Workarounds you are using today, or other approaches you rejected.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues for a similar request.
+          required: true
