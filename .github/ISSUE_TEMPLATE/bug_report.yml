@@ -1,0 +1,82 @@
+name: Bug report
+description: Something in the Test Results panel is wrong, missing or broken.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. If this is a **security** issue, please close this
+        and use [private vulnerability reporting](https://github.com/ahaitota/test-results-canvas/security/advisories/new)
+        instead.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you see, and what did you expect instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run `dotnet test --logger trx`
+        2. Ask Copilot to open the results
+        3. ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: format
+    attributes:
+      label: Report format
+      options:
+        - .trx (VSTest / dotnet test)
+        - JUnit .xml
+        - Both
+        - Not sure / not applicable
+    validations:
+      required: true
+
+  - type: textarea
+    id: report-file
+    attributes:
+      label: Result file
+      description: >
+        The `.trx` / JUnit `.xml` that triggers the problem — by far the most
+        useful thing you can include. Drag the file in to attach it, or paste
+        the contents below inside a fenced code block. Please scrub anything
+        sensitive first.
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: Windows 11 / macOS 15 / Ubuntu 24.04
+    validations:
+      required: true
+
+  - type: input
+    id: node
+    attributes:
+      label: Node version
+      description: Output of `node --version`.
+      placeholder: v22.12.0
+
+  - type: input
+    id: commit
+    attributes:
+      label: Extension commit
+      description: Output of `git rev-parse --short HEAD` in your extension checkout.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I pulled the latest `main` and restarted the Copilot app (or ran `/clear`).
+          required: true
+        - label: I searched existing issues for a duplicate.
+          required: true
