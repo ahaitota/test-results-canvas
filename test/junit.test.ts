@@ -260,3 +260,30 @@ test("parseJUnit handles single-quoted attribute values containing '>'", () => {
   assert.equal(rows.length, 1);
   assert.equal(rows[0].durationMs, 500);
 });
+
+// Supporting both quote styles means a double-quoted value can hold text that
+// looks like a single-quoted attribute. Reading attributes by name alone found
+// that substring; whole name=value pairs must be consumed in order instead.
+
+test("an attribute-like substring inside a quoted value is not read as an attribute", () => {
+  const xml = `<testsuite name="s"><testcase name="parses time='5s' syntax" time="1.5"/></testsuite>`;
+  const rows = parseJUnit(xml);
+  assert.equal(rows[0].name, "parses time='5s' syntax");
+  assert.equal(rows[0].durationMs, 1500);
+});
+
+test("a real attribute still wins over a look-alike in an earlier value", () => {
+  const xml =
+    `<testsuite name="s"><testcase name="x">` +
+    `<failure message="saw type='Foo'" type="RealType">boom</failure>` +
+    `</testcase></testsuite>`;
+  const rows = parseJUnit(xml);
+  assert.equal(rows[0].status, "fail");
+  assert.match(rows[0].message ?? "", /^RealType: saw type='Foo'/);
+});
+
+test("a look-alike in a single-quoted value cannot shadow a later attribute", () => {
+  const xml = `<testsuite name="s"><testcase name='has classname="Fake" inside' classname="Real"/></testsuite>`;
+  const rows = parseJUnit(xml);
+  assert.equal(rows[0].className, "Real");
+});

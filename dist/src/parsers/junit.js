@@ -26,12 +26,20 @@ function xmlUnescape(s) {
         .replace(/&amp;/g, "&");
 }
 // Read an XML attribute value out of a raw tag's attribute string. Both quote
-// styles are legal, and the scanner already treats them alike.
+// styles are legal, so a quoted value may itself contain an attribute-like
+// substring (name="parses time='5s' syntax"). Searching for the wanted name
+// directly would find that substring, so walk complete name=value pairs left to
+// right instead: each match consumes its whole quoted value, putting the text
+// inside it out of reach.
+const ATTR_PAIR = /([^\s=/][^\s=]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
 function attr(tag, name) {
-    const m = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`).exec(String(tag || ""));
-    if (!m)
-        return undefined;
-    return xmlUnescape(m[1] ?? m[2]);
+    const text = String(tag || "");
+    ATTR_PAIR.lastIndex = 0;
+    for (let m = ATTR_PAIR.exec(text); m; m = ATTR_PAIR.exec(text)) {
+        if (m[1] === name)
+            return xmlUnescape(m[2] ?? m[3]);
+    }
+    return undefined;
 }
 // JUnit "time" is seconds (float) -> milliseconds.
 function timeToMs(t) {
