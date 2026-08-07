@@ -29,15 +29,41 @@ function xmlUnescape(s) {
 // styles are legal, so a quoted value may itself contain an attribute-like
 // substring (name="parses time='5s' syntax"). Searching for the wanted name
 // directly would find that substring, so walk complete name=value pairs left to
-// right instead: each match consumes its whole quoted value, putting the text
-// inside it out of reach.
-const ATTR_PAIR = /([^\s=/][^\s=]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+// right instead: consuming each whole quoted value puts the text inside it out
+// of reach.
+//
+// Hand-rolled rather than a regex: every character is visited at most once and
+// never revisited, so a malformed tag carrying a long token with no "=" costs
+// linear time. A regex pairing a greedy name against a following "=" backtracks
+// over that token from every start position, which is quadratic.
 function attr(tag, name) {
     const text = String(tag || "");
-    ATTR_PAIR.lastIndex = 0;
-    for (let m = ATTR_PAIR.exec(text); m; m = ATTR_PAIR.exec(text)) {
-        if (m[1] === name)
-            return xmlUnescape(m[2] ?? m[3]);
+    const isSpace = (c) => c === " " || c === "\t" || c === "\n" || c === "\r";
+    let i = 0;
+    while (i < text.length) {
+        while (i < text.length && isSpace(text[i]))
+            i++;
+        const keyStart = i;
+        while (i < text.length && !isSpace(text[i]) && text[i] !== "=")
+            i++;
+        const key = text.slice(keyStart, i);
+        while (i < text.length && isSpace(text[i]))
+            i++;
+        if (text[i] !== "=")
+            continue; // a bare token, not an attribute
+        i++;
+        while (i < text.length && isSpace(text[i]))
+            i++;
+        const quote = text[i];
+        if (quote !== '"' && quote !== "'")
+            continue; // unquoted value: not well-formed
+        const valueStart = ++i;
+        while (i < text.length && text[i] !== quote)
+            i++;
+        const value = text.slice(valueStart, i);
+        i++; // step past the closing quote
+        if (key === name)
+            return xmlUnescape(value);
     }
     return undefined;
 }

@@ -287,3 +287,23 @@ test("a look-alike in a single-quoted value cannot shadow a later attribute", ()
   const rows = parseJUnit(xml);
   assert.equal(rows[0].className, "Real");
 });
+
+// A malformed tag can carry a long token with no "=". Pairing a greedy attribute
+// name against a following "=" made the parser retry that token from every start
+// position, so a 1MB report could wedge the synchronous server for minutes.
+// Growth must stay linear, not quadratic.
+test("a long token with no '=' does not blow up parse time", () => {
+  const timings = [8000, 32000].map((n) => {
+    const xml = `<testsuite name="s"><testcase name="a" ${"x".repeat(n)} time="1.5"/></testsuite>`;
+    const started = performance.now();
+    const rows = parseJUnit(xml);
+    const elapsed = performance.now() - started;
+    assert.equal(rows[0].durationMs, 1500, "attributes must still be read correctly");
+    return elapsed;
+  });
+
+  // Generous bound: the quadratic version took ~1.1s at 32k and 13s at 64k.
+  const [small, large] = timings;
+  assert.ok(large < 250, `32k token took ${large.toFixed(0)}ms`);
+  assert.ok(large < small * 4 + 50, `4x input grew ${small.toFixed(1)}ms -> ${large.toFixed(1)}ms`);
+});
