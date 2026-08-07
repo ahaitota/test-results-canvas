@@ -215,3 +215,48 @@ test("parseJUnit ignores suite/case-like text inside CDATA", () => {
   assert.equal(rows.b.status, "pass");
   assert.equal(rows.b.suite, "Real");
 });
+
+// --- ">" is legal inside an attribute value ------------------------------
+// Only "<" and "&" must be escaped in XML, so runners emit a bare ">" in names
+// and failure messages. Ending a tag at the first ">" dropped the case and, since
+// the truncated stub no longer looked self-closing, swallowed the rest of the file.
+
+test("parseJUnit keeps a testcase whose name contains a raw '>'", () => {
+  const xml = `<testsuite name="s"><testcase name="tolerates '>' in a tag" time="0.001"/></testsuite>`;
+  const rows = parseJUnit(xml);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].name, "tolerates '>' in a tag");
+  assert.equal(rows[0].status, "pass");
+  assert.equal(rows[0].suite, "s");
+});
+
+test("a raw '>' in one testcase does not swallow the cases after it", () => {
+  const xml =
+    `<testsuite name="s">` +
+    `<testcase name="has > inside"/>` +
+    `<testcase name="later fail"><failure message="nope">stack</failure></testcase>` +
+    `<testcase name="last"/>` +
+    `</testsuite>`;
+  const rows = byName(parseJUnit(xml));
+  assert.deepEqual(Object.keys(rows).sort(), ["has > inside", "last", "later fail"]);
+  assert.equal(rows["later fail"].status, "fail");
+  assert.equal(rows.last.status, "pass");
+});
+
+test("parseJUnit keeps a failure message that contains a raw '>'", () => {
+  const xml =
+    `<testsuite name="s"><testcase name="x">` +
+    `<failure message="Expected List&lt;int> but was List&lt;string>" type="AssertionError">at x.ts:1</failure>` +
+    `</testcase></testsuite>`;
+  const rows = parseJUnit(xml);
+  assert.equal(rows[0].status, "fail");
+  assert.match(rows[0].message ?? "", /Expected List<int> but was List<string>/);
+  assert.match(rows[0].message ?? "", /at x\.ts:1/);
+});
+
+test("parseJUnit handles single-quoted attribute values containing '>'", () => {
+  const xml = `<testsuite name='a > b'><testcase name='c > d' time='0.5'/></testsuite>`;
+  const rows = parseJUnit(xml);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].durationMs, 500);
+});
