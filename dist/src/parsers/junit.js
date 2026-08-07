@@ -25,10 +25,47 @@ function xmlUnescape(s) {
         .replace(/&apos;/g, "'")
         .replace(/&amp;/g, "&");
 }
-// Read an XML attribute value out of a raw tag's attribute string.
+// Read an XML attribute value out of a raw tag's attribute string. Both quote
+// styles are legal, so a quoted value may itself contain an attribute-like
+// substring (name="parses time='5s' syntax"). Searching for the wanted name
+// directly would find that substring, so walk complete name=value pairs left to
+// right instead: consuming each whole quoted value puts the text inside it out
+// of reach.
+//
+// Hand-rolled rather than a regex: every character is visited at most once and
+// never revisited, so a malformed tag carrying a long token with no "=" costs
+// linear time. A regex pairing a greedy name against a following "=" backtracks
+// over that token from every start position, which is quadratic.
 function attr(tag, name) {
-    const m = new RegExp(`\\b${name}="([^"]*)"`).exec(String(tag || ""));
-    return m ? xmlUnescape(m[1]) : undefined;
+    const text = String(tag || "");
+    const isSpace = (c) => c === " " || c === "\t" || c === "\n" || c === "\r";
+    let i = 0;
+    while (i < text.length) {
+        while (i < text.length && isSpace(text[i]))
+            i++;
+        const keyStart = i;
+        while (i < text.length && !isSpace(text[i]) && text[i] !== "=")
+            i++;
+        const key = text.slice(keyStart, i);
+        while (i < text.length && isSpace(text[i]))
+            i++;
+        if (text[i] !== "=")
+            continue; // a bare token, not an attribute
+        i++;
+        while (i < text.length && isSpace(text[i]))
+            i++;
+        const quote = text[i];
+        if (quote !== '"' && quote !== "'")
+            continue; // unquoted value: not well-formed
+        const valueStart = ++i;
+        while (i < text.length && text[i] !== quote)
+            i++;
+        const value = text.slice(valueStart, i);
+        i++; // step past the closing quote
+        if (key === name)
+            return xmlUnescape(value);
+    }
+    return undefined;
 }
 // JUnit "time" is seconds (float) -> milliseconds.
 function timeToMs(t) {
@@ -110,6 +147,28 @@ function skipPast(text, from, marker) {
     const idx = text.indexOf(marker, from);
     return idx < 0 ? text.length : idx + marker.length;
 }
+// Index of the ">" that ends the tag opened at `i`, or -1. Only "<" and "&" must
+// be escaped in XML, so a ">" is legal inside an attribute value (a test named
+// "...before '>' in a tag" is common). Skipping quoted spans keeps such a ">"
+// from cutting the tag short — which would hide the case and, because the stub
+// no longer looks self-closing, swallow every element up to the next close tag.
+function findTagEnd(text, i) {
+    let quote = "";
+    for (let j = i + 1; j < text.length; j++) {
+        const ch = text[j];
+        if (quote) {
+            if (ch === quote)
+                quote = "";
+        }
+        else if (ch === '"' || ch === "'") {
+            quote = ch;
+        }
+        else if (ch === ">") {
+            return j;
+        }
+    }
+    return -1;
+}
 // Match "<name ...>" / self-closing "<name .../>" at i -> { attrs, end,
 // selfClosing } or null. The char after `name` must be space, "/" or ">" so
 // "testsuites" isn't mistaken for "testsuite".
@@ -119,7 +178,7 @@ function matchOpenTag(text, i, name) {
     const after = text[i + 1 + name.length];
     if (after !== ">" && after !== "/" && !/\s/.test(after ?? ""))
         return null;
-    const gt = text.indexOf(">", i);
+    const gt = findTagEnd(text, i);
     if (gt < 0)
         return null;
     let raw = text.slice(i + 1 + name.length, gt);
@@ -163,6 +222,36 @@ function findCloseTag(text, from, name) {
     }
     return { start: -1, after: -1 };
 }
+// First child element named in `names` (document order), skipping comments and
+// CDATA. Uses the same quote-aware tag scan as the main loop, so a ">" inside a
+// message/type attribute can't truncate the tag and lose the failure text.
+function findChild(inner, names) {
+    let i = 0;
+    while (i < inner.length) {
+        const lt = inner.indexOf("<", i);
+        if (lt < 0)
+            break;
+        if (inner.startsWith("<!--", lt)) {
+            i = skipPast(inner, lt + 4, "-->");
+            continue;
+        }
+        if (inner.startsWith("<![CDATA[", lt)) {
+            i = skipPast(inner, lt + 9, "]]>");
+            continue;
+        }
+        for (const name of names) {
+            const tag = matchOpenTag(inner, lt, name);
+            if (!tag)
+                continue;
+            if (tag.selfClosing)
+                return { attrs: tag.attrs, body: "" };
+            const close = findCloseTag(inner, tag.end, name);
+            return { attrs: tag.attrs, body: inner.slice(tag.end, close.start >= 0 ? close.start : inner.length) };
+        }
+        i = lt + 1;
+    }
+    return null;
+}
 // Turn one <testcase> element (its attribute string + inner body) into a
 // result record tagged with the given suite context, and append it.
 function emitCase(attrs, inner, ctx, results) {
@@ -174,19 +263,19 @@ function emitCase(attrs, inner, ctx, results) {
     let status = "pass";
     let message;
     // A <failure> or <error> child marks the test as failing.
-    const fail = /<(failure|error)\b([^>]*?)(\/>|>([\s\S]*?)<\/\1>)/.exec(inner);
-    const skip = /<skipped\b([^>]*?)(\/>|>([\s\S]*?)<\/skipped>)/.exec(inner);
+    const fail = findChild(inner, ["failure", "error"]);
+    const skip = findChild(inner, ["skipped"]);
     if (fail) {
         status = "fail";
-        const fType = attr(fail[2], "type");
-        const fMsg = attr(fail[2], "message");
+        const fType = attr(fail.attrs, "type");
+        const fMsg = attr(fail.attrs, "message");
         const head = [fType, fMsg].filter(Boolean).join(": ");
-        const stack = xmlUnescape(fail[4] || "").trim();
+        const stack = xmlUnescape(fail.body).trim();
         message = [head, stack].filter(Boolean).join("\n") || undefined;
     }
     else if (skip) {
         status = "skip";
-        const sMsg = attr(skip[1], "message");
+        const sMsg = attr(skip.attrs, "message");
         if (sMsg)
             message = sMsg;
     }
