@@ -60,10 +60,13 @@ but in short:
 - **Never delete or rename `extension.mjs`.** The app discovers extensions by
   scanning for that exact filename and ignores `package.json`'s `main`. Without
   it the extension is skipped with no error.
-- **All text from result files must go through `esc()` in `src/view.ts`.** Test
-  names, class names and failure messages are attacker-controlled and several
-  land inside quoted HTML attributes. `e2e/xss.spec.ts` renders a hostile
-  fixture and asserts no `on*` attributes reach the DOM — keep it passing.
+- **Never render result-file text as raw HTML.** Test names, class names and
+  failure messages are attacker-controlled. The UI is built from Preact
+  components in `src/client/`, which escape interpolated text automatically, so
+  the safe path is the default one — just render the value. Introducing
+  `dangerouslySetInnerHTML` (or assigning to `innerHTML`) reintroduces the
+  injection bug. `e2e/xss.spec.ts` renders a hostile fixture and asserts no
+  `on*` attributes reach the DOM — keep it passing.
 
 ## Pull request expectations
 

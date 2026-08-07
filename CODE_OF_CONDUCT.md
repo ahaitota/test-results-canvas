@@ -38,10 +38,9 @@ public.
 
 ## Enforcement
 
-Report unacceptable behaviour to the maintainers by email at
-**gaitota2002@gmail.com**. Reports are received only by the maintainers, and all
-reports will be reviewed and handled confidentially. You will get an
-acknowledgement within 7 days.
+Report unacceptable behaviour by contacting one of the maintainers privately
+through their GitHub profile. Reports are handled confidentially, and you can
+expect an acknowledgement within 7 days.
 
 When reporting, please include what happened, where it happened (links to the
 issue, pull request or comment if applicable), and anything else you think is

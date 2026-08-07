@@ -3,9 +3,6 @@ contact_links:
   - name: Report a security vulnerability
     url: https://github.com/ahaitota/test-results-canvas/security/advisories/new
     about: Please report vulnerabilities privately, not as a public issue.
-  - name: Report a Code of Conduct violation
-    url: mailto:gaitota2002@gmail.com
-    about: Conduct reports go privately to the maintainers by email.
   - name: Contributing guide
     url: https://github.com/ahaitota/test-results-canvas/blob/main/CONTRIBUTING.md
     about: How to set up the project, run the checks and open a pull request.

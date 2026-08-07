@@ -45,10 +45,10 @@ body:
     attributes:
       label: Result file
       description: >
-        Attach or paste the `.trx` / JUnit `.xml` that triggers the problem — it
-        is by far the most useful thing you can include. Please scrub anything
+        The `.trx` / JUnit `.xml` that triggers the problem — by far the most
+        useful thing you can include. Drag the file in to attach it, or paste
+        the contents below inside a fenced code block. Please scrub anything
         sensitive first.
-      render: xml
 
   - type: input
     id: os

@@ -53,11 +53,19 @@ extension.mjs            discovery entry point — the Copilot app scans for thi
                          line: it imports dist/extension.js. Never edit.
 extension.ts             the real entry point source (compiled to dist/extension.js)
 src/
-  view.ts                panel UI (CSS + client rendering/filtering/animation)
+  view.ts                HTML shell + CSS served to the panel (no result rendering)
   server.ts              SDK-free HTTP/SSE server, file loading + watching
   validate.ts            narrows untrusted agent input at the action/open boundary
   labels.ts              file-picker label disambiguation
   types.ts               shared TestResult / TestStatus types
+  client/                Preact UI bundled to dist/client/app.js by esbuild
+    main.tsx             client entry point
+    App.tsx              root component, wires up state and the results stream
+    Toolbar.tsx          filter/search controls
+    Summary.tsx          pass/fail/skip totals
+    ResultsList.tsx      the list of results
+    TestRow.tsx          one result row, including failure detail
+    useResultsStream.ts  SSE subscription that drives live refresh
   parsers/
     trx.ts               .NET TRX parser
     junit.ts             JUnit XML parser
@@ -97,15 +105,15 @@ and Playwright resolve them to the `.ts` sources. After changing any source, run
 > Note that the build and test suites all import the code directly, so they pass
 > even when discovery is broken.
 
-> **All text from result files must go through `esc()` in `src/view.ts`.** Test
-> names, class names and failure messages are attacker-controlled, and several
-> land inside quoted HTML attributes such as `title="..."` — a name containing a
-> double quote closes the attribute early and injects a live event handler.
-> `esc()` escapes `&`, `<`, `>`, `"` and `'`, so it is safe in element text and
-> in quoted attributes alike. `e2e/xss.spec.ts` renders a hostile fixture and
-> asserts no `on*` attributes reach the DOM. Keep it passing if the renderer is
-> ever rewritten onto a UI framework: `dangerouslySetInnerHTML`, `v-html` and
-> `{@html}` reintroduce exactly this bug.
+> **Never render result-file text as raw HTML.** Test names, class names and
+> failure messages are attacker-controlled — a name containing a quote or angle
+> bracket is a live injection attempt. The UI is built from Preact components in
+> `src/client/`, which escape interpolated text and attribute values
+> automatically, so the safe path is simply to render the value and let Preact
+> handle it. The ways to break that are `dangerouslySetInnerHTML` and direct
+> `innerHTML` assignment; neither appears in the codebase today, and neither
+> should be added for result-file content. `e2e/xss.spec.ts` renders a hostile
+> fixture and asserts no `on*` attributes reach the DOM — keep it passing.
 
 ### `@github/copilot-sdk`
 

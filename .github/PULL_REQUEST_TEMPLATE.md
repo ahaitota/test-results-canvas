@@ -25,5 +25,7 @@ Closes #
 Reminders:
   - Do not delete or rename `extension.mjs` — the app discovers extensions by
     that exact filename and fails silently without it.
-  - All text from result files must go through `esc()` in `src/view.ts`.
+  - Never render result-file text as raw HTML. Preact escapes interpolated text
+    by default; `dangerouslySetInnerHTML` and `innerHTML` reintroduce the XSS
+    bug that `e2e/xss.spec.ts` guards against.
 -->
