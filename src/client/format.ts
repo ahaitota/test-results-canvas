@@ -24,6 +24,10 @@ export const SORT_OPTIONS = [
 ] as const;
 export type SortBy = (typeof SORT_OPTIONS)[number]["value"];
 
+// How long the search box waits after the last keystroke before the list is
+// rebuilt.
+export const SEARCH_DEBOUNCE_MS = 120;
+
 export const STATUS_WORD: Record<TestStatus, string> = { pass: "Passed", fail: "Failed", skip: "Skipped" };
 export const STATUS_LABEL: Record<TestStatus, string> = { pass: "PASS", fail: "FAIL", skip: "SKIP" };
 
@@ -48,10 +52,22 @@ export function fmtTime(iso?: string): string {
   return mt ? mt[1] + " " + mt[2] : String(iso);
 }
 
-// True if the free-text query matches any searchable field.
-export function matchesSearch(t: TestResult, q: string): boolean {
+// Everything free-text search looks at, flattened and lowercased once per
+// payload. The separator is a control character, so a query cannot match across
+// two fields.
+const HAYSTACK_SEP = "\u001f";
+
+export function searchHaystack(t: TestResult): string {
   return [t.name, t.className, t.method, t.framework, t.suite, t.computerName, t.message]
-    .some((v) => v != null && String(v).toLowerCase().indexOf(q) !== -1);
+    .filter((v) => v != null && v !== "")
+    .join(HAYSTACK_SEP)
+    .toLowerCase();
+}
+
+// True if the free-text query matches any searchable field. `q` must already be
+// lowercased.
+export function matchesSearch(haystack: string, q: string): boolean {
+  return haystack.indexOf(q) !== -1;
 }
 
 // Class name minus its final segment (".NET Ns.Sub.Class" / JUnit "com.example.Class").

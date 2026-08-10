@@ -1,6 +1,7 @@
 // Search box, jump-to-failure button, and the grouping/sorting selects.
+import { useEffect, useRef, useState } from "preact/hooks";
 import type { GroupBy, SortBy } from "./format";
-import { GROUP_OPTIONS, SORT_OPTIONS } from "./format";
+import { GROUP_OPTIONS, SORT_OPTIONS, SEARCH_DEBOUNCE_MS } from "./format";
 
 export interface ToolbarProps {
   visible: boolean;
@@ -16,6 +17,32 @@ export interface ToolbarProps {
 }
 
 export function Toolbar(props: ToolbarProps) {
+  // Driven locally so a keystroke only re-renders the toolbar; the list is
+  // rebuilt once the typing pauses.
+  const [draft, setDraft] = useState(props.searchText);
+  const committed = useRef(props.searchText);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  // Adopt the value only when it changed elsewhere, so a debounce landing
+  // mid-word can't rewind what has been typed.
+  useEffect(() => {
+    if (props.searchText === committed.current) return;
+    committed.current = props.searchText;
+    setDraft(props.searchText);
+  }, [props.searchText]);
+
+  useEffect(() => () => clearTimeout(timer.current), []);
+
+  const onInput = (e: Event) => {
+    const value = (e.currentTarget as HTMLInputElement).value;
+    setDraft(value);
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => {
+      committed.current = value;
+      props.onSearch(value);
+    }, SEARCH_DEBOUNCE_MS);
+  };
+
   return (
     <div class={"toolbar" + (props.visible ? "" : " hidden")} data-testid="toolbar">
       <div class="toolbar-row">
@@ -25,8 +52,8 @@ export function Toolbar(props: ToolbarProps) {
           type="search"
           placeholder="Search name, class or message…"
           autocomplete="off"
-          value={props.searchText}
-          onInput={(e) => props.onSearch((e.currentTarget as HTMLInputElement).value)}
+          value={draft}
+          onInput={onInput}
         />
         <button data-testid="jump-fail" class="link-btn" type="button" title="Jump to failure (n = next, p = previous)" disabled={props.jumpDisabled} onClick={props.onJump}>
           Next failure ↓
