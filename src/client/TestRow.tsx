@@ -85,7 +85,8 @@ export interface RowProps {
   innerRef: (el: HTMLElement | null) => void;
 }
 
-export function TestRow({ t, index, expanded, secondaryOpen, onToggle, onToggleMore, innerRef }: RowProps) {
+// Built only while the row is open: it is most of a row's DOM.
+function RowDetails({ t, index, secondaryOpen, onToggleMore }: Pick<RowProps, "t" | "index" | "secondaryOpen" | "onToggleMore">) {
   // "Method" falls back to the test name, which every source guarantees, so the
   // panel is populated in practice; the check stops the toggle from ever opening
   // an empty box if that fallback or these fields change.
@@ -119,8 +120,14 @@ export function TestRow({ t, index, expanded, secondaryOpen, onToggle, onToggleM
   // Only failures get the button: that's the case worth handing to the agent.
   const askBar = t.status === "fail" ? <AskAgentButton index={index} name={t.name} /> : null;
   // Failures lead with the message; everything else leads with the field grid.
-  const detailsInner = t.status === "fail" ? <>{msgRow}{askBar}{primaryGrid}{moreBlock}</> : <>{primaryGrid}{moreBlock}{msgRow}</>;
+  return (
+    <div class="details" data-testid="row-details">
+      {t.status === "fail" ? <>{msgRow}{askBar}{primaryGrid}{moreBlock}</> : <>{primaryGrid}{moreBlock}{msgRow}</>}
+    </div>
+  );
+}
 
+export function TestRow({ t, index, expanded, secondaryOpen, onToggle, onToggleMore, innerRef }: RowProps) {
   const preview = t.status === "fail" && t.message && !expanded ? (
     <div class="msg-preview" data-testid="msg-preview" title="Click for full details" onClick={onToggle}>
       {t.message.split(/\r?\n/)[0]}
@@ -136,7 +143,7 @@ export function TestRow({ t, index, expanded, secondaryOpen, onToggle, onToggleM
         <button class="toggle" data-testid="row-toggle" type="button" aria-expanded={expanded ? "true" : "false"} aria-label="Toggle details">{"\u25B6"}</button>
       </div>
       {preview}
-      <div class={"details" + (expanded ? "" : " hidden")} data-testid="row-details">{detailsInner}</div>
+      {expanded && <RowDetails t={t} index={index} secondaryOpen={secondaryOpen} onToggleMore={onToggleMore} />}
     </div>
   );
 }

@@ -79,7 +79,7 @@ export function renderShell(title: string, askToken = ""): string {
   .pill-fail { background:var(--bgColor-danger-muted); color:var(--fgColor-danger); }
   .pill-skip { background:var(--bgColor-muted); color:var(--fgColor-muted); }
   .pill-total { background:var(--bgColor-accent-muted); color:var(--fgColor-accent); }
-  .row { padding:10px 12px; margin:6px 0; border-radius:8px;
+  .row { padding:10px 12px; margin:6px 0 0; border-radius:8px;
          border:1px solid var(--borderColor-default); }
   .row[data-status="pass"] { background:var(--bgColor-success-muted); }
   .row[data-status="fail"] { background:var(--bgColor-danger-muted); }
@@ -99,7 +99,6 @@ export function renderShell(title: string, askToken = ""): string {
   .toggle[aria-expanded="true"] { transform:rotate(90deg); }
   .details { margin-top:8px; padding:14px 16px; background:var(--bgColor-inset);
              border-radius:6px; border:1px solid var(--borderColor-default); }
-  .details.hidden { display:none; }
   .dgrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr));
            gap:12px 28px; }
   .field { min-width:0; }
@@ -180,7 +179,13 @@ export function renderShell(title: string, askToken = ""): string {
   .summary.filtering .pill[data-filter]:not(.active) { opacity:.4; }
   .summary .pill[data-filter].active { box-shadow:inset 0 0 0 2px var(--fgColor-accent); }
   /* Group sections */
-  .group { margin:10px 0; }
+  /* Margins are top-only and must not collapse through a boundary, or the
+     virtual spacers and the real rows disagree on where a row starts. */
+  #list { display:flow-root; }
+  .vspace { flex-shrink:0; }
+  .group { margin:10px 0 0; display:flow-root; }
+  .group.continued { margin-top:0; }
+  .group-body { display:flow-root; }
   .group-head { display:flex; align-items:center; gap:8px; cursor:pointer;
                 padding:6px 4px; border-bottom:1px solid var(--borderColor-muted); }
   .group-name { font-weight:600; font-size:13px; flex:1; min-width:0;

@@ -11,12 +11,16 @@
     "typecheck": "tsc -p tsconfig.json",
     "typecheck:client": "tsc -p src/client/tsconfig.json",
     "typecheck:e2e": "tsc -p e2e/tsconfig.json",
+    "typecheck:bench": "tsc -p bench/tsconfig.json",
     "typecheck:sdk": "node --import tsx scripts/typecheck-sdk.ts",
     "lint": "eslint .",
     "test": "node --import tsx --test test/labels.test.ts test/trx.test.ts test/junit.test.ts test/validate.test.ts test/rowkey.test.ts test/ask.test.ts",
     "test:ci": "node -e \"require('node:fs').mkdirSync('test-results',{recursive:true})\" && node --import tsx --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=test-results/unit-junit.xml     test/labels.test.ts test/trx.test.ts test/junit.test.ts test/validate.test.ts test/rowkey.test.ts test/ask.test.ts",
     "test:e2e": "playwright test",
-    "pretest:e2e": "npm run build"
+    "pretest:e2e": "npm run build",
+    "bench": "playwright test --config=bench/playwright.bench.config.ts",
+    "prebench": "npm run build",
+    "bench:fixtures": "node --import tsx bench/gen-fixtures.ts"
   },
   "engines": {
     "node": "^20.19.0 || >=22.12.0"

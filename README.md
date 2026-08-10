@@ -63,8 +63,9 @@ src/
     App.tsx              root component, wires up state and the results stream
     Toolbar.tsx          filter/search controls
     Summary.tsx          pass/fail/skip totals
-    ResultsList.tsx      the list of results
+    ResultsList.tsx      the list of results (renders only the visible window)
     TestRow.tsx          one result row, including failure detail
+    virtual.ts           windowing: flattens the list and tracks row heights
     useResultsStream.ts  SSE subscription that drives live refresh
   parsers/
     trx.ts               .NET TRX parser
@@ -75,13 +76,14 @@ test/
   labels.test.ts         unit tests for the label generator
   validate.test.ts       unit tests for the input-validation boundary
 e2e/                     Playwright browser tests (load the compiled dist server)
+bench/                   rendering benchmark over generated runs of 100-50,000 tests
 scripts/
   typecheck-sdk.ts       checks the pinned SDK against the installed app's copy
   wrap-junit.ts          adds the <testsuite> wrapper node:test omits
 dist/                    compiled JS + .d.ts (committed; regenerate with `npm run build`)
 tsconfig.json            type-check config (noEmit)
 tsconfig.build.json      build config (emits dist/)
-.github/workflows/ci.yml CI: typecheck + build + `node --test` (Node 20 & 22) + e2e
+.github/workflows/ci.yml CI: typecheck + build + `node --test` (Node 20 & 22) + e2e + bench
 ```
 
 ## Development
@@ -93,7 +95,26 @@ npm run typecheck    # type-check without emitting
 npm run typecheck:sdk # re-check against the installed app's SDK (see below)
 npm test             # run unit tests (via tsx)
 npm run test:e2e     # build + run Playwright e2e tests
+npm run bench        # build + measure rendering against the perf budgets
 ```
+
+### Rendering benchmark
+
+`npm run bench` generates synthetic runs, opens them in a real browser and
+measures first render, keystroke latency, sorting, filtering, grouping and
+scroll pacing against per-scale budgets. It runs 1,000 and 10,000 tests by
+default:
+
+```bash
+npm run bench                                  # 1,000 and 10,000 tests
+BENCH_SCALES=100,1000,10000,50000 npm run bench # every scale
+BENCH_SAMPLES=9 npm run bench                   # more samples per measurement
+```
+
+Fixtures are generated into `bench/fixtures/` (gitignored) and reused. The list
+renders only the rows the viewport is over, so the DOM stays at roughly 150
+nodes whether the run has 100 tests or 50,000; the benchmark asserts that too,
+which is what stops a change from quietly reintroducing a full rebuild.
 
 Intra-project imports use `.js` specifiers (required by NodeNext ESM); `tsc`, `tsx`,
 and Playwright resolve them to the `.ts` sources. After changing any source, run

@@ -11,6 +11,10 @@ test-results/
 playwright-report/
 .playwright/
 
+# Generated benchmark runs -- megabytes, and reproducible from the seed
+# (npm run bench regenerates whatever is missing).
+bench/fixtures/
+
 # TypeScript build metadata (dist/ itself is committed so the app can load the
 # extension straight from a checkout; remove that exception to require a build).
 *.tsbuildinfo

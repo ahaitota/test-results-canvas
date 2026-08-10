@@ -2,13 +2,20 @@
 // Owns the row element registry, the cursor, and the scroll-and-flash effect.
 import { useEffect, useRef, useState } from "preact/hooks";
 
-export function useJumpToFailure(collapsedGroups: Set<string>, expandGroup: (key: string) => void) {
+export function useJumpToFailure(
+  collapsedGroups: Set<string>,
+  expandGroup: (key: string) => void,
+  // Brings a row outside the rendered window into it.
+  revealRow: (i: number) => void,
+) {
   const rowRefs = useRef(new Map<number, HTMLElement>());
   const failingOrder = useRef<number[]>([]);
   const rowGroup = useRef(new Map<number, string>());
   const cursor = useRef(-1);
   const nonce = useRef(0);
   const [target, setTarget] = useState<{ i: number; nonce: number } | null>(null);
+  const revealRef = useRef(revealRow);
+  revealRef.current = revealRow;
 
   function jump(dir: number) {
     const order = failingOrder.current;
@@ -23,17 +30,32 @@ export function useJumpToFailure(collapsedGroups: Set<string>, expandGroup: (key
   const jumpRef = useRef(jump);
   jumpRef.current = jump;
 
-  // Scroll the jumped-to row into view and flash it (imperative, like the original).
+  // Scroll the jumped-to row into view and flash it (imperative, like the
+  // original). It is virtualized, so keep asking until it renders.
   useEffect(() => {
     if (!target) return;
-    const el = rowRefs.current.get(target.i);
-    if (!el) return;
-    el.scrollIntoView({ behavior: "smooth", block: "center" });
-    el.classList.remove("flash");
-    void el.offsetWidth;
-    el.classList.add("flash");
-    const t = setTimeout(() => el.classList.remove("flash"), 1100);
-    return () => clearTimeout(t);
+    let frames = 0;
+    let raf = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = () => {
+      const el = rowRefs.current.get(target.i);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        el.classList.remove("flash");
+        void el.offsetWidth;
+        el.classList.add("flash");
+        timer = setTimeout(() => el.classList.remove("flash"), 1100);
+        return;
+      }
+      if (frames++ > 90) return;
+      revealRef.current(target.i);
+      raf = requestAnimationFrame(tick);
+    };
+    tick();
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      clearTimeout(timer);
+    };
   }, [target?.nonce]);
 
   // n = next failure, p = previous (ignored while typing in a control).
