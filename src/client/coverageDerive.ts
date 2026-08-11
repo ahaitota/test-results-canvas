@@ -93,6 +93,17 @@ export function headlinePercent(coverage: CoveragePayload | null): number | null
   return coverage.productionPercent ?? coverage.totals.percent;
 }
 
+// The fraction to print beside that number, drawn from the same population.
+// Pairing a production-only percentage with the whole report's line count would
+// invite exactly the arithmetic the reader is about to attempt: on a report
+// that measures its test project too, "80% covered · 14/15 lines" is two
+// different measurements sitting next to each other.
+export function headlineTotals(coverage: CoveragePayload | null): { coveredLines: number; totalLines: number; files: number } {
+  if (!coverage) return { coveredLines: 0, totalLines: 0, files: 0 };
+  if (coverage.productionPercent != null && coverage.productionTotals) return coverage.productionTotals;
+  return coverage.totals;
+}
+
 // One-line description of the change set, e.g. "3 of 18 new lines untested".
 //
 // Files the report never measured are always named. Reporting only the measured

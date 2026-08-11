@@ -9,7 +9,7 @@
 
 import { useState } from "preact/hooks";
 import type { CoveragePayload, CoverageSuggestion } from "../coverage/payload";
-import { bandOf, buildCoverageGroups, baseOf, fmtRanges, headlinePercent, patchHeadline } from "./coverageDerive";
+import { bandOf, buildCoverageGroups, baseOf, fmtRanges, headlinePercent, headlineTotals, patchHeadline } from "./coverageDerive";
 import { CoverageEmpty } from "./CoverageEmpty";
 import { SourceView } from "./SourceView";
 import { askAgentCoverage } from "./askAgent";
@@ -239,6 +239,7 @@ export function CoverageView({ coverage, hint }: { coverage: CoveragePayload | n
 
   const groups = buildCoverageGroups(coverage.files, query);
   const headline = headlinePercent(coverage);
+  const meta = headlineTotals(coverage);
   const shownFiles = groups.reduce((n, g) => n + g.files.length, 0);
 
   return (
@@ -250,8 +251,8 @@ export function CoverageView({ coverage, hint }: { coverage: CoveragePayload | n
         </span>
         <span class="cov-spacer" />
         <span class="cov-meta" data-testid="coverage-meta">
-          {coverage.totals.coveredLines}/{coverage.totals.totalLines} lines
-          {" \u00B7 "}{coverage.totals.files} file{coverage.totals.files === 1 ? "" : "s"}
+          {meta.coveredLines}/{meta.totalLines} lines
+          {" \u00B7 "}{meta.files} file{meta.files === 1 ? "" : "s"}
           {" \u00B7 "}{coverage.format}
         </span>
       </div>

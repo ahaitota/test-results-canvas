@@ -91,16 +91,18 @@ function summarize(files, changedPaths) {
     });
 }
 // Coverage counting production code only.
-function productionPercent(files) {
-    let covered = 0;
-    let total = 0;
+function productionOnly(files) {
+    let coveredLines = 0;
+    let totalLines = 0;
+    let count = 0;
     for (const f of files) {
         if (!isProductionSource(f.path))
             continue;
-        covered += f.coveredLines;
-        total += f.totalLines;
+        count++;
+        coveredLines += f.coveredLines;
+        totalLines += f.totalLines;
     }
-    return percentOf(covered, total);
+    return { coveredLines, totalLines, files: count };
 }
 // Read and fully derive one coverage report. Returns null when the file is
 // missing, too large, or not a coverage report at all.
@@ -139,6 +141,7 @@ export function loadCoverageFile(coverageFile, options = {}) {
     const changedByPath = new Map();
     for (const f of diff?.files ?? [])
         changedByPath.set(normalizeSlashes(f.absPath).toLowerCase(), f);
+    const production = productionOnly(report.files);
     return {
         path: abs,
         mtimeMs,
@@ -150,7 +153,8 @@ export function loadCoverageFile(coverageFile, options = {}) {
             format: report.format,
             totals: report.totals,
             files: summarize(report.files, changedPaths),
-            productionPercent: productionPercent(report.files),
+            productionPercent: percentOf(production.coveredLines, production.totalLines),
+            productionTotals: production,
             patch,
             hotspots,
         },

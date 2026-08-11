@@ -40,6 +40,11 @@ export interface CoveragePayload {
     totals: CoverageTotals;
     files: CoverageFileSummary[];
     productionPercent: number | null;
+    productionTotals: {
+        coveredLines: number;
+        totalLines: number;
+        files: number;
+    };
     patch: PatchCoverage | null;
     hotspots: UncoveredRegion[];
 }

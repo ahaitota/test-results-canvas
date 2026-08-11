@@ -13,6 +13,7 @@ import {
   toRanges,
   fmtRanges,
   headlinePercent,
+  headlineTotals,
   patchHeadline,
 } from "../src/client/coverageDerive.js";
 import type { CoveragePayload, CoverageFileSummary, PatchCoverage, PatchFile } from "../src/coverage/payload.js";
@@ -115,6 +116,29 @@ test("headlinePercent prefers production coverage over the whole-report figure",
   assert.equal(headlinePercent(payload(null, { productionPercent: 62, totals })), 62);
   assert.equal(headlinePercent(payload(null, { productionPercent: null, totals })), 88);
   assert.equal(headlinePercent(null), null);
+});
+
+test("headlineTotals draws its fraction from whichever population the percentage used", () => {
+  // A report that measures the test project too: 88/100 overall, but the code
+  // that ships is 40/65. Printing "62%" beside "88/100 lines" would show a
+  // reader two populations and invite them to check the arithmetic and find it
+  // wrong -- the failure that prompted this function.
+  const totals = { files: 3, coveredLines: 88, totalLines: 100, percent: 88 };
+  const productionTotals = { files: 2, coveredLines: 40, totalLines: 65 };
+
+  assert.deepEqual(
+    headlineTotals(payload(null, { productionPercent: 62, productionTotals, totals })),
+    productionTotals,
+  );
+
+  // Nothing classified as production: the percentage falls back to the whole
+  // report, so the fraction has to fall back with it.
+  assert.deepEqual(
+    headlineTotals(payload(null, { productionPercent: null, productionTotals, totals })),
+    totals,
+  );
+
+  assert.deepEqual(headlineTotals(null), { coveredLines: 0, totalLines: 0, files: 0 });
 });
 
 test("patchHeadline names the uncovered lines", () => {

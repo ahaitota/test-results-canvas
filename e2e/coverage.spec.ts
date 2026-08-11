@@ -72,6 +72,28 @@ test.describe("the coverage tab", () => {
     await expect(page.getByTestId("coverage-meta")).toContainText("cobertura");
   });
 
+  // A report that measures the test project too -- normal for coverlet and
+  // JaCoCo, which see test assemblies as just more code. Test code is fully
+  // covered by definition (running it is what coverage measures), so counting
+  // it flatters the total: 14/15 lines here, 93%, against 4/5 = 80% of the code
+  // that actually ships. The headline has always reported the production
+  // figure; the fraction beside it reported the whole report, so one line of UI
+  // stated two different measurements.
+  test("the headline fraction counts the same lines as the headline percentage", async ({ page, makeServer }) => {
+    const s = await makeServer(withCoverage(get_fixture_path("coverage/lcov-with-tests.info")));
+    await openCanvas(page, s);
+    await page.getByTestId("tab-coverage").click();
+
+    await expect(page.getByTestId("coverage-headline")).toContainText("80%");
+    const meta = page.getByTestId("coverage-meta");
+    await expect(meta).toContainText("4/5 lines");
+    await expect(meta).toContainText("1 file");
+    await expect(meta).not.toContainText("14/15");
+
+    // The test file is still listed, it just is not part of the headline.
+    await expect(page.getByTestId("coverage-files")).toContainText("CalcTests.cs");
+  });
+
   test("files are listed worst first, with their own numbers", async ({ page, makeServer }) => {
     const s = await makeServer(withCoverage(cobertura()));
     await openCanvas(page, s);

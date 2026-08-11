@@ -78,8 +78,11 @@ export interface CoveragePayload {
     totals: CoverageTotals;
     files: CoverageFileSummary[];
     // Coverage restricted to production code, which is the number users mean
-    // when they ask "what is our coverage?".
+    // when they ask "what is our coverage?". The totals it was computed from
+    // travel with it: showing this percentage above the whole-report fraction
+    // would put a production number over a figure that includes test code.
     productionPercent: number | null;
+    productionTotals: { coveredLines: number; totalLines: number; files: number };
     patch: PatchCoverage | null;
     hotspots: UncoveredRegion[];
 }
