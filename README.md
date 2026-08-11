@@ -56,6 +56,28 @@ row carries everything known about that file at once:
 Expanding a row shows the real source with a per-line gutter: green = executed
 (with its hit count), red = executable but never ran, dim = not executable.
 
+### Why a file says `not measured`
+
+A coverage report only knows about files that were **loaded and executed while
+the tests ran**. A file the test process never loaded is absent from the report
+entirely, which is not the same as scoring zero. The usual causes:
+
+- **A different runtime than the one being measured.** Browser code under a Node
+  runner, or vice versa. It may be thoroughly tested by a browser-driving suite
+  such as Playwright, but unless that suite also writes a coverage report,
+  nothing records it.
+- **A different language.** A Node run cannot measure C#, and a coverlet run
+  cannot measure TypeScript.
+- **Nothing left to execute.** A file of only type declarations or interfaces
+  compiles away to no runtime code, so there is nothing a test could cover.
+- **Entry points loaded only in production**, such as host or plugin glue that
+  no test imports.
+
+The panel deliberately does not guess which of these applies: it reports that
+nobody looked, and how much code that leaves unobserved. A blind spot is worth
+seeing even when it turns out to be harmless — and *especially* when the reason
+is the first one, because that code looks tested and is not being watched.
+
 The default sort, *Most useful to test*, puts unmeasured new code first, then
 changed files by how many new lines went untested, then the biggest remaining
 gaps; test files sink to the bottom. *Lowest coverage* and *Name* are there for

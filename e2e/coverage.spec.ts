@@ -244,6 +244,12 @@ test.describe("new code", () => {
     await expect(ghostRow).toContainText("no data");
     // And it carries a size, so one blind spot can be told from another.
     await expect(ghostRow).toContainText("3 changed lines, none of them measured");
+    // "Why is this not measured?" is the first question the row provokes, and
+    // the reasons are never visible in the report itself, so the tag carries
+    // them rather than leaving the reader to guess or to ask.
+    const why = await ghostRow.getByText("not measured").getAttribute("title");
+    expect(why).toContain("never loaded this file");
+    expect(why).toContain("not the same as 0%");
     await expect(page.getByTestId("patch-ask")).toBeVisible();
   });
 

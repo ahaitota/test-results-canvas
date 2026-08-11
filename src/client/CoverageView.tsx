@@ -67,7 +67,18 @@ function FileRow({ row, expanded, onToggle }: {
         </span>
         {row.changed && <span class="cov-tag cov-tag-changed">changed</span>}
         {row.isTest && <span class="cov-tag">test</span>}
-        {!row.measured && <span class="cov-tag cov-tag-unmeasured" title="the coverage report never mentions this file">not measured</span>}
+        {!row.measured && (
+          <span
+            class="cov-tag cov-tag-unmeasured"
+            title={"Not in the coverage report: the test run never loaded this file.\n"
+              + "Usually a different runtime (browser code under a Node runner), another\n"
+              + "language, a types-only file with nothing to execute, or an entry point\n"
+              + "only production loads.\n"
+              + "This is not the same as 0% -- nobody looked, so nothing is known."}
+          >
+            not measured
+          </span>
+        )}
         {row.measured && !row.hasSource && <span class="cov-tag" title="the file could not be located on this machine">no source</span>}
         <span class="cov-spacer" />
         {row.measured
