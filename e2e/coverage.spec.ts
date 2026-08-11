@@ -110,8 +110,6 @@ test.describe("the coverage tab", () => {
     // A line the report never mentions is not executable, so it must not read
     // as a failure.
     await expect(view.locator('[data-line="1"]')).toHaveAttribute("data-cov", "neutral");
-    // Expansion is keyed by path, so the same file opened from either section
-    // shows the same view; scope the assertion to the one under test.
     await expect(view.getByTestId("source-ask")).toBeVisible();
   });
 
@@ -124,6 +122,48 @@ test.describe("the coverage tab", () => {
     // A whole untested module outranks a one-line gap.
     await expect(hotspots.first()).toContainText("Dead.cs");
     await expect(hotspots.first()).toContainText("never run");
+  });
+
+  // Expansion used to be keyed by file path, so opening one row opened every
+  // row naming that file: the same file in another section, and -- because a
+  // file can hold several ranked regions -- other rows in this same section.
+  test("expanding one row leaves the other rows for that file closed", async ({ page, makeServer }) => {
+    const diff = `--- a/${CALC}\n+++ b/${CALC}\n@@ -23,0 +24,6 @@\n+a\n+b\n+c\n+d\n+e\n+f\n`;
+    const s = await makeServer({ resultsFile: results(), coverageFile: cobertura(), coverage: true, gitExec: stubGit(diff) });
+    await openCanvas(page, s);
+    await page.getByTestId("tab-coverage").click();
+
+    const inPatch = page.getByTestId("coverage-patch").getByTestId("coverage-file").filter({ hasText: "Calc.cs" });
+    const inFiles = page.getByTestId("coverage-files").locator(`[data-path="${CALC}"]`);
+    await expect(page.getByTestId("source-view")).toHaveCount(0);
+
+    await inPatch.getByRole("button").first().click();
+    await expect(page.getByTestId("source-view")).toHaveCount(1);
+    await expect(inPatch.locator('[aria-expanded="true"]')).toHaveCount(1);
+    await expect(inFiles.locator('[aria-expanded="true"]')).toHaveCount(0);
+
+    // Opening the same file in another section is a second, independent row.
+    await inFiles.click();
+    await expect(page.getByTestId("source-view")).toHaveCount(2);
+
+    // And closing one leaves the other open.
+    await inPatch.getByRole("button").first().click();
+    await expect(page.getByTestId("source-view")).toHaveCount(1);
+    await expect(inFiles.locator('[aria-expanded="true"]')).toHaveCount(1);
+  });
+
+  test("two ranked regions of one file expand independently", async ({ page, makeServer }) => {
+    // Gaps.cs is uncovered at 13-15 and again at 22-24, so it is ranked twice.
+    const s = await makeServer(withCoverage(get_fixture_path("coverage/cobertura-two-gaps.xml")));
+    await openCanvas(page, s);
+    await page.getByTestId("tab-coverage").click();
+
+    const rows = page.getByTestId("coverage-hotspot").filter({ hasText: "Gaps.cs" });
+    await expect(rows).toHaveCount(2);
+
+    await rows.first().getByRole("button").first().click();
+    await expect(rows.first().getByTestId("source-view")).toHaveCount(1);
+    await expect(rows.nth(1).getByTestId("source-view")).toHaveCount(0);
   });
 });
 

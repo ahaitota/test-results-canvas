@@ -28,6 +28,16 @@ function Pct({ percent }: { percent: number | null }) {
   return <span class={"cov-pct cov-band-" + bandOf(percent)}>{percent == null ? "\u2014" : percent + "%"}</span>;
 }
 
+// Which row is expanded, not which file. A path alone cannot identify a row:
+// the same file legitimately appears in several sections, and "Worth covering"
+// lists one row per uncovered region, so several rows there can share a path
+// too. Keying on the path made all of those open and close together.
+type RowSection = "patch" | "hotspot" | "file";
+
+function rowKey(section: RowSection, path: string, region = ""): string {
+  return `${section}\u0000${path}\u0000${region}`;
+}
+
 // A file row that expands into its annotated source.
 function FileRow({ path, percent, covered, total, hasSource, changed, isTest, expanded, onToggle }: {
   path: string;
@@ -72,10 +82,10 @@ function FileRow({ path, percent, covered, total, hasSource, changed, isTest, ex
   );
 }
 
-function PatchSection({ coverage, expanded, onToggleFile }: {
+function PatchSection({ coverage, expanded, onToggleRow }: {
   coverage: CoveragePayload;
   expanded: Set<string>;
-  onToggleFile: (p: string) => void;
+  onToggleRow: (key: string) => void;
 }) {
   const [asked, setAsked] = useState<"idle" | "sent" | "error">("idle");
   const patch = coverage.patch;
@@ -141,10 +151,10 @@ function PatchSection({ coverage, expanded, onToggleFile }: {
                     total={f.coveredLines.length + f.uncoveredLines.length}
                     hasSource={Boolean(f.absPath)}
                     changed
-                    expanded={expanded.has(f.path)}
-                    onToggle={() => onToggleFile(f.path)}
+                    expanded={expanded.has(rowKey("patch", f.path))}
+                    onToggle={() => onToggleRow(rowKey("patch", f.path))}
                   />
-                  {f.uncoveredLines.length > 0 && !expanded.has(f.path) && (
+                  {f.uncoveredLines.length > 0 && !expanded.has(rowKey("patch", f.path)) && (
                     <p class="cov-note cov-lines" data-testid="patch-uncovered-lines">
                       Untested new lines: {fmtRanges(f.uncoveredLines)}
                     </p>
@@ -158,10 +168,10 @@ function PatchSection({ coverage, expanded, onToggleFile }: {
   );
 }
 
-function HotspotSection({ coverage, expanded, onToggleFile }: {
+function HotspotSection({ coverage, expanded, onToggleRow }: {
   coverage: CoveragePayload;
   expanded: Set<string>;
-  onToggleFile: (p: string) => void;
+  onToggleRow: (key: string) => void;
 }) {
   const hotspots = coverage.hotspots || [];
   if (!hotspots.length) return null;
@@ -171,8 +181,10 @@ function HotspotSection({ coverage, expanded, onToggleFile }: {
       <p class="cov-note">Untested blocks of production code &mdash; code you just changed first, then the largest gaps.</p>
       <div class="cov-list">
         {hotspots.map((h) => {
-          const key = h.path + ":" + h.start;
-          const open = expanded.has(h.path);
+          // One file can hold several ranked regions, so the region is part of
+          // the identity; without it they all open as one.
+          const key = rowKey("hotspot", h.path, `${h.start}-${h.end}`);
+          const open = expanded.has(key);
           return (
             <div key={key} class="cov-hotspot" data-testid="coverage-hotspot">
               <div
@@ -180,11 +192,11 @@ function HotspotSection({ coverage, expanded, onToggleFile }: {
                 role="button"
                 tabIndex={0}
                 aria-expanded={open}
-                onClick={() => onToggleFile(h.path)}
+                onClick={() => onToggleRow(key)}
                 onKeyDown={(e: KeyboardEvent) => {
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
-                    onToggleFile(h.path);
+                    onToggleRow(key);
                   }
                 }}
               >
@@ -212,10 +224,10 @@ export function CoverageView({ coverage, hint }: { coverage: CoveragePayload | n
 
   if (!coverage) return <CoverageEmpty hint={hint} />;
 
-  const toggleFile = (p: string) => setExpanded((prev) => {
+  const toggleRow = (key: string) => setExpanded((prev) => {
     const next = new Set(prev);
-    if (next.has(p)) next.delete(p);
-    else next.add(p);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
     return next;
   });
   const toggleFolder = (k: string) => setCollapsed((prev) => {
@@ -244,8 +256,8 @@ export function CoverageView({ coverage, hint }: { coverage: CoveragePayload | n
         </span>
       </div>
 
-      <PatchSection coverage={coverage} expanded={expanded} onToggleFile={toggleFile} />
-      <HotspotSection coverage={coverage} expanded={expanded} onToggleFile={toggleFile} />
+      <PatchSection coverage={coverage} expanded={expanded} onToggleRow={toggleRow} />
+      <HotspotSection coverage={coverage} expanded={expanded} onToggleRow={toggleRow} />
 
       <section class="cov-section" data-testid="coverage-files">
         <h2 class="cov-h">All files</h2>
@@ -293,8 +305,8 @@ export function CoverageView({ coverage, hint }: { coverage: CoveragePayload | n
                   hasSource={f.hasSource}
                   changed={f.changed}
                   isTest={f.isTest}
-                  expanded={expanded.has(f.path)}
-                  onToggle={() => toggleFile(f.path)}
+                  expanded={expanded.has(rowKey("file", f.path))}
+                  onToggle={() => toggleRow(rowKey("file", f.path))}
                 />
               ))}
             </div>
