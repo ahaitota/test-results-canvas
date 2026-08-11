@@ -172,3 +172,4 @@ export function changedLines(root, options = {}) {
         return null;
     return { root: base, against: `this branch vs ${branchBase}`, files: toFileChanges(base, branchChanges, false) };
 }
+//# sourceMappingURL=gitdiff.js.map

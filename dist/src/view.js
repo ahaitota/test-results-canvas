@@ -336,3 +336,4 @@ export function renderShell(title, askToken = "") {
 </body>
 </html>`;
 }
+//# sourceMappingURL=view.js.map

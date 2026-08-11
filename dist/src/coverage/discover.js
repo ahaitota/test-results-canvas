@@ -168,3 +168,4 @@ export function discoverCoverageFor(resultsFile, projectRoot) {
     }
     return null;
 }
+//# sourceMappingURL=discover.js.map

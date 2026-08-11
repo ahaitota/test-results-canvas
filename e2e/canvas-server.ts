@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { createResultsServer } from "../dist/src/server.js";
 import type { ResultsServerHandle, ResultsServerOptions } from "../dist/src/server.js";
+import { coverageEnabled, writeRawCoverage } from "./coverage-collect.js";
 
 const FIXTURES_FOLDER_PATH = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 
@@ -25,6 +26,33 @@ type MakeServer = (opts?: ResultsServerOptions) => Promise<ResultsServerHandle>;
 // makeServer(opts): boots a results server on an ephemeral port; closes every
 // server it made when the test ends.
 export const test = base.extend<{ makeServer: MakeServer }>({
+  // Under COVERAGE=1 every page records what of the client bundle it executed,
+  // so the browser half of the codebase stops reading "not measured". Wrapping
+  // the shared `page` fixture means no spec has to opt in, and a spec that
+  // never opens the canvas simply contributes nothing.
+  page: async ({ page }, use) => {
+    if (!coverageEnabled) {
+      await use(page);
+      return;
+    }
+    // Navigation must not reset it: openCanvas() does a full page.goto, which
+    // would otherwise discard everything the page had executed up to then.
+    await page.coverage.startJSCoverage({ resetOnNavigation: false });
+    let stopped = false;
+    // A spec that closes its own page has to be read before the close, or the
+    // browser context is gone and the whole spec's coverage is lost.
+    page.on("close", () => {
+      stopped = true;
+    });
+    await use(page);
+    if (stopped) return;
+    try {
+      writeRawCoverage(await page.coverage.stopJSCoverage());
+    } catch {
+      // A page that crashed or was closed mid-assertion has no coverage to
+      // give; losing it must never turn a passing spec red.
+    }
+  },
     // Playwright reads the destructured names to resolve fixture dependencies;
     // an empty pattern is how you declare "no dependencies".
     // eslint-disable-next-line no-empty-pattern

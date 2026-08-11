@@ -66,3 +66,4 @@ export function hasCoverageExt(fileName) {
     const lower = fileName.toLowerCase();
     return COVERAGE_EXTS.some((e) => lower.endsWith(e));
 }
+//# sourceMappingURL=detect.js.map

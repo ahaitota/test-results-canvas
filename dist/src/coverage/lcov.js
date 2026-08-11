@@ -79,3 +79,4 @@ export function parseLcov(text) {
     const files = buildFiles(entries);
     return { format: "lcov", files, totals: totalsOf(files), sourceRoots: [] };
 }
+//# sourceMappingURL=lcov.js.map

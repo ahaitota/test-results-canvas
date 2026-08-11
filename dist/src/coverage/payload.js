@@ -8,3 +8,4 @@
 // Declaring the contract once here, and having both sides import it, keeps the
 // two ends from drifting apart the way a hand-copied mirror would.
 export {};
+//# sourceMappingURL=payload.js.map

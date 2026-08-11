@@ -96,3 +96,4 @@ export function suggestCoverageCommand(projectRoot, resultsFile) {
     }
     return FALLBACK;
 }
+//# sourceMappingURL=suggest.js.map

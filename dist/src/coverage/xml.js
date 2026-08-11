@@ -100,3 +100,4 @@ export function* scanTags(xml) {
         i = gt + 1;
     }
 }
+//# sourceMappingURL=xml.js.map

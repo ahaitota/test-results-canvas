@@ -84,3 +84,4 @@ export function rankUncovered(report, options = {}) {
     });
     return regions.slice(0, limit);
 }
+//# sourceMappingURL=rank.js.map

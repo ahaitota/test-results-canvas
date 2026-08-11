@@ -79,3 +79,4 @@ export function parseJacoco(xml) {
     const files = buildFiles(entries);
     return { format: "jacoco", files, totals: totalsOf(files), sourceRoots: [] };
 }
+//# sourceMappingURL=jacoco.js.map

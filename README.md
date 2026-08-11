@@ -78,6 +78,41 @@ nobody looked, and how much code that leaves unobserved. A blind spot is worth
 seeing even when it turns out to be harmless — and *especially* when the reason
 is the first one, because that code looks tested and is not being watched.
 
+### Measuring the browser and server halves too
+
+The first cause above was this repository's own biggest blind spot: everything
+in `src/client/` is driven hard by the Playwright suite, but Playwright wrote no
+coverage, so a third of the codebase read `not measured`. One command now
+collects all three:
+
+```bash
+npm run coverage
+```
+
+It runs the unit tests with Node's coverage, re-runs the e2e suite collecting
+V8 coverage from **both** the browser (the client bundle) and Node
+(`NODE_V8_COVERAGE`, which catches the server the specs boot in-process), maps
+each back through source maps to the original `.ts`/`.tsx`, and merges the three
+into `test-results/lcov-merged.info` — the file to point the canvas at.
+
+On this repository that moves the picture from *78% over 24 files* to *87% over
+41 files*: `src/server.ts` goes from 56% to 84% once the e2e requests count, and
+seventeen client files stop reading `not measured` altogether. Nothing is
+double-counted; a line covered by two runners is still one line.
+
+Two details worth knowing if you change this:
+
+- **The measured bundle is built unminified.** Minified code collapses whole
+  functions onto one line, so a source map can only place a handful of
+  positions per file and a 300-line component reports two dozen lines. The
+  runner rebuilds unminified, keeps that bundle aside for the report, and
+  restores the shipped minified one when the run ends — `dist/` is committed,
+  and CI fails if a run leaves it dirty.
+- **V8 line coverage is coarser than instrumentation.** It is derived from
+  execution ranges rather than a counter on every statement, so JSX-heavy files
+  report fewer measurable lines than they have. The percentages are real; the
+  line totals are a floor, not a census.
+
 The default sort, *Most useful to test*, puts unmeasured new code first, then
 changed files by how many new lines went untested, then the biggest remaining
 gaps; test files sink to the bottom. *Lowest coverage* and *Name* are there for
@@ -184,13 +219,23 @@ test/
   coverage-parsers.test.ts   the three coverage parsers + format detection
   coverage-patch.test.ts     diff parsing, patch intersection, ranking, /source
   coverage-discover.test.ts  discovery, path resolution, project roots
+  coverage-merge.test.ts     merging the unit, browser and server LCOV reports
 e2e/                     Playwright browser tests (load the compiled dist server)
-coverage-sample/         fixture sources the coverage reports point at. Outside
-                         e2e/ on purpose: anything under a test folder is
-                         classified as test code and excluded from ranking.
+  coverage-collect.ts    picks the client bundle out of the browser's V8 coverage
+coverage-sample/         fixture sources the coverage reports point at. They are
+                         C# because the canvas's first audience is .NET: the
+                         fixtures mimic a coverlet/Cobertura run, and a fixture
+                         written in the language the canvas is written in could
+                         pass by resembling the repo rather than a user's
+                         project. Outside e2e/ on purpose: anything under a test
+                         folder is classified as test code and excluded from
+                         ranking.
 scripts/
   typecheck-sdk.ts       checks the pinned SDK against the installed app's copy
   wrap-junit.ts          adds the <testsuite> wrapper node:test omits
+  e2e-coverage.ts        runs the e2e suite collecting browser + server coverage
+  coverage-report.ts     converts that V8 output to LCOV and merges all three
+  lcov.ts                the LCOV read/merge/write itself (pure, unit-tested)
 dist/                    compiled JS + .d.ts (committed; regenerate with `npm run build`)
 tsconfig.json            type-check config (noEmit)
 tsconfig.build.json      build config (emits dist/)
@@ -207,6 +252,8 @@ npm run typecheck:sdk # re-check against the installed app's SDK (see below)
 npm test             # run unit tests (via tsx)
 npm run test:e2e     # build + run Playwright e2e tests
 npm run test:coverage # unit tests + JUnit + LCOV in test-results/, to dogfood the coverage tab
+npm run coverage     # the above plus browser + server coverage from the e2e run,
+                     # merged into test-results/lcov-merged.info
 ```
 
 To see the coverage tab against this project's own code, run `npm run

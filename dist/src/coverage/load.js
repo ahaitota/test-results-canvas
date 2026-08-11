@@ -160,3 +160,4 @@ export function loadCoverageFile(coverageFile, options = {}) {
         },
     };
 }
+//# sourceMappingURL=load.js.map

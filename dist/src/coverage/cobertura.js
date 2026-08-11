@@ -97,3 +97,4 @@ export function parseCobertura(xml) {
     const files = buildFiles(entries);
     return { format: "cobertura", files, totals: totalsOf(files), sourceRoots };
 }
+//# sourceMappingURL=cobertura.js.map

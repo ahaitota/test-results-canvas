@@ -202,3 +202,4 @@ function emitCase(attrs, inner, ctx, results) {
         computerName: ctx.suiteHost,
     });
 }
+//# sourceMappingURL=junit.js.map

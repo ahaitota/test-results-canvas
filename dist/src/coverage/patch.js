@@ -128,3 +128,4 @@ export function toRanges(lines) {
     }
     return ranges;
 }
+//# sourceMappingURL=patch.js.map

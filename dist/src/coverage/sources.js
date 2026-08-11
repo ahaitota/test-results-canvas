@@ -205,3 +205,4 @@ export function resolveReportSources(report, options = {}) {
     }));
     return { ...report, files };
 }
+//# sourceMappingURL=sources.js.map

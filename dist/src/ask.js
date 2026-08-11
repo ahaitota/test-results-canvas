@@ -119,3 +119,4 @@ export function composeEnableCoveragePrompt(command, ecosystem) {
         "If that command is not right for this project, use the equivalent that produces a Cobertura, LCOV or JaCoCo report.",
     ].join("\n\n");
 }
+//# sourceMappingURL=ask.js.map

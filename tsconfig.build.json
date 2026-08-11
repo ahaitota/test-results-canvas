@@ -5,7 +5,7 @@
     "outDir": "dist",
     "rootDir": ".",
     "declaration": true,
-    "sourceMap": false
+    "sourceMap": true
   },
   "include": ["extension.ts", "src/**/*.ts"],
   "exclude": ["src/client"]

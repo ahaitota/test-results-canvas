@@ -352,3 +352,4 @@ joined.session = await joinSession({
         onPostToolUseFailure: async (input) => surfaceIfResults(input),
     },
 });
+//# sourceMappingURL=extension.js.map
