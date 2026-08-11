@@ -1,15 +1,24 @@
-// The Coverage tab, ordered by how actionable each section is:
+// The Coverage tab: one row per file, and every file exactly once.
 //
-//   1. New code      -- coverage of the lines that just changed (issue #28 #2)
-//   2. Worth covering -- ranked uncovered regions   (issue #28 #3)
-//   3. All files      -- the conventional folder tree, for browsing
+// This used to be three lists -- "New code", "Worth covering" and "All files" --
+// ordered by how actionable each was. They did not partition the files, they
+// overlapped: a changed file containing a large untested block appeared in all
+// three, showing a third of its story in each, with nothing on screen saying
+// they were the same file. Reading it meant cross-referencing by name.
+//
+// Now each file states everything at once: its coverage, whether the change set
+// touched it, how its changed lines fared, and where its worst untested block
+// is. The prioritisation the sections used to express through their order
+// survives as the default sort (see rowTier), so the code that most needs a
+// test is still what you read first.
 //
 // A project-wide percentage leads nowhere ("74%" tells nobody what to do), so
-// it is demoted to a header stat and the change set leads instead.
+// it stays a header stat rather than the headline.
 
 import { useState } from "preact/hooks";
 import type { CoveragePayload, CoverageSuggestion } from "../coverage/payload";
-import { bandOf, buildCoverageGroups, baseOf, fmtRanges, headlinePercent, headlineTotals, patchHeadline } from "./coverageDerive";
+import type { CoverageRow, CoverageSort } from "./coverageDerive";
+import { bandOf, buildCoverageRows, headlinePercent, headlineTotals, patchHeadline, rowNote } from "./coverageDerive";
 import { CoverageEmpty } from "./CoverageEmpty";
 import { SourceView } from "./SourceView";
 import { askAgentCoverage } from "./askAgent";
@@ -28,32 +37,18 @@ function Pct({ percent }: { percent: number | null }) {
   return <span class={"cov-pct cov-band-" + bandOf(percent)}>{percent == null ? "\u2014" : percent + "%"}</span>;
 }
 
-// Which row is expanded, not which file. A path alone cannot identify a row:
-// the same file legitimately appears in several sections, and "Worth covering"
-// lists one row per uncovered region, so several rows there can share a path
-// too. Keying on the path made all of those open and close together.
-type RowSection = "patch" | "hotspot" | "file";
-
-function rowKey(section: RowSection, path: string, region = ""): string {
-  return `${section}\u0000${path}\u0000${region}`;
-}
-
-// A file row that expands into its annotated source.
-function FileRow({ path, percent, covered, total, hasSource, changed, isTest, expanded, onToggle }: {
-  path: string;
-  percent: number | null;
-  covered: number;
-  total: number;
-  hasSource: boolean;
-  changed?: boolean;
-  isTest?: boolean;
+// One file: its numbers, its tags, its note, and its source when opened.
+function FileRow({ row, expanded, onToggle }: {
+  row: CoverageRow;
   expanded: boolean;
   onToggle: () => void;
 }) {
+  const note = rowNote(row);
+  const openable = row.hasSource && row.measured;
   return (
-    <div class={"cov-file" + (expanded ? " open" : "")} data-testid="coverage-file" data-path={path}>
+    <div class={"cov-file" + (expanded ? " open" : "")} data-testid="coverage-file" data-path={row.path}>
       <div
-        class={"cov-file-head" + (hasSource ? "" : " no-source") + (isTest ? " is-test" : "")}
+        class={"cov-file-head" + (openable ? "" : " no-source") + (row.isTest ? " is-test" : "")}
         role="button"
         tabIndex={0}
         aria-expanded={expanded}
@@ -66,35 +61,53 @@ function FileRow({ path, percent, covered, total, hasSource, changed, isTest, ex
         }}
       >
         <span class="cov-caret" aria-hidden="true">{expanded ? "\u25BE" : "\u25B8"}</span>
-        <span class="cov-name" title={path}>{baseOf(path)}</span>
-        {changed && <span class="cov-tag cov-tag-changed">changed</span>}
-        {isTest && <span class="cov-tag">test</span>}
-        {!hasSource && <span class="cov-tag" title="the file could not be located on this machine">no source</span>}
+        <span class="cov-name" title={row.path}>
+          {row.folder !== "." && <span class="cov-dir">{row.folder}/</span>}
+          {row.name}
+        </span>
+        {row.changed && <span class="cov-tag cov-tag-changed">changed</span>}
+        {row.isTest && <span class="cov-tag">test</span>}
+        {!row.measured && <span class="cov-tag cov-tag-unmeasured" title="the coverage report never mentions this file">not measured</span>}
+        {row.measured && !row.hasSource && <span class="cov-tag" title="the file could not be located on this machine">no source</span>}
         <span class="cov-spacer" />
-        <span class="cov-counts">{covered}/{total}</span>
-        <Bar percent={percent} />
-        <Pct percent={percent} />
+        {row.measured
+          ? (
+            <>
+              <span class="cov-counts">{row.coveredLines}/{row.totalLines}</span>
+              <Bar percent={row.percent} />
+              <Pct percent={row.percent} />
+            </>
+          )
+          : <span class="cov-counts cov-unknown">no data</span>}
       </div>
-      {expanded && (hasSource
-        ? <SourceView path={path} />
-        : <div class="cov-source-msg">This file is not on this machine, so only its numbers are available.</div>)}
+      {note && <p class="cov-row-note" data-testid="coverage-row-note">{note}</p>}
+      {expanded && (openable
+        ? <SourceView path={row.path} />
+        : (
+          <div class="cov-source-msg">
+            {row.measured
+              ? "This file is not on this machine, so only its numbers are available."
+              : "The coverage report never mentions this file, so there is nothing to annotate. It changed, and no test observed it."}
+          </div>
+        ))}
     </div>
   );
 }
 
-function PatchSection({ coverage, expanded, onToggleRow }: {
-  coverage: CoveragePayload;
-  expanded: Set<string>;
-  onToggleRow: (key: string) => void;
-}) {
+// The change set's verdict, kept as a banner because it describes the whole run
+// rather than any one file -- including how many files no report mentions,
+// which the list can only show one row at a time.
+function PatchBanner({ coverage }: { coverage: CoveragePayload }) {
   const [asked, setAsked] = useState<"idle" | "sent" | "error">("idle");
   const patch = coverage.patch;
   if (!patch) {
     return (
-      <section class="cov-section" data-testid="coverage-patch">
-        <h2 class="cov-h">New code</h2>
-        <p class="cov-note">No changed source files were detected, so there is nothing new to check.</p>
-      </section>
+      <div class="cov-patch" data-testid="coverage-patch">
+        <div class="cov-patch-head">
+          <span class="cov-patch-label">New code</span>
+          <span data-testid="patch-headline">No changed source files were detected, so there is nothing new to check.</span>
+        </div>
+      </div>
     );
   }
 
@@ -107,16 +120,16 @@ function PatchSection({ coverage, expanded, onToggleRow }: {
   };
 
   return (
-    <section class="cov-section" data-testid="coverage-patch">
-      <h2 class="cov-h">New code</h2>
+    <div class="cov-patch" data-testid="coverage-patch">
       <div class={"cov-patch-head" + (clean ? " ok" : " warn")}>
+        <span class="cov-patch-label">New code</span>
         <span data-testid="patch-headline">{patchHeadline(coverage)}</span>
         <span class="cov-spacer" />
         <Bar percent={patch.percent} testid="patch-bar" />
         <Pct percent={patch.percent} />
       </div>
       <p class="cov-note">
-        Compared against {patch.against}. Counts added lines in measured source files only —
+        Compared against {patch.against}. Counts added lines in measured source files only &mdash;
         deleted lines, build output, tests and docs are excluded, so this is smaller than the raw diff.
       </p>
       {!clean && (
@@ -130,117 +143,37 @@ function PatchSection({ coverage, expanded, onToggleRow }: {
           {asked === "sent" ? "Asked the agent" : asked === "error" ? "Could not reach the agent" : "Ask agent to cover the new code"}
         </button>
       )}
-      <div class="cov-list">
-        {patch.files.map((f) => (
-          <div key={f.path} class="cov-patch-file">
-            {f.unmeasured
-              ? (
-                <div class="cov-file-head no-source" data-testid="coverage-file" data-path={f.path}>
-                  <span class="cov-name" title={f.path}>{baseOf(f.path)}</span>
-                  <span class="cov-tag cov-tag-changed">changed</span>
-                  <span class="cov-spacer" />
-                  <span class="cov-counts" title="the coverage report never mentions this file">not measured</span>
-                </div>
-              )
-              : (
-                <>
-                  <FileRow
-                    path={f.path}
-                    percent={f.percent}
-                    covered={f.coveredLines.length}
-                    total={f.coveredLines.length + f.uncoveredLines.length}
-                    hasSource={Boolean(f.absPath)}
-                    changed
-                    expanded={expanded.has(rowKey("patch", f.path))}
-                    onToggle={() => onToggleRow(rowKey("patch", f.path))}
-                  />
-                  {f.uncoveredLines.length > 0 && !expanded.has(rowKey("patch", f.path)) && (
-                    <p class="cov-note cov-lines" data-testid="patch-uncovered-lines">
-                      Untested new lines: {fmtRanges(f.uncoveredLines)}
-                    </p>
-                  )}
-                </>
-              )}
-          </div>
-        ))}
-      </div>
-    </section>
+    </div>
   );
 }
 
-function HotspotSection({ coverage, expanded, onToggleRow }: {
-  coverage: CoveragePayload;
-  expanded: Set<string>;
-  onToggleRow: (key: string) => void;
-}) {
-  const hotspots = coverage.hotspots || [];
-  if (!hotspots.length) return null;
-  return (
-    <section class="cov-section" data-testid="coverage-hotspots">
-      <h2 class="cov-h">Worth covering</h2>
-      <p class="cov-note">Untested blocks of production code &mdash; code you just changed first, then the largest gaps.</p>
-      <div class="cov-list">
-        {hotspots.map((h) => {
-          // One file can hold several ranked regions, so the region is part of
-          // the identity; without it they all open as one.
-          const key = rowKey("hotspot", h.path, `${h.start}-${h.end}`);
-          const open = expanded.has(key);
-          return (
-            <div key={key} class="cov-hotspot" data-testid="coverage-hotspot">
-              <div
-                class="cov-file-head"
-                role="button"
-                tabIndex={0}
-                aria-expanded={open}
-                onClick={() => onToggleRow(key)}
-                onKeyDown={(e: KeyboardEvent) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    onToggleRow(key);
-                  }
-                }}
-              >
-                <span class="cov-caret" aria-hidden="true">{open ? "\u25BE" : "\u25B8"}</span>
-                <span class="cov-name" title={h.path}>{baseOf(h.path)}</span>
-                <span class="cov-range">{h.start === h.end ? `line ${h.start}` : `lines ${h.start}\u2013${h.end}`}</span>
-                {h.changed && <span class="cov-tag cov-tag-changed">changed</span>}
-                {h.wholeFileUncovered && <span class="cov-tag">never run</span>}
-                <span class="cov-spacer" />
-                <span class="cov-counts">{h.lines} untested</span>
-              </div>
-              {open && <SourceView path={h.path} />}
-            </div>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
+const SORTS: { key: CoverageSort; label: string; hint: string }[] = [
+  { key: "actionable", label: "Most useful to test", hint: "untested new code first, then the biggest gaps" },
+  { key: "coverage", label: "Lowest coverage", hint: "by percentage, least covered first" },
+  { key: "name", label: "Name", hint: "alphabetical by path" },
+];
 
 export function CoverageView({ coverage, hint }: { coverage: CoveragePayload | null; hint: CoverageSuggestion | null }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [sort, setSort] = useState<CoverageSort>("actionable");
 
   if (!coverage) return <CoverageEmpty hint={hint} />;
 
-  const toggleRow = (key: string) => setExpanded((prev) => {
+  // Keyed by path, which is now enough: one row per file means a path
+  // identifies a row again. It did not when the same file appeared in three
+  // lists, and a shared key made every copy open and close together.
+  const toggleRow = (path: string) => setExpanded((prev) => {
     const next = new Set(prev);
-    if (next.has(key)) next.delete(key);
-    else next.add(key);
-    return next;
-  });
-  const toggleFolder = (k: string) => setCollapsed((prev) => {
-    const next = new Set(prev);
-    if (next.has(k)) next.delete(k);
-    else next.add(k);
+    if (next.has(path)) next.delete(path);
+    else next.add(path);
     return next;
   });
 
-  const groups = buildCoverageGroups(coverage.files, query);
+  const rows = buildCoverageRows(coverage, query, sort);
+  const total = buildCoverageRows(coverage, "", sort).length;
   const headline = headlinePercent(coverage);
   const meta = headlineTotals(coverage);
-  const shownFiles = groups.reduce((n, g) => n + g.files.length, 0);
 
   return (
     <div class="coverage" data-testid="coverage-view">
@@ -257,62 +190,41 @@ export function CoverageView({ coverage, hint }: { coverage: CoveragePayload | n
         </span>
       </div>
 
-      <PatchSection coverage={coverage} expanded={expanded} onToggleRow={toggleRow} />
-      <HotspotSection coverage={coverage} expanded={expanded} onToggleRow={toggleRow} />
+      <PatchBanner coverage={coverage} />
 
       <section class="cov-section" data-testid="coverage-files">
-        <h2 class="cov-h">All files</h2>
-        <input
-          class="search"
-          type="search"
-          data-testid="coverage-search"
-          placeholder="Filter files…"
-          autocomplete="off"
-          value={query}
-          onInput={(e) => setQuery((e.currentTarget as HTMLInputElement).value)}
-        />
-        {query && <p class="cov-note" data-testid="coverage-showing">Showing {shownFiles} of {coverage.files.length} files</p>}
-        {groups.map((g) => {
-          const open = !collapsed.has(g.key);
-          return (
-            <div key={g.key} class="cov-folder" data-testid="coverage-folder">
-              <div
-                class="cov-folder-head"
-                role="button"
-                tabIndex={0}
-                aria-expanded={open}
-                onClick={() => toggleFolder(g.key)}
-                onKeyDown={(e: KeyboardEvent) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    toggleFolder(g.key);
-                  }
-                }}
-              >
-                <span class="cov-caret" aria-hidden="true">{open ? "\u25BE" : "\u25B8"}</span>
-                <span class="cov-folder-name" title={g.key}>{g.key}</span>
-                <span class="cov-spacer" />
-                <span class="cov-counts">{g.coveredLines}/{g.totalLines}</span>
-                <Bar percent={g.percent} />
-                <Pct percent={g.percent} />
-              </div>
-              {open && g.files.map((f) => (
-                <FileRow
-                  key={f.path}
-                  path={f.path}
-                  percent={f.percent}
-                  covered={f.coveredLines}
-                  total={f.totalLines}
-                  hasSource={f.hasSource}
-                  changed={f.changed}
-                  isTest={f.isTest}
-                  expanded={expanded.has(rowKey("file", f.path))}
-                  onToggle={() => toggleRow(rowKey("file", f.path))}
-                />
-              ))}
-            </div>
-          );
-        })}
+        <div class="cov-controls">
+          <input
+            class="search"
+            type="search"
+            data-testid="coverage-search"
+            placeholder="Filter files…"
+            autocomplete="off"
+            value={query}
+            onInput={(e) => setQuery((e.currentTarget as HTMLInputElement).value)}
+          />
+          <label class="cov-sort">
+            <span class="cov-sort-label">Sort</span>
+            <select
+              data-testid="coverage-sort"
+              value={sort}
+              onChange={(e) => setSort((e.currentTarget as HTMLSelectElement).value as CoverageSort)}
+            >
+              {SORTS.map((s) => <option key={s.key} value={s.key} title={s.hint}>{s.label}</option>)}
+            </select>
+          </label>
+        </div>
+        {query && <p class="cov-note" data-testid="coverage-showing">Showing {rows.length} of {total} files</p>}
+        {rows.length === 0
+          ? <p class="cov-note" data-testid="coverage-no-match">No files match that filter.</p>
+          : rows.map((r) => (
+            <FileRow
+              key={r.path}
+              row={r}
+              expanded={expanded.has(r.path)}
+              onToggle={() => toggleRow(r.path)}
+            />
+          ))}
       </section>
     </div>
   );

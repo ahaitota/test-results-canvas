@@ -33,17 +33,35 @@ a **Coverage** tab beside **Tests**.
 The format is detected by **content**, not filename, because Cobertura and JaCoCo
 both use `.xml` and would otherwise collide with JUnit results.
 
-The tab leads with what is actionable rather than with a project-wide number:
+The tab is **one list, one row per file**, ordered by what most needs a test. Each
+row carries everything known about that file at once:
 
-1. **New code** — coverage of just the lines `git` says changed (uncommitted work
-   against `HEAD`, or the branch against its merge-base when the tree is clean).
-   This is what answers *"the agent wrote new code — did it test it?"*; a repo-wide
-   percentage cannot, because forty new untested lines barely move it.
-2. **Worth covering** — untested blocks ranked with changed files first, then the
-   largest contiguous gaps, skipping tests and generated files.
-3. **All files** — grouped by folder, worst first. Expanding any file shows the
-   real source with a per-line gutter: green = executed (with its hit count),
-   red = executable but never ran, dim = not executable.
+- **Its coverage** — covered/total lines, a bar and a percentage.
+- **Whether the change set touched it** — a `changed` tag, plus how its changed
+  lines fared: *"3 of 12 changed lines untested: 40–42"*. This is what answers
+  *"the agent wrote new code — did it test it?"*; a repo-wide percentage cannot,
+  because forty new untested lines barely move it. The change set is compared
+  against uncommitted work over `HEAD`, or the branch against its merge-base when
+  the tree is clean.
+- **Where its worst untested block is** — *"biggest gap lines 120–188 (69
+  untested), +2 more blocks"*, ranked with changed files first, then the largest
+  contiguous gaps, skipping tests and generated files.
+- **Whether it was measured at all** — a changed file the report never mentions
+  reads `not measured` / `no data`, never `0%`. The two look alike and mean
+  opposite things: one is untested code, the other is code nothing even observed.
+
+Expanding a row shows the real source with a per-line gutter: green = executed
+(with its hit count), red = executable but never ran, dim = not executable.
+
+The default sort, *Most useful to test*, puts unmeasured new code first, then
+changed files by how many new lines went untested, then the biggest remaining
+gaps; test files sink to the bottom. *Lowest coverage* and *Name* are there for
+browsing, and the filter box narrows by path.
+
+> This replaced three separate lists — *New code*, *Worth covering* and *All
+> files*. They overlapped rather than partitioned, so a changed file holding an
+> untested block was drawn three times with a third of its story in each, and
+> nothing on screen said they were the same file.
 
 When a run produced **no** coverage — by far the most common case, since almost no
 runner collects it unless asked — the tab names the exact command for the project
@@ -56,7 +74,7 @@ in front of you and offers one click to have the agent re-run with it.
 > "ask agent" prompts are composed server-side from the server's own report; the
 > page only ever posts a file reference, gated on the per-instance ask token.
 > `git` is spawned with a fixed argument list (never a shell string) inside the
-> resolved project root, and its absence degrades to "no New code section" rather
+> resolved project root, and its absence degrades to "no changed-line data" rather
 > than an error.
 
 
@@ -126,10 +144,10 @@ src/
   client/                Preact app, bundled by esbuild to dist/client/app.js
     App.tsx              cross-cutting state; Tests / Coverage branch
     ViewTabs.tsx         the Tests | Coverage switcher
-    CoverageView.tsx     New code -> Worth covering -> All files
+    CoverageView.tsx     the merged file list: one row per file
     SourceView.tsx       gutter-annotated source for one file
     CoverageEmpty.tsx    the no-coverage state and its ask-agent button
-    coverageDerive.ts    pure grouping/percentage/ranking derivations
+    coverageDerive.ts    merges report + patch + hotspots into one row per file
     (Summary, Toolbar, ResultsList, TestRow, derive, ...)  the results view
 test/
   trx.test.ts            unit tests for the TRX parser

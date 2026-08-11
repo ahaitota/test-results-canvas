@@ -9,16 +9,17 @@ import {
   bandOf,
   folderOf,
   baseOf,
-  buildCoverageGroups,
+  buildCoverageRows,
+  rowNote,
   toRanges,
   fmtRanges,
   headlinePercent,
   headlineTotals,
   patchHeadline,
 } from "../src/client/coverageDerive.js";
-import type { CoveragePayload, CoverageFileSummary, PatchCoverage, PatchFile } from "../src/coverage/payload.js";
+import type { CoveragePayload, CoverageFileSummary, PatchCoverage, PatchFile, UncoveredRegion } from "../src/coverage/payload.js";
 
-function file(path: string, coveredLines: number, totalLines: number): CoverageFileSummary {
+function file(path: string, coveredLines: number, totalLines: number, rest: Partial<CoverageFileSummary> = {}): CoverageFileSummary {
   return {
     path,
     coveredLines,
@@ -27,6 +28,7 @@ function file(path: string, coveredLines: number, totalLines: number): CoverageF
     hasSource: true,
     changed: false,
     isTest: false,
+    ...rest,
   };
 }
 
@@ -67,31 +69,148 @@ test("folderOf and baseOf normalise separators so Windows reports group like the
   assert.equal(baseOf(""), "");
 });
 
-// --- grouping ---------------------------------------------------------------
+// --- the merged file list ---------------------------------------------------
 
-test("buildCoverageGroups puts the folders that need work first", () => {
-  const groups = buildCoverageGroups(
-    [file("src/a/one.ts", 9, 10), file("src/b/two.ts", 1, 10), file("src/b/three.ts", 5, 10)],
-    "",
+function region(path: string, start: number, end: number, lines: number, score: number, changed = false): UncoveredRegion {
+  return { path, start, end, lines, changed, wholeFileUncovered: false, score };
+}
+
+// Everything the three old lists showed has to survive on one row, so these
+// tests assert the merge from the direction that matters: no file appears
+// twice, and no fact is dropped on the way in.
+test("buildCoverageRows shows each file once, carrying its report, patch and hotspot facts together", () => {
+  const cov = payload(
+    { files: [patchFile("src/a.ts", [1, 2], [3, 4, 5])] },
+    {
+      files: [file("src/a.ts", 6, 10, { changed: true }), file("src/b.ts", 10, 10)],
+      hotspots: [region("src/a.ts", 30, 44, 12, 900), region("src/a.ts", 60, 61, 2, 100)],
+    },
   );
-  assert.deepEqual(groups.map((g) => g.key), ["src/b", "src/a"]);
-  const worst = groups[0]!;
-  assert.equal(worst.totalLines, 20);
-  assert.equal(worst.coveredLines, 6);
-  assert.equal(worst.percent, 30);
-  assert.deepEqual(worst.files.map((f) => f.path), ["src/b/two.ts", "src/b/three.ts"]);
+  const rows = buildCoverageRows(cov, "", "actionable");
+
+  assert.equal(rows.filter((r) => r.path === "src/a.ts").length, 1, "one row per file, not one per list");
+  const a = rows.find((r) => r.path === "src/a.ts")!;
+  assert.equal(a.percent, 60, "report numbers survive");
+  assert.equal(a.coveredLines, 6);
+  assert.deepEqual(a.newUncovered, [3, 4, 5], "patch numbers survive");
+  assert.equal(a.newTotal, 5);
+  assert.equal(a.changed, true);
+  assert.deepEqual(a.regions.map((h) => h.start), [30, 60], "ranked blocks survive, worst first");
 });
 
-test("buildCoverageGroups filters case-insensitively and drops emptied folders", () => {
-  const files = [file("src/a/one.ts", 9, 10), file("src/b/two.ts", 1, 10)];
-  const groups = buildCoverageGroups(files, "  TWO  ");
-  assert.deepEqual(groups.map((g) => g.key), ["src/b"]);
-  assert.equal(groups[0]!.files.length, 1);
+test("buildCoverageRows keeps changed files the report never measured", () => {
+  // These exist only in the patch, never in `files`. Dropping them would lose
+  // the strongest signal the panel has -- new code no test even loaded -- and
+  // it would look like an improvement, because the list would get shorter.
+  const cov = payload(
+    { files: [patchFile("src/ghost.ts", [], [], true)], unmeasuredFiles: 1 },
+    { files: [file("src/a.ts", 5, 10)], hotspots: [] },
+  );
+  const rows = buildCoverageRows(cov, "", "actionable");
+
+  const ghost = rows.find((r) => r.path === "src/ghost.ts");
+  assert.ok(ghost, "a changed file absent from the report still gets a row");
+  assert.equal(ghost.measured, false);
+  assert.equal(ghost.changed, true);
+  assert.equal(ghost.percent, null, "no data is not 0% -- they mean opposite things");
+  assert.equal(rows[0]!.path, "src/ghost.ts", "and it leads, being the least understood");
 });
 
-test("buildCoverageGroups reports no percentage for a folder with nothing measurable", () => {
-  const groups = buildCoverageGroups([file("src/a/empty.ts", 0, 0)], "");
-  assert.equal(groups[0]!.percent, null, "0/0 must not read as 0% coverage");
+test("buildCoverageRows matches paths across sources regardless of separator or case", () => {
+  // The report, git and the filesystem each spell paths their own way. Matching
+  // raw strings would produce two rows for one file on Windows.
+  const cov = payload(
+    { files: [patchFile("src\\A.ts", [1], [2])] },
+    { files: [file("src/a.ts", 5, 10)], hotspots: [region("SRC/A.ts", 7, 9, 3, 50)] },
+  );
+  const rows = buildCoverageRows(cov, "", "actionable");
+
+  assert.equal(rows.length, 1, "one file, however each tool spells it");
+  assert.deepEqual(rows[0]!.newUncovered, [2]);
+  assert.equal(rows[0]!.regions.length, 1);
+});
+
+test("buildCoverageRows orders by what most needs a test, and sinks test files", () => {
+  const cov = payload(
+    {
+      files: [
+        patchFile("src/small-gap.ts", [1, 2, 3], [4]),
+        patchFile("src/big-gap.ts", [1], [2, 3, 4, 5]),
+        patchFile("src/ghost.ts", [], [], true),
+      ],
+      unmeasuredFiles: 1,
+    },
+    {
+      files: [
+        file("src/small-gap.ts", 9, 10, { changed: true }),
+        file("src/big-gap.ts", 5, 10, { changed: true }),
+        file("src/covered-change.ts", 10, 10, { changed: true }),
+        file("src/stale.ts", 2, 10),
+        file("src/done.ts", 10, 10),
+        file("test/a.test.ts", 0, 10, { isTest: true }),
+      ],
+      hotspots: [],
+    },
+  );
+  const rows = buildCoverageRows(cov, "", "actionable").map((r) => r.path);
+
+  assert.deepEqual(rows, [
+    "src/ghost.ts",           // changed, nothing observed it
+    "src/big-gap.ts",         // changed, most untested new lines
+    "src/small-gap.ts",       // changed, fewer untested new lines
+    "src/covered-change.ts",  // changed and fully covered
+    "src/stale.ts",           // untouched, but has gaps
+    "src/done.ts",            // untouched and covered
+    "test/a.test.ts",         // test code last: covering it is not the goal
+  ]);
+});
+
+test("buildCoverageRows offers plain orderings for browsing", () => {
+  const cov = payload(null, {
+    files: [file("src/b.ts", 1, 10), file("src/a.ts", 9, 10)],
+    hotspots: [],
+  });
+  assert.deepEqual(buildCoverageRows(cov, "", "name").map((r) => r.path), ["src/a.ts", "src/b.ts"]);
+  assert.deepEqual(buildCoverageRows(cov, "", "coverage").map((r) => r.path), ["src/b.ts", "src/a.ts"]);
+});
+
+test("buildCoverageRows filters on the whole path, case-insensitively", () => {
+  const cov = payload(null, {
+    files: [file("src/one.ts", 1, 10), file("lib/two.ts", 1, 10)],
+    hotspots: [],
+  });
+  assert.deepEqual(buildCoverageRows(cov, "  LIB/  ", "name").map((r) => r.path), ["lib/two.ts"]);
+  assert.deepEqual(buildCoverageRows(null, "", "name"), []);
+});
+
+test("rowNote states the changed-line verdict and the biggest gap on one line", () => {
+  const cov = payload(
+    { files: [patchFile("src/a.ts", [1, 2], [7, 8])] },
+    {
+      files: [file("src/a.ts", 6, 10, { changed: true })],
+      hotspots: [region("src/a.ts", 30, 44, 12, 900), region("src/a.ts", 60, 61, 2, 100)],
+    },
+  );
+  const note = rowNote(buildCoverageRows(cov, "", "actionable")[0]!);
+
+  assert.match(note, /2 of 4 changed lines untested: 7\u20138/);
+  assert.match(note, /biggest gap lines 30\u201344 \(12 untested\), \+1 more block/);
+});
+
+test("rowNote reassures rather than nags when the change set is fully covered", () => {
+  const cov = payload(
+    { files: [patchFile("src/a.ts", [1], [])] },
+    { files: [file("src/a.ts", 10, 10, { changed: true })], hotspots: [] },
+  );
+  assert.equal(rowNote(buildCoverageRows(cov, "", "actionable")[0]!), "all 1 changed line covered");
+});
+
+test("rowNote says a file was never measured rather than implying it was tested", () => {
+  const cov = payload(
+    { files: [patchFile("src/ghost.ts", [], [], true)], unmeasuredFiles: 1 },
+    { files: [], hotspots: [] },
+  );
+  assert.equal(rowNote(buildCoverageRows(cov, "", "actionable")[0]!), "changed, but the report never measured it");
 });
 
 // --- line ranges ------------------------------------------------------------

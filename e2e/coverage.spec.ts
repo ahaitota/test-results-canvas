@@ -135,57 +135,67 @@ test.describe("the coverage tab", () => {
     await expect(view.getByTestId("source-ask")).toBeVisible();
   });
 
-  test("uncovered blocks worth testing are ranked and shown", async ({ page, makeServer }) => {
+  test("ranked untested blocks are named on the file's own row", async ({ page, makeServer }) => {
     const s = await makeServer(withCoverage(cobertura()));
     await openCanvas(page, s);
     await page.getByTestId("tab-coverage").click();
 
-    const hotspots = page.getByTestId("coverage-hotspot");
-    // A whole untested module outranks a one-line gap.
-    await expect(hotspots.first()).toContainText("Dead.cs");
-    await expect(hotspots.first()).toContainText("never run");
+    // A whole untested module outranks a one-line gap, so it leads the list and
+    // says where its gap is -- what the separate "Worth covering" list used to
+    // say in a second place, about a file the reader had to match up by name.
+    const files = page.getByTestId("coverage-file");
+    await expect(files.first()).toHaveAttribute("data-path", "coverage-sample/src/Dead.cs");
+    await expect(files.first()).toContainText("biggest gap lines");
   });
 
-  // Expansion used to be keyed by file path, so opening one row opened every
-  // row naming that file: the same file in another section, and -- because a
-  // file can hold several ranked regions -- other rows in this same section.
-  test("expanding one row leaves the other rows for that file closed", async ({ page, makeServer }) => {
+  // The three lists overlapped rather than partitioned, so a changed file with
+  // an untested block was drawn three times, a third of its story in each.
+  test("a file appears once, however many of its facts are worth reporting", async ({ page, makeServer }) => {
     const diff = `--- a/${CALC}\n+++ b/${CALC}\n@@ -23,0 +24,6 @@\n+a\n+b\n+c\n+d\n+e\n+f\n`;
     const s = await makeServer({ resultsFile: results(), coverageFile: cobertura(), coverage: true, gitExec: stubGit(diff) });
     await openCanvas(page, s);
     await page.getByTestId("tab-coverage").click();
 
-    const inPatch = page.getByTestId("coverage-patch").getByTestId("coverage-file").filter({ hasText: "Calc.cs" });
-    const inFiles = page.getByTestId("coverage-files").locator(`[data-path="${CALC}"]`);
+    // Changed, partly covered and holding a ranked gap: previously three rows.
+    await expect(page.locator(`[data-path="${CALC}"]`)).toHaveCount(1);
+
+    const row = page.locator(`[data-path="${CALC}"]`);
+    await expect(row).toContainText("changed");
+    await expect(row).toContainText("changed lines untested");
+
+    // And one row means one thing opens.
     await expect(page.getByTestId("source-view")).toHaveCount(0);
-
-    await inPatch.getByRole("button").first().click();
+    await row.getByRole("button").first().click();
     await expect(page.getByTestId("source-view")).toHaveCount(1);
-    await expect(inPatch.locator('[aria-expanded="true"]')).toHaveCount(1);
-    await expect(inFiles.locator('[aria-expanded="true"]')).toHaveCount(0);
-
-    // Opening the same file in another section is a second, independent row.
-    await inFiles.click();
-    await expect(page.getByTestId("source-view")).toHaveCount(2);
-
-    // And closing one leaves the other open.
-    await inPatch.getByRole("button").first().click();
-    await expect(page.getByTestId("source-view")).toHaveCount(1);
-    await expect(inFiles.locator('[aria-expanded="true"]')).toHaveCount(1);
+    await row.getByRole("button").first().click();
+    await expect(page.getByTestId("source-view")).toHaveCount(0);
   });
 
-  test("two ranked regions of one file expand independently", async ({ page, makeServer }) => {
-    // Gaps.cs is uncovered at 13-15 and again at 22-24, so it is ranked twice.
+  test("a file with several gaps reports all of them on its one row", async ({ page, makeServer }) => {
+    // Gaps.cs is uncovered at 13-15 and again at 22-24: two ranked regions that
+    // used to be two rows.
     const s = await makeServer(withCoverage(get_fixture_path("coverage/cobertura-two-gaps.xml")));
     await openCanvas(page, s);
     await page.getByTestId("tab-coverage").click();
 
-    const rows = page.getByTestId("coverage-hotspot").filter({ hasText: "Gaps.cs" });
-    await expect(rows).toHaveCount(2);
+    const rows = page.getByTestId("coverage-file").filter({ hasText: "Gaps.cs" });
+    await expect(rows).toHaveCount(1);
+    await expect(rows.first()).toContainText("+1 more block");
+  });
 
-    await rows.first().getByRole("button").first().click();
-    await expect(rows.first().getByTestId("source-view")).toHaveCount(1);
-    await expect(rows.nth(1).getByTestId("source-view")).toHaveCount(0);
+  test("the list can be reordered for browsing without losing any of the detail", async ({ page, makeServer }) => {
+    const s = await makeServer(withCoverage(cobertura()));
+    await openCanvas(page, s);
+    await page.getByTestId("tab-coverage").click();
+
+    const files = page.getByTestId("coverage-file");
+    await expect(files.first()).toHaveAttribute("data-path", "coverage-sample/src/Dead.cs");
+
+    await page.getByTestId("coverage-sort").selectOption("name");
+    await expect(files.first()).toHaveAttribute("data-path", CALC);
+    // Sorting is not filtering: every file is still present, still annotated.
+    await expect(files).toHaveCount(2);
+    await expect(files.first()).toContainText("%");
   });
 });
 
@@ -199,7 +209,7 @@ test.describe("new code", () => {
     await page.getByTestId("tab-coverage").click();
 
     await expect(page.getByTestId("patch-headline")).toContainText("1 of 3 changed lines not covered");
-    await expect(page.getByTestId("patch-uncovered-lines")).toContainText("26");
+    await expect(page.getByTestId("coverage-row-note").first()).toContainText("26");
     await expect(page.getByTestId("patch-ask")).toBeVisible();
   });
 
@@ -226,7 +236,12 @@ test.describe("new code", () => {
 
     // Every measured line ran, but the headline must not call that a clean sweep.
     await expect(page.getByTestId("patch-headline")).toContainText("1 changed file with no coverage data");
-    await expect(page.getByTestId("coverage-file").filter({ hasText: "Ghost.cs" })).toBeVisible();
+    const ghostRow = page.getByTestId("coverage-file").filter({ hasText: "Ghost.cs" });
+    await expect(ghostRow).toBeVisible();
+    // "No data" and "0%" look alike and mean opposite things, so the row says
+    // which one this is rather than showing an empty bar.
+    await expect(ghostRow).toContainText("not measured");
+    await expect(ghostRow).toContainText("no data");
     await expect(page.getByTestId("patch-ask")).toBeVisible();
   });
 

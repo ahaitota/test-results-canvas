@@ -256,32 +256,47 @@ export function renderShell(title: string, askToken = ""): string {
   .cov-lines { font-family:var(--fontStack-mono); }
   .cov-list { display:flex; flex-direction:column; gap:2px; }
 
+  .cov-patch { margin:0 0 16px; }
   .cov-patch-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
                     font-size:13px; font-weight:600; padding:8px 12px; border-radius:6px;
                     border:1px solid var(--borderColor-muted); }
   .cov-patch-head.ok { background:var(--bgColor-success-muted); color:var(--fgColor-success); }
   .cov-patch-head.warn { background:var(--bgColor-danger-muted); color:var(--fgColor-danger); }
+  .cov-patch-label { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.04em;
+                     opacity:.75; flex-shrink:0; }
 
-  .cov-file, .cov-folder, .cov-hotspot { border-bottom:1px solid var(--borderColor-muted); }
-  .cov-folder { margin-bottom:6px; }
-  .cov-file-head, .cov-folder-head { display:flex; align-items:center; gap:8px;
-                                     padding:6px 8px; cursor:pointer; font-size:13px; }
-  .cov-file-head:hover, .cov-folder-head:hover { background:var(--bgColor-muted); }
+  /* Filter and sort share a row: both narrow the same single list. */
+  .cov-controls { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:0 0 8px; }
+  .cov-sort { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--fgColor-muted); }
+  .cov-sort select { font-family:inherit; font-size:12px; padding:4px 6px; border-radius:6px;
+                     background:var(--bgColor-default); color:var(--fgColor-default);
+                     border:1px solid var(--borderColor-default); }
+  .cov-sort select:focus { outline:none; border-color:var(--fgColor-accent); }
+
+  .cov-file { border-bottom:1px solid var(--borderColor-muted); }
+  .cov-file-head { display:flex; align-items:center; gap:8px;
+                   padding:6px 8px; cursor:pointer; font-size:13px; }
+  .cov-file-head:hover { background:var(--bgColor-muted); }
   .cov-file-head.no-source { cursor:default; }
   .cov-file-head.is-test .cov-name { color:var(--fgColor-muted); }
-  .cov-folder-head { font-weight:600; background:var(--bgColor-muted); border-radius:6px; }
-  .cov-folder-name { font-family:var(--fontStack-mono); font-size:12px; min-width:0;
-                     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .cov-caret { color:var(--fgColor-muted); width:10px; flex-shrink:0; }
   .cov-name { font-family:var(--fontStack-mono); min-width:0;
               overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* The folder is context, not identity: dimmed so a column of file names stays
+     scannable now that the folder tree no longer supplies the grouping. */
+  .cov-dir { color:var(--fgColor-muted); }
   .cov-range { font-size:11px; color:var(--fgColor-muted); font-family:var(--fontStack-mono); flex-shrink:0; }
   .cov-counts { font-size:11px; color:var(--fgColor-muted); flex-shrink:0; }
+  .cov-unknown { font-style:italic; }
+  /* Indented under the row it belongs to, aligned past the caret. */
+  .cov-row-note { margin:0 0 6px; padding:0 8px 0 26px; font-size:11px;
+                  color:var(--fgColor-muted); font-family:var(--fontStack-mono); }
   .cov-tag { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.04em;
              padding:1px 6px; border-radius:999px; flex-shrink:0;
              background:var(--bgColor-muted); color:var(--fgColor-muted);
              border:1px solid var(--borderColor-muted); }
   .cov-tag-changed { background:var(--bgColor-accent-muted); color:var(--fgColor-accent); }
+  .cov-tag-unmeasured { background:var(--bgColor-danger-muted); color:var(--fgColor-danger); }
 
   /* Source view: a fixed-width gutter keeps line numbers and hit counts from
      shifting the code as counts grow. */

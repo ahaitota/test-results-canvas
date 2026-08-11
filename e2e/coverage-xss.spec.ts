@@ -27,7 +27,7 @@ test.describe("hostile coverage reports", () => {
 
     await expect(page.getByTestId("coverage-view")).toBeVisible();
     expect(await eventHandlerAttrs(page.getByTestId("coverage-file"))).toEqual([]);
-    expect(await eventHandlerAttrs(page.getByTestId("coverage-folder"))).toEqual([]);
+    expect(await eventHandlerAttrs(page.getByTestId("coverage-row-note"))).toEqual([]);
     expect(await page.locator("img").count()).toBe(0);
     expect(await firedPayloads(page)).toEqual([]);
   });
@@ -37,7 +37,7 @@ test.describe("hostile coverage reports", () => {
     await openCanvas(page, s);
     await page.getByTestId("tab-coverage").click();
 
-    for (const id of ["coverage-file", "coverage-folder", "coverage-hotspot"]) {
+    for (const id of ["coverage-file", "coverage-row-note", "coverage-patch"]) {
       for (const el of await page.getByTestId(id).all()) await el.dispatchEvent("mouseover");
     }
     expect(await firedPayloads(page)).toEqual([]);
