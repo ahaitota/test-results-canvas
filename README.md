@@ -180,14 +180,19 @@ and its prompt-fencing helper reported zero hits despite ten tests calling them,
 while the project total was flattered by ~14 points.
 
 > **Read the Node-generated report's line detail with some suspicion anyway.**
-> Even with source maps, coverage over type-stripped TypeScript marks some lines
-> that never survive to runtime — a file header, a `type` alias, an `interface` —
-> as executable-but-uncovered, so a "worth covering" entry may point at a block
-> with no runtime code in it. This is the reporter's doing, not the canvas's:
-> Cobertura from coverlet, or JaCoCo, list executable lines only. It is left
-> visible rather than filtered out, because a heuristic aggressive enough to
-> recognise a type declaration would also be able to hide genuine untested code,
-> which is the much worse failure.
+> Even with source maps, coverage over type-stripped TypeScript marks lines that
+> never survive to runtime as executable-but-uncovered. Comments and blank lines
+> are the bulk of it, and those the canvas now discards by consulting the source
+> (see `src/coverage/executable.ts`) — on this repository that was 1,059 lines
+> the report called coverable, 286 of them counted as *untested prose*, which
+> had put two file-header comments at the top of "worth covering".
+>
+> What remains are type declarations: a `type` alias or an `interface` body is
+> real code to read but emits nothing to run. Those are left counted on purpose.
+> A rule sharp enough to recognise a type declaration would also be sharp enough
+> to hide genuine untested code, which is much the worse failure — whereas a
+> comment is provably inert, so removing it can hide nothing. Cobertura from
+> coverlet, and JaCoCo, report executable lines only and need none of this.
 
 Intra-project imports use `.js` specifiers (required by NodeNext ESM); `tsc`, `tsx`,
 and Playwright resolve them to the `.ts` sources. After changing any source, run

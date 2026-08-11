@@ -14,5 +14,6 @@ export interface LoadOptions {
     projectRoot?: string;
     diff?: DiffOptions;
     skipGit?: boolean;
+    keepNonExecutable?: boolean;
 }
 export declare function loadCoverageFile(coverageFile: string, options?: LoadOptions): LoadedCoverage | null;

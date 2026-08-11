@@ -195,6 +195,30 @@ test.describe("other report formats", () => {
     await expect(page.getByTestId("coverage-meta")).toContainText("jacoco");
     await expect(page.getByTestId("coverage-files").locator(`[data-path="${CALC}"]`)).toBeVisible();
   });
+
+  // Node's --experimental-test-coverage emits a DA entry for nearly every line,
+  // comments included, so a report can claim prose is untested code. This
+  // fixture says lines 1, 2, 5, 9 (comments) and 16 (blank) are coverable and
+  // were never hit. Taken at face value that is 4 of 10 lines, or 40%; the five
+  // that could actually run are 4 of 5.
+  test("comment and blank lines the report claims are coverable are discarded", async ({ page, makeServer }) => {
+    const s = await makeServer(withCoverage(get_fixture_path("coverage/lcov-noisy.info")));
+    await openCanvas(page, s);
+    await page.getByTestId("tab-coverage").click();
+
+    await expect(page.getByTestId("tab-coverage")).toContainText("80%");
+    await expect(page.getByTestId("tab-coverage")).not.toContainText("40%");
+
+    await page.getByTestId("coverage-files").locator(`[data-path="${CALC}"]`).click();
+    const view = page.getByTestId("source-view").first();
+    await expect(view).toBeVisible();
+    // A comment must not read as a failure just because the tool listed it.
+    await expect(view.locator('[data-line="1"]')).toHaveAttribute("data-cov", "neutral");
+    await expect(view.locator('[data-line="16"]')).toHaveAttribute("data-cov", "neutral");
+    // Real code is untouched by the filtering.
+    await expect(view.locator('[data-line="14"]')).toHaveAttribute("data-cov", "hit");
+    await expect(view.locator('[data-line="26"]')).toHaveAttribute("data-cov", "miss");
+  });
 });
 
 test.describe("no coverage", () => {
