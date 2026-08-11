@@ -57,6 +57,9 @@ export interface CoverageRow {
   newCovered: number;
   newTotal: number;
   newUncovered: number[];
+  // What git says changed, regardless of coverage. For an unmeasured file this
+  // is the only size it has -- the difference between a new module and a typo.
+  changedLines: number;
   // Ranked untested blocks, worst first. Empty for a file that has none, and
   // also for one whose blocks fell outside the server's ranking cut-off.
   regions: UncoveredRegion[];
@@ -93,6 +96,10 @@ function untestedLines(r: CoverageRow): number {
 // lines, then the largest gap, then the lowest percentage.
 function byActionable(a: CoverageRow, b: CoverageRow): number {
   return a.tier - b.tier
+    // Within the unmeasured tier nothing else can separate rows: no percentage,
+    // no gaps, no covered lines. Size is the only fact they carry, and without
+    // it fifteen blind spots list alphabetically and read identically.
+    || (a.tier === 0 ? b.changedLines - a.changedLines : 0)
     || b.newUncovered.length - a.newUncovered.length
     || (b.regions[0]?.score ?? 0) - (a.regions[0]?.score ?? 0)
     || untestedLines(b) - untestedLines(a)
@@ -123,6 +130,7 @@ export function buildCoverageRows(
       newCovered: 0,
       newTotal: 0,
       newUncovered: [],
+      changedLines: 0,
       regions: [],
       tier: 4,
     });
@@ -149,6 +157,7 @@ export function buildCoverageRows(
         newCovered: 0,
         newTotal: 0,
         newUncovered: [],
+        changedLines: 0,
         regions: [],
         tier: 0,
       };
@@ -159,6 +168,7 @@ export function buildCoverageRows(
     row.newCovered = pf.coveredLines.length;
     row.newTotal = pf.coveredLines.length + pf.uncoveredLines.length;
     row.newUncovered = pf.uncoveredLines;
+    row.changedLines = pf.changedLines ?? 0;
   }
 
   for (const h of coverage.hotspots ?? []) {
@@ -181,7 +191,11 @@ export function buildCoverageRows(
 // What the row says about itself beyond its percentage: the part the old "New
 // code" and "Worth covering" sections carried.
 export function rowNote(r: CoverageRow): string {
-  if (r.changed && !r.measured) return "changed, but the report never measured it";
+  if (r.changed && !r.measured) {
+    return r.changedLines > 0
+      ? `${r.changedLines} changed line${r.changedLines === 1 ? "" : "s"}, none of them measured`
+      : "changed, but the report never measured it";
+  }
   const bits: string[] = [];
   if (r.newTotal > 0) {
     bits.push(r.newUncovered.length === 0

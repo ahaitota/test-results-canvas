@@ -76,7 +76,15 @@ export function computePatchCoverage(
         if (!match) {
             unmeasuredFiles++;
             if (includeUnmeasured) {
-                files.push({ path: change.path, coveredLines: [], uncoveredLines: [], percent: null, unmeasured: true });
+                files.push({
+                    path: change.path,
+                    absPath: change.absPath,
+                    coveredLines: [],
+                    uncoveredLines: [],
+                    percent: null,
+                    unmeasured: true,
+                    changedLines: change.lines.size,
+                });
             }
             continue;
         }
@@ -105,14 +113,18 @@ export function computePatchCoverage(
             uncoveredLines,
             percent: percentOf(coveredLines.length, coveredLines.length + uncoveredLines.length),
             unmeasured: false,
+            changedLines: change.lines.size,
         });
     }
 
     if (!files.length) return null;
 
-    // Worst first: the files needing attention lead the panel.
+    // Worst first: the files needing attention lead the panel. Unmeasured files
+    // lead, largest first -- a 200-line blind spot is not the same finding as a
+    // one-line one, and with no coverage numbers their size is all they have.
     files.sort((a, b) => {
         if (a.unmeasured !== b.unmeasured) return a.unmeasured ? -1 : 1;
+        if (a.unmeasured) return b.changedLines - a.changedLines || a.path.localeCompare(b.path);
         if (b.uncoveredLines.length !== a.uncoveredLines.length) return b.uncoveredLines.length - a.uncoveredLines.length;
         return a.path.localeCompare(b.path);
     });

@@ -242,6 +242,8 @@ test.describe("new code", () => {
     // which one this is rather than showing an empty bar.
     await expect(ghostRow).toContainText("not measured");
     await expect(ghostRow).toContainText("no data");
+    // And it carries a size, so one blind spot can be told from another.
+    await expect(ghostRow).toContainText("3 changed lines, none of them measured");
     await expect(page.getByTestId("patch-ask")).toBeVisible();
   });
 

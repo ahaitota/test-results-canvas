@@ -47,8 +47,11 @@ row carries everything known about that file at once:
   untested), +2 more blocks"*, ranked with changed files first, then the largest
   contiguous gaps, skipping tests and generated files.
 - **Whether it was measured at all** — a changed file the report never mentions
-  reads `not measured` / `no data`, never `0%`. The two look alike and mean
-  opposite things: one is untested code, the other is code nothing even observed.
+  reads `not measured` / `no data`, never `0%`, and says how much it hides:
+  *"212 changed lines, none of them measured"*. The two states look alike and
+  mean opposite things: one is untested code, the other is code nothing even
+  observed. Size is the only measure a blind spot has, so it is also what ranks
+  them against each other.
 
 Expanding a row shows the real source with a per-line gutter: green = executed
 (with its hit count), red = executable but never ran, dim = not executable.

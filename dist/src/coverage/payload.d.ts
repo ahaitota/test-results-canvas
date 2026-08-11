@@ -15,6 +15,7 @@ export interface PatchFile {
     uncoveredLines: number[];
     percent: number | null;
     unmeasured: boolean;
+    changedLines: number;
 }
 export interface PatchCoverage {
     against: string;

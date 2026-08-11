@@ -39,6 +39,11 @@ export interface PatchFile {
     // A changed source file with no coverage data at all -- the strongest signal
     // that new code arrived with no test touching it.
     unmeasured: boolean;
+    // How many lines git says changed, before coverage has any say. This is the
+    // only size an unmeasured file has: without it every blind spot reads the
+    // same, and a 200-line new module cannot be told from a one-line edit.
+    // 0 for a brand-new file git reported without line detail.
+    changedLines: number;
 }
 
 // "Did the code that just changed get tested?" -- issue #28, point 2.

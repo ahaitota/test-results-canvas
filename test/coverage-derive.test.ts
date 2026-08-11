@@ -32,13 +32,14 @@ function file(path: string, coveredLines: number, totalLines: number, rest: Part
   };
 }
 
-function patchFile(path: string, covered: number[], uncovered: number[], unmeasured = false): PatchFile {
+function patchFile(path: string, covered: number[], uncovered: number[], unmeasured = false, changedLines?: number): PatchFile {
   return {
     path,
     coveredLines: covered,
     uncoveredLines: uncovered,
     percent: covered.length + uncovered.length ? Math.round((covered.length / (covered.length + uncovered.length)) * 100) : null,
     unmeasured,
+    changedLines: changedLines ?? covered.length + uncovered.length,
   };
 }
 
@@ -205,12 +206,41 @@ test("rowNote reassures rather than nags when the change set is fully covered", 
   assert.equal(rowNote(buildCoverageRows(cov, "", "actionable")[0]!), "all 1 changed line covered");
 });
 
-test("rowNote says a file was never measured rather than implying it was tested", () => {
-  const cov = payload(
-    { files: [patchFile("src/ghost.ts", [], [], true)], unmeasuredFiles: 1 },
+test("rowNote says a file was never measured, and how much of it that hides", () => {
+  // Fifteen blind spots that all read "changed, but never measured" cannot be
+  // triaged: the reader has no way to tell a new module from a typo, and the
+  // list they sit at the top of becomes a wall of identical text.
+  const sized = payload(
+    { files: [patchFile("src/ghost.ts", [], [], true, 212)], unmeasuredFiles: 1 },
     { files: [], hotspots: [] },
   );
-  assert.equal(rowNote(buildCoverageRows(cov, "", "actionable")[0]!), "changed, but the report never measured it");
+  assert.equal(rowNote(buildCoverageRows(sized, "", "actionable")[0]!), "212 changed lines, none of them measured");
+
+  // git can report a brand-new file without line detail; then size is unknown
+  // rather than zero, and claiming "0 changed lines" would be a lie.
+  const unsized = payload(
+    { files: [patchFile("src/ghost.ts", [], [], true, 0)], unmeasuredFiles: 1 },
+    { files: [], hotspots: [] },
+  );
+  assert.equal(rowNote(buildCoverageRows(unsized, "", "actionable")[0]!), "changed, but the report never measured it");
+});
+
+test("buildCoverageRows ranks blind spots by size, the only measure they have", () => {
+  const cov = payload(
+    {
+      files: [
+        patchFile("src/small.ts", [], [], true, 3),
+        patchFile("src/huge.ts", [], [], true, 212),
+        patchFile("src/mid.ts", [], [], true, 40),
+      ],
+      unmeasuredFiles: 3,
+    },
+    { files: [], hotspots: [] },
+  );
+  assert.deepEqual(
+    buildCoverageRows(cov, "", "actionable").map((r) => r.path),
+    ["src/huge.ts", "src/mid.ts", "src/small.ts"],
+  );
 });
 
 // --- line ranges ------------------------------------------------------------
