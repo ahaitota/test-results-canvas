@@ -171,7 +171,23 @@ test:coverage` and open the canvas on `test-results/unit-junit.xml`; the LCOV
 report lands beside it and is discovered automatically. It uses Node's built-in
 `--experimental-test-coverage`, so it costs no extra dependency — and it is
 worth doing before touching `src/coverage/`, since running the feature on a real
-repository is what caught both of the bugs the fixtures could not.
+repository is what caught three bugs the fixtures could not.
+
+`--enable-source-maps` is load-bearing there, not decoration. Without it Node
+attributes V8's coverage ranges to the type-stripped JavaScript rather than to
+the `.ts` you wrote, and the line data comes back shifted: `composeAskPrompt`
+and its prompt-fencing helper reported zero hits despite ten tests calling them,
+while the project total was flattered by ~14 points.
+
+> **Read the Node-generated report's line detail with some suspicion anyway.**
+> Even with source maps, coverage over type-stripped TypeScript marks some lines
+> that never survive to runtime — a file header, a `type` alias, an `interface` —
+> as executable-but-uncovered, so a "worth covering" entry may point at a block
+> with no runtime code in it. This is the reporter's doing, not the canvas's:
+> Cobertura from coverlet, or JaCoCo, list executable lines only. It is left
+> visible rather than filtered out, because a heuristic aggressive enough to
+> recognise a type declaration would also be able to hide genuine untested code,
+> which is the much worse failure.
 
 Intra-project imports use `.js` specifiers (required by NodeNext ESM); `tsc`, `tsx`,
 and Playwright resolve them to the `.ts` sources. After changing any source, run

@@ -17,7 +17,7 @@
       "test:ci": "node -e \"require('node:fs').mkdirSync('test-results',{recursive:true})\" && node --import tsx --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=test-results/unit-junit.xml     test/labels.test.ts test/trx.test.ts test/junit.test.ts test/validate.test.ts test/rowkey.test.ts test/ask.test.ts test/coverage-parsers.test.ts test/coverage-patch.test.ts test/coverage-discover.test.ts",
     "test:e2e": "playwright test",
     "pretest:e2e": "npm run build",
-    "test:coverage": "node -e \"require('node:fs').mkdirSync('test-results',{recursive:true})\" && node --import tsx --test --experimental-test-coverage --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=test-results/unit-junit.xml --test-reporter=lcov --test-reporter-destination=test-results/lcov.info test/labels.test.ts test/trx.test.ts test/junit.test.ts test/validate.test.ts test/rowkey.test.ts test/ask.test.ts test/coverage-parsers.test.ts test/coverage-patch.test.ts test/coverage-discover.test.ts"
+    "test:coverage": "node -e \"require('node:fs').mkdirSync('test-results',{recursive:true})\" && node --import tsx --enable-source-maps --test --experimental-test-coverage --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=test-results/unit-junit.xml --test-reporter=lcov --test-reporter-destination=test-results/lcov.info test/labels.test.ts test/trx.test.ts test/junit.test.ts test/validate.test.ts test/rowkey.test.ts test/ask.test.ts test/coverage-parsers.test.ts test/coverage-patch.test.ts test/coverage-discover.test.ts"
   },
   "engines": {
     "node": "^20.19.0 || >=22.12.0"
