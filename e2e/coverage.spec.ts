@@ -151,6 +151,23 @@ test.describe("new code", () => {
     await expect(page.getByTestId("patch-ask")).toHaveCount(0);
   });
 
+  // A new file that no test imports produces no uncovered lines *because*
+  // nothing observed it. Reporting only the measured subset would read as if it
+  // were the whole change set, so the count of blind spots is always named.
+  test("changed files the report never measured are named in the headline", async ({ page, makeServer }) => {
+    const ghost = "coverage-sample/src/Ghost.cs";
+    const diff = `--- a/${CALC}\n+++ b/${CALC}\n@@ -13,0 +14 @@\n+a\n`
+      + `--- a/${ghost}\n+++ b/${ghost}\n@@ -0,0 +1,3 @@\n+a\n+b\n+c\n`;
+    const s = await makeServer({ resultsFile: results(), coverageFile: cobertura(), coverage: true, gitExec: stubGit(diff) });
+    await openCanvas(page, s);
+    await page.getByTestId("tab-coverage").click();
+
+    // Every measured line ran, but the headline must not call that a clean sweep.
+    await expect(page.getByTestId("patch-headline")).toContainText("1 changed file with no coverage data");
+    await expect(page.getByTestId("coverage-file").filter({ hasText: "Ghost.cs" })).toBeVisible();
+    await expect(page.getByTestId("patch-ask")).toBeVisible();
+  });
+
   test("with no diff the section explains itself rather than showing nothing", async ({ page, makeServer }) => {
     const s = await makeServer(withCoverage(cobertura()));
     await openCanvas(page, s);

@@ -2,7 +2,7 @@
 // grouping and bucketing rules can be reasoned about (and tested) on their own,
 // matching how derive.ts serves the results list.
 
-import type { CoverageFileSummary, CoveragePayload } from "../coverage/payload";
+import type { CoverageFileSummary, CoveragePayload } from "../coverage/payload.js";
 
 // Coverage bands. The thresholds are the ones most CI gates use, so the colour
 // a user sees here matches the verdict their pipeline gives.
@@ -94,13 +94,21 @@ export function headlinePercent(coverage: CoveragePayload | null): number | null
 }
 
 // One-line description of the change set, e.g. "3 of 18 new lines untested".
+//
+// Files the report never measured are always named. Reporting only the measured
+// subset reads as if it were the whole change set, which understates the work
+// left to do: a brand new file that no test imports contributes no uncovered
+// lines precisely because nothing observed it.
 export function patchHeadline(coverage: CoveragePayload | null): string {
   const patch = coverage?.patch;
   if (!patch) return "";
   const uncovered = patch.total - patch.covered;
-  if (patch.total === 0 && patch.unmeasuredFiles > 0) {
-    return `${patch.unmeasuredFiles} changed file${patch.unmeasuredFiles === 1 ? "" : "s"} with no coverage data`;
-  }
-  if (uncovered === 0) return `All ${patch.total} changed line${patch.total === 1 ? "" : "s"} are covered`;
-  return `${uncovered} of ${patch.total} changed line${patch.total === 1 ? "" : "s"} not covered`;
+  const blind = patch.unmeasuredFiles > 0
+    ? `${patch.unmeasuredFiles} changed file${patch.unmeasuredFiles === 1 ? "" : "s"} with no coverage data`
+    : "";
+  if (patch.total === 0 && patch.unmeasuredFiles > 0) return blind;
+  const measured = uncovered === 0
+    ? `All ${patch.total} changed line${patch.total === 1 ? " is" : "s are"} covered`
+    : `${uncovered} of ${patch.total} changed line${patch.total === 1 ? "" : "s"} not covered`;
+  return blind ? `${measured}, plus ${blind}` : measured;
 }

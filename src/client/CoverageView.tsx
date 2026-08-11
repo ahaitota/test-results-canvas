@@ -88,7 +88,9 @@ function PatchSection({ coverage, expanded, onToggleFile }: {
     );
   }
 
-  const clean = patch.total > 0 && patch.covered === patch.total;
+  // Unmeasured files are not "clean": nothing observed them, so the green state
+  // would be claiming a result the report cannot support.
+  const clean = patch.total > 0 && patch.covered === patch.total && patch.unmeasuredFiles === 0;
   const onAsk = async () => {
     const ok = await askAgentCoverage("patch");
     setAsked(ok ? "sent" : "error");
@@ -103,7 +105,10 @@ function PatchSection({ coverage, expanded, onToggleFile }: {
         <Bar percent={patch.percent} testid="patch-bar" />
         <Pct percent={patch.percent} />
       </div>
-      <p class="cov-note">Compared against {patch.against}.</p>
+      <p class="cov-note">
+        Compared against {patch.against}. Counts added lines in measured source files only —
+        deleted lines, build output, tests and docs are excluded, so this is smaller than the raw diff.
+      </p>
       {!clean && (
         <button
           type="button"
