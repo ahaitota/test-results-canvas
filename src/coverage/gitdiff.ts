@@ -54,29 +54,44 @@ export interface DiffResult {
     files: FileChanges[];
 }
 
-// git quotes paths containing specials as a C string: "src/a\tb.ts".
+// git quotes paths containing specials as a C string: "src/a\tb.ts". Anything
+// non-ASCII arrives as one octal escape per UTF-8 byte, so a single character
+// spans several escapes: café.ts comes back as caf\303\251.ts. Decoding each
+// escape to its own character would yield the Latin-1 reading (cafÃ©.ts), a
+// path that matches nothing in the coverage report and leaves the file looking
+// unmeasured. So collect bytes and decode the result as UTF-8 once.
+const C_ESCAPES: Record<string, number> = { a: 0x07, b: 0x08, t: 0x09, n: 0x0a, v: 0x0b, f: 0x0c, r: 0x0d };
+const utf8Encoder = new TextEncoder();
+const utf8Decoder = new TextDecoder();
+
 function unquotePath(raw: string): string {
     const s = raw.trim();
     if (!s.startsWith('"') || !s.endsWith('"') || s.length < 2) return s;
     const body = s.slice(1, -1);
-    let out = "";
+    const bytes: number[] = [];
+    // Unescaped runs are buffered so surrogate pairs are encoded whole.
+    let literal = "";
+    const flush = () => {
+        for (const b of utf8Encoder.encode(literal)) bytes.push(b);
+        literal = "";
+    };
     for (let i = 0; i < body.length; i++) {
         if (body[i] !== "\\") {
-            out += body[i];
+            literal += body[i];
             continue;
         }
         const next = body[++i];
-        if (next === "n") out += "\n";
-        else if (next === "t") out += "\t";
-        else if (next === "r") out += "\r";
+        if (next === undefined) break; // trailing backslash: nothing to unescape
+        flush();
+        const named = C_ESCAPES[next];
+        if (named !== undefined) bytes.push(named);
         else if (next >= "0" && next <= "7") {
-            // Octal escape for a non-ASCII byte.
-            const octal = body.slice(i, i + 3);
-            out += String.fromCharCode(parseInt(octal, 8));
+            bytes.push(parseInt(body.slice(i, i + 3), 8) & 0xff);
             i += 2;
-        } else out += next;
+        } else bytes.push(next.charCodeAt(0)); // \\ and \"
     }
-    return out;
+    flush();
+    return utf8Decoder.decode(new Uint8Array(bytes));
 }
 
 // Parse `git diff --unified=0` output into added line numbers per file.

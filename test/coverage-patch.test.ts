@@ -60,6 +60,31 @@ test("parseUnifiedDiff unquotes paths git escaped", () => {
   assert.deepEqual([...map.keys()], ["src/od\td.ts"]);
 });
 
+// With core.quotePath (the default), git escapes a non-ASCII path one octal
+// number per UTF-8 byte: café.ts is emitted as caf\303\251.ts. Reading each
+// byte as its own character gives cafÃ©.ts, which matches no entry in the
+// coverage report, so a covered file is shown as unmeasured.
+test("parseUnifiedDiff decodes an octal-escaped path as UTF-8, not byte by byte", () => {
+  const diff = ['--- "a/src/caf\\303\\251.ts"', '+++ "b/src/caf\\303\\251.ts"', "@@ -0,0 +1 @@", "+x"].join("\n");
+  const map = parseUnifiedDiff(diff);
+  assert.deepEqual([...map.keys()], ["src/café.ts"]);
+});
+
+test("parseUnifiedDiff decodes a multi-byte character outside the Latin-1 range", () => {
+  // 日 is three UTF-8 bytes; an emoji is four, and a surrogate pair in JS.
+  const diff = [
+    '+++ "b/src/\\346\\227\\245/\\360\\237\\232\\200.ts"',
+    "@@ -0,0 +1 @@",
+    "+x",
+  ].join("\n");
+  assert.deepEqual([...parseUnifiedDiff(diff).keys()], ["src/日/🚀.ts"]);
+});
+
+test("parseUnifiedDiff unescapes a quote in a path without dropping it", () => {
+  const diff = ['+++ "b/src/a\\".ts"', "@@ -0,0 +1 @@", "+x"].join("\n");
+  assert.deepEqual([...parseUnifiedDiff(diff).keys()], ['src/a".ts']);
+});
+
 test("changedLines prefers uncommitted work and marks untracked files as wholly new", () => {
   const calls: string[][] = [];
   const git: GitExec = (args) => {
