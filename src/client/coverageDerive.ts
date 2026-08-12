@@ -1,6 +1,6 @@
-// Pure derivations for the coverage view. Kept out of the components so the
-// grouping and bucketing rules can be reasoned about (and tested) on their own,
-// matching how derive.ts serves the results list.
+// Pure derivations for the coverage view, kept out of the components so the
+// grouping and bucketing rules can be tested on their own, as derive.ts does
+// for the results list.
 
 import type { CoveragePayload, UncoveredRegion } from "../coverage/payload.js";
 
@@ -29,12 +29,9 @@ export function baseOf(path: string): string {
   return i >= 0 ? p.slice(i + 1) : p;
 }
 
-// --- the merged file list ---------------------------------------------------
-//
-// One row per file, carrying everything the three separate lists used to show.
-// The lists overlapped rather than partitioned: a changed file with an untested
-// block appeared three times, with a third of the story in each place, and
-// nothing on screen said they were the same file.
+// One row per file. The three former lists (New code, Worth covering, All
+// files) overlapped rather than partitioned, so a changed file with an untested
+// block appeared three times with a third of its story in each.
 
 export type CoverageSort = "actionable" | "name" | "coverage";
 
@@ -49,35 +46,31 @@ export interface CoverageRow {
   hasSource: boolean;
   isTest: boolean;
   changed: boolean;
-  // The report has data for this file. False means "unknown", not "uncovered" --
-  // a distinction the row must keep visible, because the two look identical in
-  // a percentage and mean opposite things about the work left to do.
+  // False means "unknown", not "uncovered" -- the two look identical in a
+  // percentage and mean opposite things.
   measured: boolean;
   // Coverage of this file's changed lines only.
   newCovered: number;
   newTotal: number;
   newUncovered: number[];
   // What git says changed, regardless of coverage. For an unmeasured file this
-  // is the only size it has -- the difference between a new module and a typo.
+  // is the only size it has.
   changedLines: number;
-  // Ranked untested blocks, worst first. Empty for a file that has none, and
-  // also for one whose blocks fell outside the server's ranking cut-off.
+  // Ranked untested blocks, worst first. Also empty for a file whose blocks
+  // fell outside the server's ranking cut-off.
   regions: UncoveredRegion[];
   // Which band of attention the row belongs to; see rowTier.
   tier: number;
 }
 
-// Path identity across the three sources. The coverage report, git and the
-// filesystem each have their own opinion about separators and case, so matching
-// raw strings silently produces duplicate rows on Windows -- exactly the class
-// of bug that put separator normalisation into resolveReportSources.
+// The report, git and the filesystem each spell paths differently, so matching
+// raw strings produces duplicate rows on Windows.
 function pathKey(path: string): string {
   return String(path || "").replace(/\\/g, "/").toLowerCase();
 }
 
-// Rank order for "most actionable". The tiers reproduce the old section order --
-// new code first, then the biggest gaps, then everything else -- so the merge
-// loses no prioritisation, it just stops repeating files to express it.
+// Rank order for "most actionable": new code first, then the biggest gaps, then
+// everything else -- the old section order, without repeating files.
 function rowTier(r: CoverageRow): number {
   if (r.isTest) return 5;
   // Changed code nothing observed: the report cannot even say it is untested.
@@ -96,9 +89,8 @@ function untestedLines(r: CoverageRow): number {
 // lines, then the largest gap, then the lowest percentage.
 function byActionable(a: CoverageRow, b: CoverageRow): number {
   return a.tier - b.tier
-    // Within the unmeasured tier nothing else can separate rows: no percentage,
-    // no gaps, no covered lines. Size is the only fact they carry, and without
-    // it fifteen blind spots list alphabetically and read identically.
+    // Nothing else separates rows in the unmeasured tier: no percentage, no
+    // gaps. Size is the only fact they carry.
     || (a.tier === 0 ? b.changedLines - a.changedLines : 0)
     || b.newUncovered.length - a.newUncovered.length
     || (b.regions[0]?.score ?? 0) - (a.regions[0]?.score ?? 0)
@@ -136,9 +128,9 @@ export function buildCoverageRows(
     });
   }
 
-  // Changed files the report never mentions are absent from `files` entirely,
-  // so they have to be added here or the merged list would quietly drop the
-  // single strongest signal the panel has: new code no test even loaded.
+  // Changed files the report never mentions are absent from `files`, so they
+  // are added here or the list would drop the strongest signal there is: new
+  // code no test even loaded.
   for (const pf of coverage.patch?.files ?? []) {
     const key = pathKey(pf.path);
     let row = rows.get(key);
@@ -211,9 +203,9 @@ export function rowNote(r: CoverageRow): string {
   return bits.join(" \u00B7 ");
 }
 
-// Contiguous runs, so a list of line numbers can be shown as "40-58" rather
-// than nineteen separate numbers. Mirrors the server-side toRanges(), including
-// the one-line gap tolerance, so both ends describe a region the same way.
+// Contiguous runs, so line numbers show as "40-58" rather than nineteen
+// separate numbers. Mirrors the server-side toRanges(), including the one-line
+// gap tolerance, so both ends describe a region the same way.
 export function toRanges(lines: readonly number[]): { start: number; end: number }[] {
   const sorted = [...lines].sort((a, b) => a - b);
   const ranges: { start: number; end: number }[] = [];
@@ -240,11 +232,9 @@ export function headlinePercent(coverage: CoveragePayload | null): number | null
   return coverage.productionPercent ?? coverage.totals.percent;
 }
 
-// The fraction to print beside that number, drawn from the same population.
-// Pairing a production-only percentage with the whole report's line count would
-// invite exactly the arithmetic the reader is about to attempt: on a report
-// that measures its test project too, "80% covered · 14/15 lines" is two
-// different measurements sitting next to each other.
+// The fraction printed beside that number, from the same population. Pairing a
+// production-only percentage with the whole report's line count would put two
+// different measurements next to each other.
 export function headlineTotals(coverage: CoveragePayload | null): { coveredLines: number; totalLines: number; files: number } {
   if (!coverage) return { coveredLines: 0, totalLines: 0, files: 0 };
   if (coverage.productionPercent != null && coverage.productionTotals) return coverage.productionTotals;
@@ -252,11 +242,8 @@ export function headlineTotals(coverage: CoveragePayload | null): { coveredLines
 }
 
 // One-line description of the change set, e.g. "3 of 18 new lines untested".
-//
-// Files the report never measured are always named. Reporting only the measured
-// subset reads as if it were the whole change set, which understates the work
-// left to do: a brand new file that no test imports contributes no uncovered
-// lines precisely because nothing observed it.
+// Unmeasured files are always named: reporting only the measured subset reads
+// as if it were the whole change set.
 export function patchHeadline(coverage: CoveragePayload | null): string {
   const patch = coverage?.patch;
   if (!patch) return "";

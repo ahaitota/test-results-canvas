@@ -1,17 +1,10 @@
 // Turns the paths inside a coverage report into real files on this machine.
 //
-// Every dialect spells paths differently and none of them is reliably absolute:
-//   Cobertura  <sources>/repo/root</sources> + filename="src/App/Calc.cs"
-//              (coverlet sometimes emits an absolute filename and no <sources>)
-//   LCOV       SF: may be absolute, repo-relative, or relative to the runner cwd
-//   JaCoCo     package name + sourcefile name ("com/example/Calc.java") with the
-//              source root nowhere in the document
-//
-// So resolution is a cascade -- absolute, then each declared source root, then
-// the project root, then a suffix match against the files actually on disk --
-// and it is allowed to fail. A report copied from CI legitimately points at
-// paths that do not exist here; those files keep their percentages and simply
-// cannot open a source view.
+// No dialect is reliably absolute, so resolution is a cascade -- absolute, each
+// declared source root, the project root, then a suffix match against files on
+// disk -- and it may fail. A report copied from CI legitimately points at paths
+// that do not exist here; those files keep their percentages and just cannot
+// open a source view.
 
 import { existsSync, readdirSync, statSync } from "node:fs";
 import type { Dirent } from "node:fs";
@@ -37,15 +30,11 @@ export function normalizeSlashes(p: string): string {
     return String(p || "").replace(/\\/g, "/");
 }
 
-// Walk up from `start` to the folder that looks like the top of the project.
-// Falls back to `start` when nothing is found.
+// Walk up from `start` to the top of the project, falling back to `start`.
 //
-// The *nearest* marker wins. Preferring the outermost one looks tidier for
-// monorepos but is actively dangerous: a stray `package.json` in a home
-// directory silently becomes the project root for every project beneath it,
-// and the source index then walks the user's whole home folder. A `.git` still
-// wins outright, since it is the only marker that means "repository" -- which
-// is what the diff below actually needs.
+// The *nearest* marker wins: preferring the outermost makes a stray
+// package.json in a home directory the root for everything beneath it. A .git
+// still wins outright.
 export function findProjectRoot(start: string): string {
     let dir = resolvePath(start);
     let fallback: string | null = null;
@@ -70,8 +59,7 @@ export function findProjectRoot(start: string): string {
 }
 
 // Lazily built basename -> absolute paths index, used only when the cheaper
-// resolution steps all miss. Built once per report load and capped, so a
-// pathological repo costs a bounded walk rather than an unbounded one.
+// resolution steps all miss. Capped so a pathological repo costs a bounded walk.
 class SourceIndex {
     private byName: Map<string, string[]> | null = null;
 
@@ -130,17 +118,17 @@ function existsFile(p: string): boolean {
     }
 }
 
-export interface ResolverOptions {
+interface ResolverOptions {
     sourceRoots?: readonly string[];
     projectRoot?: string;
 }
 
-export interface SourceResolver {
+interface SourceResolver {
     projectRoot?: string;
     resolve(reportPath: string): string | undefined;
 }
 
-export function createSourceResolver(options: ResolverOptions = {}): SourceResolver {
+function createSourceResolver(options: ResolverOptions = {}): SourceResolver {
     const { projectRoot } = options;
     // Only roots that exist here are worth trying; a CI report's roots usually
     // do not.
@@ -166,9 +154,9 @@ export function createSourceResolver(options: ResolverOptions = {}): SourceResol
             if (existsFile(candidate)) return candidate;
         }
 
-        // Nothing lined up, so match by name and keep the candidate that shares
-        // the most trailing segments -- that is what distinguishes the real
-        // `src/app/Calc.cs` from an unrelated `vendor/Calc.cs`.
+        // Match by name and keep the candidate sharing the most trailing
+        // segments -- what distinguishes `src/app/Calc.cs` from
+        // `vendor/Calc.cs`.
         if (index) {
             let best: string | undefined;
             let bestScore = 0;
@@ -201,11 +189,9 @@ export function createSourceResolver(options: ResolverOptions = {}): SourceResol
 // is left untouched so a parse result stays reusable.
 export function resolveReportSources(report: CoverageReport, options: ResolverOptions = {}): CoverageReport {
     const resolver = createSourceResolver({ sourceRoots: report.sourceRoots, ...options });
-    // The path is also what the UI displays and groups by, so it is settled on
-    // forward slashes here rather than per format. A Windows LCOV writes
-    // "src\ask.ts" while git always says "src/ask.ts"; left alone, the same file
-    // shows up under two spellings in patch coverage and the folder tree fails
-    // to nest at all.
+    // Settled on forward slashes here rather than per format: a Windows LCOV
+    // writes "src\ask.ts" while git always says "src/ask.ts", and left alone the
+    // same file shows up twice in patch coverage.
     const files: CoverageFile[] = report.files.map((f) => ({
         ...f,
         path: normalizeSlashes(f.path),

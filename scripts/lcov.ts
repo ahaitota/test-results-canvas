@@ -1,10 +1,7 @@
-// Reading, merging and writing LCOV.
-//
-// Kept pure and separate from the reporting script because this is where a
-// mistake is silent: a path normalised two different ways splits one file into
-// two half-covered rows, and hit counts added twice inflate a percentage that
-// nobody would think to double-check. Both are invisible in the output and
-// testable here.
+// Reading, merging and writing LCOV. Kept pure and separate because this is
+// where a mistake is silent: a path normalised two ways splits one file into two
+// half-covered rows, and hit counts added twice inflate a percentage nobody
+// would think to re-derive.
 
 export interface LcovFile {
     path: string;

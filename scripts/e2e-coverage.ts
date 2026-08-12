@@ -1,10 +1,6 @@
 // Run the e2e suite with coverage collection turned on, for both halves of what
-// it exercises.
-//
-// A plain `COVERAGE=1 playwright test` is not portable -- cmd.exe treats the
-// assignment as part of the command -- and pulling in cross-env for one
-// variable is not worth a dependency, so the variables are set here and
-// inherited by the child.
+// it exercises. Variables are set here rather than inline because cmd.exe
+// treats `COVERAGE=1 playwright` as part of the command.
 import { spawn } from "node:child_process";
 import { copyFileSync, mkdirSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";

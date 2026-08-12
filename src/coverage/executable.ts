@@ -1,23 +1,15 @@
 // Which lines of a source file could actually execute.
 //
-// Coverage tools disagree about this. coverlet and JaCoCo emit only executable
-// lines, so a comment never appears in their reports at all. Node's
-// --experimental-test-coverage emits a DA entry for very nearly every line,
-// comments and blank lines included, and marks them hit or not according to
-// whichever V8 range encloses them. Read literally, that says a third of this
-// repository's "uncovered" lines are prose.
+// Coverage tools disagree: coverlet and JaCoCo emit only executable lines,
+// while Node's --experimental-test-coverage emits a DA entry for nearly every
+// line, comments included, so read literally a third of this repo's
+// "uncovered" lines are prose.
 //
-// So the report alone cannot be trusted to say what is coverable, and the
-// source has to be consulted. The rule here is deliberately asymmetric: a line
-// is dropped only when the text proves nothing could run on it. Everything
-// uncertain stays counted, because over-counting shows a line as untested that
-// nobody needed to test, while under-counting hides real untested code -- and
-// only one of those two mistakes is dangerous.
-//
-// Braces are therefore kept. A lone `}` looks inert, but it is a genuine
-// execution point in several languages (a method's implicit return, and what
-// coverlet reports when a function is never entered), so removing it could
-// conceal a function nothing ever called.
+// The rule is deliberately asymmetric: a line is dropped only when the text
+// proves nothing could run on it. Over-counting shows a line as untested that
+// nobody needed to test; under-counting hides real untested code. Only one of
+// those is dangerous. Braces are therefore kept -- a lone `}` is a genuine
+// execution point in several languages.
 
 export type CommentSyntax = "c" | "hash" | "none";
 

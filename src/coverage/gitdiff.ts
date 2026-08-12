@@ -1,33 +1,26 @@
-// Which lines the working tree has changed, read from git.
+// Which lines the working tree has changed, read from git. Intersected with the
+// coverage hit map, this answers "did the agent test the code it just wrote?"
+// (see patch.ts).
 //
-// This is what makes "did the agent test the code it just wrote?" answerable:
-// intersect these line numbers with the coverage hit map and you get patch
-// coverage (see patch.ts).
+// Two comparisons, in order: uncommitted work against HEAD, then -- if the tree
+// is clean -- this branch against its merge-base with the default branch, so the
+// answer survives the agent committing. Untracked files count as entirely new.
 //
-// Two comparisons, in order:
-//   1. uncommitted work against HEAD -- the usual case while an agent is editing
-//   2. if the tree is clean, this branch against its merge-base with the default
-//      branch, so the answer survives the agent committing its work
-// Untracked files are included too and count as entirely new, since a brand-new
-// source file is exactly the case this feature exists for.
-//
-// git is spawned with a fixed argument list (never a shell string) and only ever
-// inside the resolved project root. Its absence, or the directory not being a
-// repository, is not an error: the caller simply gets no "new code" section.
+// git is spawned with a fixed argument list, never a shell string, and only
+// inside the resolved project root.
 
 import { execFileSync } from "node:child_process";
 import { resolve as resolvePath } from "node:path";
 import { normalizeSlashes } from "./sources.js";
 import { isProductionSource } from "./classify.js";
 
-// Injected so the unit tests can drive the parser with canned git output
-// instead of building throwaway repositories.
+// Injected so tests can drive the parser with canned git output.
 export type GitExec = (args: string[]) => string | null;
 
 const GIT_TIMEOUT_MS = 5000;
 const MAX_BUFFER = 16 * 1024 * 1024;
 
-export function createGitExec(root: string): GitExec {
+function createGitExec(root: string): GitExec {
     return (args: string[]) => {
         try {
             return execFileSync("git", ["-C", root, ...args], {
@@ -49,15 +42,14 @@ export interface FileChanges {
     absPath: string;
     // Added/modified line numbers in the new version of the file.
     lines: Set<number>;
-    // A brand-new (or untracked) file: every executable line counts as new,
-    // which spares us reading the file just to enumerate its lines.
+    // A new or untracked file: every executable line counts as new, which
+    // spares reading the file just to enumerate its lines.
     all: boolean;
 }
 
 export interface DiffResult {
     root: string;
-    // Human-readable description of what was compared, shown in the UI so the
-    // percentage is never ambiguous.
+    // Shown in the UI so the percentage is never ambiguous.
     against: string;
     files: FileChanges[];
 }
@@ -89,9 +81,8 @@ function unquotePath(raw: string): string {
 
 // Parse `git diff --unified=0` output into added line numbers per file.
 //
-// With zero context every "+" line inside a hunk is a genuine addition, so the
-// hunk header alone carries the answer: `@@ -a,b +c,d @@` means d lines were
-// added starting at c (d omitted means 1, d = 0 means a pure deletion).
+// With zero context the hunk header alone carries the answer: `@@ -a,b +c,d @@`
+// means d lines were added starting at c (d omitted means 1, d = 0 a deletion).
 export function parseUnifiedDiff(diff: string): Map<string, Set<number>> {
     const byPath = new Map<string, Set<number>>();
     let currentPath: string | null = null;
@@ -158,8 +149,7 @@ export function changedLines(root: string, options: DiffOptions = {}): DiffResul
 
     // git reports paths relative to the repository root, which is not
     // necessarily the directory we were handed -- a coverage report inside a
-    // monorepo package resolves to that package, not the checkout. Resolving
-    // against git's own top level keeps the absolute paths honest either way.
+    // monorepo package resolves to that package, not the checkout.
     const topLevel = String(git(["rev-parse", "--show-toplevel"]) || "").trim();
     const base = topLevel ? resolvePath(topLevel) : resolvePath(root);
 
@@ -176,10 +166,8 @@ export function changedLines(root: string, options: DiffOptions = {}): DiffResul
     const working = git(["diff", "--unified=0", "--no-color", "--no-ext-diff", "HEAD"]);
     const workingChanges = parseUnifiedDiff(working ?? "");
     const workingFiles = [...files, ...toFileChanges(base, workingChanges, false)];
-    // Only let the working tree win when it actually holds code. Editing a
-    // README or a lockfile next to committed work is routine, and treating that
-    // as "the change under review" made the whole New code section disappear
-    // mid-edit even though the branch had plenty to say.
+    // Only let the working tree win when it actually holds code: editing a
+    // README beside committed work made the New code section disappear mid-edit.
     if (workingFiles.some((f) => isProductionSource(f.path))) {
         return { root: base, against: "uncommitted changes", files: workingFiles };
     }

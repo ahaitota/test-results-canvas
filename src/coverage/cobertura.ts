@@ -1,30 +1,17 @@
-// Cobertura XML coverage parser.
+// Cobertura XML coverage parser. The most widely emitted dialect: coverlet
+// writes it for `dotnet test --collect:"XPlat Code Coverage"`, and coverage.py,
+// gcovr, simplecov and phpunit can all produce it.
 //
-// Cobertura is the most widely emitted coverage dialect: coverlet writes it for
-// `dotnet test --collect:"XPlat Code Coverage"`, and coverage.py, gcovr,
-// simplecov and phpunit can all produce it too. Structure:
-//
-//   <coverage line-rate="0.6" ...>
-//     <sources><source>/repo/root</source></sources>
-//     <packages>
-//       <package name="MyApp">
-//         <classes>
-//           <class name="MyApp.Calculator" filename="MyApp/Calculator.cs">
-//             <lines>
-//               <line number="5" hits="3" branch="False" />
-//               <line number="9" hits="0" branch="True" condition-coverage="50% (1/2)" />
-//             </lines>
-//           </class>
-//         </classes>
-//       </package>
-//     </packages>
-//   </coverage>
+//   <coverage><sources><source>/repo/root</source></sources>
+//     <packages><package><classes>
+//       <class filename="MyApp/Calculator.cs">
+//         <lines><line number="5" hits="3" branch="False"/></lines>
 //
 // One source file can appear as several <class> elements -- partial classes, or
 // simply more than one type per file -- so entries are emitted per class and
 // merged by filename in buildFiles().
 
-import { scanTags, attr, numAttr } from "./xml.js";
+import { scanTags, attr, numAttr } from "../xml.js";
 import { buildFiles, totalsOf } from "./types.js";
 import type { BranchTotals, CoverageReport, LineHits } from "./types.js";
 

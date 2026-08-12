@@ -1,20 +1,14 @@
-// LCOV coverage parser.
+// LCOV coverage parser. The line-oriented tracefile the JS/TS world emits by
+// default (vitest, jest, c8, nyc), and Rust and gcov produce it too. One record
+// per file, terminated by end_of_record:
 //
-// LCOV is the line-oriented tracefile format the JavaScript/TypeScript world
-// emits by default: vitest, jest, c8 and nyc all write `coverage/lcov.info`, and
-// Rust (grcov/tarpaulin) and C/C++ (gcov) produce it too. One record per source
-// file, terminated by `end_of_record`:
-//
-//   TN:<test name>
 //   SF:<source file path>
-//   DA:<line>,<hits>[,<checksum>]      executable line + execution count
-//   BRDA:<line>,<block>,<branch>,<taken|->  one branch outcome
-//   LF:/LH:/BRF:/BRH:/FN:/FNDA:...     summary + function records (ignored:
-//                                      the DA/BRDA records are authoritative)
-//   end_of_record
+//   DA:<line>,<hits>                        executable line + execution count
+//   BRDA:<line>,<block>,<branch>,<taken|->   one branch outcome
 //
-// Runners append a fresh record per test file, so the same SF: can appear many
-// times over; buildFiles() sums those hits.
+// LF/LH/FN summary records are ignored; DA/BRDA are authoritative. Runners
+// append a fresh record per test file, so the same SF: can appear many times
+// over and buildFiles() sums those hits.
 import { buildFiles, totalsOf } from "./types.js";
 function finish(entry, out) {
     const branches = entry.branchKeys.size

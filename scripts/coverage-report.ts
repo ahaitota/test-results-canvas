@@ -1,12 +1,9 @@
 // Turn the raw V8 coverage the e2e run collected into LCOV, and merge it with
 // the LCOV the Node unit tests produced.
 //
-// Why merge rather than show two reports: the canvas loads one report, and the
-// question the coverage tab exists to answer -- "did the code that just changed
-// get tested?" -- is about the change set, not about which runner happened to
-// observe it. A change touching a route handler and the panel that calls it is
-// one piece of work, and splitting its coverage across two files would put half
-// the answer somewhere the panel is not looking.
+// Merged rather than shown separately because the canvas loads one report, and
+// "did the code that just changed get tested?" is about the change set, not
+// about which runner observed it.
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative, resolve } from "node:path";
@@ -31,11 +28,9 @@ function isOwnSource(path: string): boolean {
     return p.includes("src/");
 }
 
-// The server half of the e2e run executes the compiled output in dist/. Those
-// are build artefacts, not code anyone edits, so they are mapped back through
-// tsc's source maps to the .ts files the report is about -- otherwise the panel
-// would list dist/src/server.js beside src/server.ts as if they were two
-// different files with two different scores.
+// The server half runs the compiled output in dist/. Those are build artefacts,
+// so they are mapped back through tsc's source maps -- otherwise the panel would
+// list dist/src/server.js beside src/server.ts as two different files.
 function isServerBuild(url: string): boolean {
     const p = url.replace(/\\/g, "/");
     if (p.includes("node_modules/")) return false;
@@ -58,10 +53,9 @@ interface ServerEntry {
     sourceMap?: unknown;
 }
 
-// tsc writes source maps that name their sources but do not carry them --
-// `sourcesContent` only appears with inlineSources, which would embed the whole
-// of src/ into artefacts that are committed. The content is filled in here
-// instead, at the one moment it is actually needed, so dist/ stays lean.
+// tsc's maps name their sources but do not carry them: sourcesContent only
+// appears with inlineSources, which would embed all of src/ into committed
+// artefacts. It is filled in here instead, so dist/ stays lean.
 function mapWithSources(jsPath: string): unknown {
     const mapPath = `${jsPath}.map`;
     if (!existsSync(mapPath)) return undefined;
@@ -102,8 +96,8 @@ async function browserLcov(): Promise<LcovFile[]> {
     const files = readdirSync(RAW_DIR).filter((f) => f.endsWith(".json"));
     if (!files.length) return [];
 
-    // The bundle the browser actually ran, kept aside by the runner. Reading
-    // dist/ instead would silently measure a different build.
+    // The bundle the browser actually ran, kept aside by the runner: reading dist/
+    // would measure a different build.
     const bundlePath = join(CLIENT_BUILD_DIR, "app.js");
     if (!existsSync(bundlePath)) {
         console.warn("no measured client build found -- run `npm run test:e2e:coverage` first");

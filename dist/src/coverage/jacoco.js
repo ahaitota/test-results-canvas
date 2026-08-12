@@ -1,24 +1,12 @@
-// JaCoCo XML coverage parser.
+// JaCoCo XML coverage parser, the Java standard -- the natural companion to the
+// Surefire/Gradle JUnit reports this canvas already renders.
 //
-// JaCoCo is the Java standard, produced by the jacoco-maven-plugin
-// (`target/site/jacoco/jacoco.xml`) and by Gradle's jacocoTestReport -- the
-// natural companion to the Surefire/Gradle JUnit reports this canvas already
-// renders. Structure:
+//   <report><package name="com/example/app">
+//     <sourcefile name="Calculator.java"><line nr="5" mi="0" ci="3"/>
 //
-//   <report name="my-app">
-//     <package name="com/example/app">
-//       <sourcefile name="Calculator.java">
-//         <line nr="5" mi="0" ci="3" mb="0" cb="2"/>
-//         <line nr="9" mi="4" ci="0" mb="2" cb="0"/>
-//       </sourcefile>
-//     </package>
-//   </report>
-//
-// Attributes are instruction/branch counters, not execution counts:
-//   mi/ci = missed/covered instructions, mb/cb = missed/covered branches.
-// JaCoCo never records how many times a line ran, so a covered line is stored
-// as a single hit; the UI shows "covered" rather than a hit count for these.
-import { scanTags, attr, numAttr } from "./xml.js";
+// Attributes are instruction/branch counters (mi/ci = missed/covered
+// instructions), not execution counts, so a covered line is stored as one hit.
+import { scanTags, attr, numAttr } from "../xml.js";
 import { buildFiles, totalsOf } from "./types.js";
 export function parseJacoco(xml) {
     const entries = [];

@@ -1,10 +1,6 @@
-// Coverage report format detection.
-//
-// Reports are identified by their *content*, not their filename: collectors and
-// CI pipelines rename them freely (`coverage.cobertura.xml`, `cobertura.xml`,
-// `coverage.xml`, `lcov.info`, `lcov.dat`), and both Cobertura and JaCoCo share
-// the `.xml` extension with the JUnit result files this canvas already reads.
-// Sniffing keeps those apart and lets an oddly named report still work.
+// Coverage report format detection by content rather than filename: CI
+// pipelines rename reports freely, and Cobertura and JaCoCo share the .xml
+// extension with the JUnit result files this canvas already reads.
 
 import { parseCobertura } from "./cobertura.js";
 import { parseLcov } from "./lcov.js";
@@ -12,7 +8,7 @@ import { parseJacoco } from "./jacoco.js";
 import type { CoverageFormat, CoverageReport } from "./types.js";
 
 // Extensions worth opening at all when hunting for a report.
-export const COVERAGE_EXTS = [".xml", ".info", ".lcov", ".dat", ".cobertura"];
+const COVERAGE_EXTS = [".xml", ".info", ".lcov", ".dat", ".cobertura"];
 
 // Filenames that are almost certainly coverage, used to rank candidates when a
 // directory holds several plausible files.

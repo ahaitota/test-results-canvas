@@ -1,15 +1,11 @@
-// Source text for one covered file, annotated line by line.
+// Source text for one covered file, annotated line by line. Each line carries
+// its hit count (null = not executable, rendered dim rather than red) and
+// whether the current diff touched it.
 //
-// Percentages tell you there is a problem; this is what tells you where. Each
-// line comes back with its hit count (null = not executable, so it renders dim
-// rather than red) and whether the current diff touched it.
-//
-// Security: the caller passes the path *as spelled in the coverage report*, and
-// that string is looked up in the loaded report's own file list. The absolute
-// path served is therefore always one the report itself produced -- never
-// anything derived from the request -- so path traversal is impossible by
-// construction rather than by filtering, the same rule resolveResultPath()
-// already applies to results files.
+// Security: the caller passes the path as spelled in the coverage report, and
+// that string is looked up in the loaded report's own file list, so the absolute
+// path served is always one the report produced. Traversal is impossible by
+// construction rather than by filtering.
 
 import { readFileSync, statSync } from "node:fs";
 import { normalizeSlashes } from "./sources.js";

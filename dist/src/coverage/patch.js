@@ -1,12 +1,8 @@
-// Patch coverage: how much of the code that just changed is actually tested.
+// Patch coverage: how much of the code that just changed is actually tested --
+// "the agent wrote new code, did it also write tests?". A project-wide
+// percentage cannot answer that, since 40 new untested lines barely move it.
 //
-// This is the part of the feature that answers "the agent wrote new code -- did
-// it also write tests for it?". A project-wide percentage cannot answer that,
-// because 40 new untested lines barely move it. Intersecting the changed line
-// numbers with the coverage hit map answers it exactly.
-//
-// Pure: git access happens in gitdiff.ts and file loading in the server, so the
-// interesting logic here is unit-testable with plain objects.
+// Pure: git access is in gitdiff.ts and file loading in the server.
 import { percentOf } from "./types.js";
 import { commonSuffixSegments, normalizeSlashes } from "./sources.js";
 import { isProductionSource } from "./classify.js";
@@ -98,9 +94,8 @@ export function computePatchCoverage(report, changes, options = {}) {
     }
     if (!files.length)
         return null;
-    // Worst first: the files needing attention lead the panel. Unmeasured files
-    // lead, largest first -- a 200-line blind spot is not the same finding as a
-    // one-line one, and with no coverage numbers their size is all they have.
+    // Worst first. Unmeasured files lead, largest first: with no coverage
+    // numbers their size is all they have.
     files.sort((a, b) => {
         if (a.unmeasured !== b.unmeasured)
             return a.unmeasured ? -1 : 1;

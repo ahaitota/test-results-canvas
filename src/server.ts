@@ -175,9 +175,7 @@ export interface ResultsServerOptions {
     alsoRegister?: string[];
     // Turn off coverage discovery entirely.
     coverage?: boolean;
-    // Override the git invocation used to find changed lines. Tests pass canned
-    // output; production leaves it undefined and a real git runs in the project
-    // root. `null` disables the changed-lines section outright.
+    // Injected for tests; `null` disables the changed-lines section outright.
     gitExec?: GitExec | null;
     // Called when the user clicks "Ask agent" on a row. Injected rather than
     // imported so this module stays host-free: the extension passes a closure
@@ -239,20 +237,15 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
     let results: TestResult[] = [];
     let watcher: FSWatcher | null = null;
 
-    // --- Coverage state ---
-    // `coverage` is the fully derived report; `coverageWatcher` follows the
-    // folder it came from so a re-run with coverage refreshes the panel the same
-    // way results already do.
+    // `coverageWatcher` follows the report's folder so a re-run refreshes the
+    // panel the same way results already do.
     let coverage: LoadedCoverage | null = null;
     let coverageWatcher: FSWatcher | null = null;
     let projectRoot: string | undefined;
     let coverageHint: CoverageSuggestion | null = null;
-    // Absolute path of the results file currently loaded, used to find the
-    // coverage report that belongs with it.
+    // Used to find the coverage report that belongs with the loaded results.
     let resultsAbsPath: string | null = null;
 
-    // `gitExec: null` disables changed-line detection; undefined means "use a
-    // real git", which loadCoverageFile() does by default.
     const loadOptions = () => ({
         projectRoot,
         skipGit: options.gitExec === null,
@@ -306,8 +299,8 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         return true;
     }
 
-    // Point at a report, deriving everything from it. Returns false when the
-    // path is not a readable coverage report, leaving the previous state alone.
+    // Returns false when the path is not a readable coverage report, leaving
+    // the previous state alone.
     function setCoverage(absPath: string): boolean {
         const loaded = loadCoverageFile(absPath, loadOptions());
         if (!loaded) return false;
@@ -318,7 +311,6 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         return true;
     }
 
-    // Watch the folder holding the report so the next run refreshes the panel.
     // Separate from the results watcher because the two files usually live in
     // different folders (`coverage/lcov.info` vs `test-results/junit.xml`).
     function watchCoverageDir(dir: string): void {
@@ -329,9 +321,8 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
                 if (!filename || !hasCoverageExt(String(filename))) return;
                 clearTimeout(timer);
                 timer = setTimeout(() => {
-                    // A re-run can write a different file in the same folder
-                    // (dotnet uses a fresh guid folder, but c8 and jacoco
-                    // overwrite), so re-discover rather than assume.
+                    // dotnet writes a fresh guid folder while c8 and jacoco
+                    // overwrite, so re-discover rather than assume.
                     const next = newestCoverageFileIn(dir);
                     if (next && next !== coverage?.path) {
                         if (setCoverage(next)) broadcast();
@@ -364,9 +355,8 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         discovered.set(label, abs);
         file = label;
         results = loadFile(label, discovered);
-        // A fresh run usually rewrites coverage too; re-derive from the new
-        // results file so a moved report (dotnet's per-run guid folder) is
-        // picked up rather than going stale.
+        // Re-derive so a moved report (dotnet's per-run guid folder) is picked
+        // up rather than going stale.
         attachCoverage(abs);
         broadcast();
     }
@@ -404,9 +394,8 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
             const d = resolvePath(String(input.resultsDir));
             if (existsSync(d)) abs = newestResultsFileIn(d);
         }
-        // An explicit coverage report wins over discovery, and is honoured even
-        // when no results file resolved -- the agent may be pointing the panel
-        // at coverage for a run whose report it could not find.
+        // Honoured even when no results file resolved: the agent may be pointing
+        // the panel at coverage for a run whose report it could not find.
         const explicitCoverage = seedCoverage(input, abs);
         if (!abs) return null;
         const label = labelForPath(abs, discovered, listLocalNames());
@@ -418,8 +407,7 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         return abs;
     }
 
-    // Apply an explicit coverageFile/coverageDir from the open input. Returns
-    // true when one of them produced a report.
+    // True when an explicit coverageFile/coverageDir produced a report.
     function seedCoverage(input: SeedInput, resultsAbs: string | null): boolean {
         if (!coverageEnabled) return false;
         resultsAbsPath = resultsAbs ?? resultsAbsPath;
@@ -516,10 +504,8 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         return sendJson(res, 200, { ok: true });
     }
 
-    // Coverage asks follow exactly the same rule as /ask: the page names a scope
-    // (and, for a file, a path that must already appear in this server's own
-    // report), and the prompt is composed here from server-held data. Nothing
-    // the caller sends is forwarded to the agent.
+    // Same rule as /ask: the page names a scope and the prompt is composed here
+    // from server-held data. Nothing the caller sends reaches the agent.
     async function handleAskCoverage(req: IncomingMessage, res: ServerResponse) {
         if (req.method !== "POST") return sendJson(res, 405, { ok: false, error: "POST required" });
         if (!onAsk) return sendJson(res, 501, { ok: false, error: "asking the agent is not available" });

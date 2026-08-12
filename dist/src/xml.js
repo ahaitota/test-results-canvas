@@ -1,11 +1,7 @@
-// Minimal XML tag scanner shared by the Cobertura and JaCoCo coverage parsers.
-//
-// The existing result parsers each hand-roll their own scanning; coverage adds
-// two more XML dialects, so the common part lives here instead of a third and
-// fourth copy. Deliberately not a full XML parser -- just enough to walk tags in
-// document order while treating comments, CDATA, processing instructions and
-// doctypes as opaque, and to read attributes without tripping over a ">" inside
-// a quoted value.
+// Minimal XML helpers shared by the result and coverage parsers. Not a full XML
+// parser -- just enough to walk tags in document order, treating comments, CDATA
+// and doctypes as opaque, and to read attributes without tripping over a ">"
+// inside a quoted value.
 export function xmlUnescape(s) {
     return String(s ?? "")
         .replace(/&lt;/g, "<")

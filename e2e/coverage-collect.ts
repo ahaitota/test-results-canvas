@@ -1,14 +1,11 @@
 // Coverage of the browser half of the canvas.
 //
-// The unit tests measure src/ under Node, but the panel itself -- every file in
-// src/client -- runs in a browser, so that Node run never loads it and the
-// report never mentions it. Those files then read "not measured", which is
-// indistinguishable on screen from code nothing tests, even though the e2e
-// suite exercises them heavily. This closes that gap by taking V8's own
-// coverage from the browser while the e2e specs drive it.
+// The unit tests measure src/ under Node, but everything in src/client runs in a
+// browser, so that run never loads it and those files read "not measured" --
+// indistinguishable from code nothing tests. This takes V8's own coverage from
+// the browser while the e2e specs drive it.
 //
-// Opt-in via COVERAGE=1: collecting costs time and is useless unless the bundle
-// carries a source map. A plain `npm run test:e2e` is unaffected.
+// Opt-in via COVERAGE=1: a plain `npm run test:e2e` is unaffected.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -34,14 +31,12 @@ export interface RawEntry {
     functions?: unknown[];
 }
 
-// Keep only the canvas bundle, and only its ranges. The source and map are
-// identical for all hundred specs, so storing them per spec would write tens of
-// megabytes of the same text; the runner snapshots them once instead.
+// Keep only the canvas bundle, and only its ranges: the source and map are
+// identical for all hundred specs, so the runner snapshots them once instead.
 //
-// The bundle is served fresh from an ephemeral port by every spec, so the same
-// file arrives under a hundred different URLs. They have to collapse to one
-// name or the report shows a hundred copies of the client, each covered by a
-// single test.
+// The bundle is served from an ephemeral port by every spec, so the same file
+// arrives under a hundred URLs. They must collapse to one name or the report
+// shows a hundred copies of the client, each covered by a single test.
 export function selectClientEntries(entries: readonly RawEntry[]): RawEntry[] {
     const out: RawEntry[] = [];
     for (const entry of entries) {

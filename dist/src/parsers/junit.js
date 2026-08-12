@@ -16,20 +16,7 @@
 //       <testcase ...><skipped message="..." /></testcase>            -> skip
 //     </testsuite>
 //   </testsuites>
-function xmlUnescape(s) {
-    return String(s ?? "")
-        .replace(/&lt;/g, "<")
-        .replace(/&gt;/g, ">")
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
-        .replace(/&apos;/g, "'")
-        .replace(/&amp;/g, "&");
-}
-// Read an XML attribute value out of a raw tag's attribute string.
-function attr(tag, name) {
-    const m = new RegExp(`\\b${name}="([^"]*)"`).exec(String(tag || ""));
-    return m ? xmlUnescape(m[1]) : undefined;
-}
+import { attr, xmlUnescape } from "../xml.js";
 // JUnit "time" is seconds (float) -> milliseconds.
 function timeToMs(t) {
     const n = parseFloat(t ?? "");

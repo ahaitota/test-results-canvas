@@ -1,18 +1,10 @@
-// Ranking uncovered code by how much it matters.
+// Ranking uncovered code by how much it matters -- issue #28, point 3. A raw
+// list of uncovered lines is unusable, so this ranks contiguous regions using
+// signals available without understanding the language: whether the file was
+// just changed (by far the strongest), how long the run is, whether the file is
+// entirely uncovered, and whether it is production code at all.
 //
-// A raw list of every uncovered line is unusable -- a mid-sized project has
-// thousands. Issue #28 asks specifically for "the places which are not covered
-// but are really important to cover", so this ranks contiguous uncovered regions
-// instead of lines, using signals available without understanding the language:
-//
-//   * the file was just changed          -- by far the strongest signal
-//   * the region is long                 -- a whole function or branch that has
-//                                           never once executed
-//   * the file is entirely uncovered     -- a module no test reaches at all
-//   * the file is production code        -- tests and generated output excluded
-//
-// Pure and host-free, so it is unit-testable and can also run in the browser
-// bundle.
+// Pure and host-free, so it also runs in the browser bundle.
 
 import { toRanges } from "./patch.js";
 import { isProductionSource } from "./classify.js";

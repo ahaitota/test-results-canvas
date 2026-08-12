@@ -1,22 +1,10 @@
 // Finds the coverage report that belongs with a results file.
 //
-// The canvas is already pointed at a `.trx`/JUnit `.xml`; coverage is written by
-// the same run into a sibling or a well-known reporting folder, so the report
-// can be found without asking the user for anything. Each ecosystem has its own
-// habit:
-//
-//   dotnet test --collect:"XPlat Code Coverage"
-//       TestResults/<guid>/coverage.cobertura.xml   (sibling of the .trx)
-//   vitest / jest / c8 / nyc --coverage
-//       coverage/lcov.info
-//   maven + jacoco / gradle jacocoTestReport
-//       target/site/jacoco/jacoco.xml, build/reports/jacoco/test/jacocoTestReport.xml
-//   coverage.py xml
-//       coverage.xml at the project root
-//
-// The search is bounded the same way the extension's results scan is: a small
-// depth limit, an entry budget, and the usual build/vcs folders skipped, so it
-// stays cheap in a large repo.
+// Coverage is written by the same run into a sibling or a well-known reporting
+// folder, so the report can be found without asking:
+// TestResults/<guid>/coverage.cobertura.xml for dotnet, coverage/lcov.info for
+// vitest/jest/c8, target/site/jacoco/jacoco.xml for maven, coverage.xml for
+// coverage.py. Bounded the same way the results scan is.
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { hasCoverageExt, looksLikeCoverage, nameScore } from "./detect.js";
@@ -46,7 +34,7 @@ function isCoverageFile(abs) {
     }
 }
 // Every coverage report under `root`, bounded in depth and entries.
-export function findCoverageFiles(root, opts = {}) {
+function findCoverageFiles(root, opts = {}) {
     const maxDepth = opts.maxDepth ?? MAX_DEPTH;
     const found = [];
     let budget = MAX_ENTRIES;
@@ -128,10 +116,8 @@ export function newestCoverageFileIn(dir) {
 }
 // Locate the report that belongs with `resultsFile`.
 //
-// Searched nearest-first, because proximity is a much stronger signal than
-// recency: the `.trx` and its `coverage.cobertura.xml` are written into the same
-// TestResults tree seconds apart, while a stale report from another project
-// elsewhere in the repo could easily be newer than both.
+// Searched nearest-first: proximity beats recency, since a stale report
+// elsewhere in the repo could easily be newer than the one just written.
 export function discoverCoverageFor(resultsFile, projectRoot) {
     const startDir = dirname(resolvePath(resultsFile));
     // 1. Alongside the results file, then in its parent -- `dotnet test` writes

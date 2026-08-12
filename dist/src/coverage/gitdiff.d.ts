@@ -1,5 +1,4 @@
 export type GitExec = (args: string[]) => string | null;
-export declare function createGitExec(root: string): GitExec;
 export interface FileChanges {
     path: string;
     absPath: string;
