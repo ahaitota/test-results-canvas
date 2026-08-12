@@ -87,6 +87,31 @@ test.describe("ask agent", () => {
     await expect(button).toHaveAttribute("data-ask-state", "error");
   });
 
+  // A refusal at least comes back as a response. When the request never lands --
+  // a panel closing mid-click, a dropped connection -- fetch() rejects instead,
+  // and an unhandled rejection would leave the button stuck on "Asking…".
+  test("a request that never arrives is reported, not thrown", async ({ page, makeServer }) => {
+    const asks: AskRequest[] = [];
+    const s = await makeServer({
+      resultsFile: get_fixture_path("empty.trx"),
+      onAsk: (req) => { asks.push(req); },
+    });
+    await openCanvas(page, s);
+    s.setResults(RUN);
+    await expand(page, "rejects negative amount");
+    await page.route((url) => url.pathname === "/ask", (route) => route.abort());
+
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+
+    const button = rowFor(page, "rejects negative amount").getByTestId("ask-agent");
+    await button.click();
+
+    await expect(button).toHaveAttribute("data-ask-state", "error");
+    expect(asks).toHaveLength(0);
+    expect(errors).toEqual([]);
+  });
+
   test("clicking the button does not collapse the row", async ({ page, makeServer }) => {
     const s = await makeServer({ resultsFile: get_fixture_path("empty.trx"), onAsk: () => {} });
     await openCanvas(page, s);

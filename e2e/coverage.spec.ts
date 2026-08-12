@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test, expect, get_fixture_path, openCanvas } from "./canvas-server";
+import type { AskRequest, ResultsServerOptions } from "../dist/src/server.js";
 
 const E2E_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(E2E_DIR, "..");
@@ -262,6 +263,102 @@ test.describe("new code", () => {
   });
 });
 
+// The three coverage buttons are the tab's only way back into the conversation.
+// Each names a scope and nothing more: the prompt is the server's own words, so
+// what these assert is that the right scope arrives and that the button tells
+// the truth about whether it got there.
+test.describe("asking the agent about coverage", () => {
+  // Lines 24-29 changed with 26 uncovered, so the New code section has something
+  // to complain about and offers its button.
+  const UNCOVERED_DIFF = `--- a/${CALC}\n+++ b/${CALC}\n@@ -23,0 +24,6 @@\n+a\n+b\n+c\n+d\n+e\n+f\n`;
+
+  const withPatch = (onAsk: ResultsServerOptions["onAsk"]) => ({
+    resultsFile: results(),
+    coverageFile: cobertura(),
+    coverage: true,
+    gitExec: stubGit(UNCOVERED_DIFF),
+    onAsk,
+  });
+
+  test("the new-code button asks about the change set", async ({ page, makeServer }) => {
+    const asks: AskRequest[] = [];
+    const s = await makeServer(withPatch((req) => {
+      asks.push(req);
+    }));
+    await openCanvas(page, s);
+    await page.getByTestId("tab-coverage").click();
+
+    const button = page.getByTestId("patch-ask");
+    await button.click();
+
+    await expect(button).toHaveText("Asked the agent");
+    expect(asks).toHaveLength(1);
+    expect(asks[0].coverage?.scope).toBe("patch");
+    // A patch ask carries no path -- the scope alone says what to look at.
+    expect(asks[0].coverage?.path).toBeUndefined();
+    // The page sent a scope; the prompt is composed from the server's report.
+    expect(asks[0].prompt).toContain(CALC);
+  });
+
+  test("a file's button asks about that file, naming it to the server", async ({ page, makeServer }) => {
+    const asks: AskRequest[] = [];
+    const s = await makeServer(withPatch((req) => {
+      asks.push(req);
+    }));
+    await openCanvas(page, s);
+    await page.getByTestId("tab-coverage").click();
+    await page.getByTestId("coverage-files").locator(`[data-path="${CALC}"]`).click();
+
+    const button = page.getByTestId("source-view").first().getByTestId("source-ask");
+    await button.click();
+
+    await expect(button).toHaveText("Asked the agent");
+    expect(asks).toHaveLength(1);
+    expect(asks[0].coverage?.scope).toBe("file");
+    expect(asks[0].coverage?.path).toBe(CALC);
+    // 26 is the uncovered line in the fixture, and the server looked it up
+    // rather than taking it from the page.
+    expect(asks[0].prompt).toContain("26");
+  });
+
+  test("a host that cannot deliver leaves the button saying so", async ({ page, makeServer }) => {
+    const s = await makeServer(withPatch(() => {
+      throw new Error("session gone");
+    }));
+    await openCanvas(page, s);
+    await page.getByTestId("tab-coverage").click();
+
+    const button = page.getByTestId("patch-ask");
+    await button.click();
+
+    // The POST arrived and was refused, so the button must not claim success.
+    await expect(button).toHaveText("Could not reach the agent");
+  });
+
+  // The request never lands at all -- a closing panel or a dropped connection.
+  // fetch() rejects rather than returning a response, which is a different path
+  // through the client than a refusal, and just as invisible if it throws.
+  test("a request that never arrives is reported, not thrown", async ({ page, makeServer }) => {
+    const asks: AskRequest[] = [];
+    const s = await makeServer(withPatch((req) => {
+      asks.push(req);
+    }));
+    await openCanvas(page, s);
+    await page.getByTestId("tab-coverage").click();
+    await page.route((url) => url.pathname === "/ask-coverage", (route) => route.abort());
+
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+
+    const button = page.getByTestId("patch-ask");
+    await button.click();
+
+    await expect(button).toHaveText("Could not reach the agent");
+    expect(asks).toHaveLength(0);
+    expect(errors).toEqual([]);
+  });
+});
+
 test.describe("other report formats", () => {
   test("an LCOV report loads and resolves the same sources", async ({ page, makeServer }) => {
     const s = await makeServer(withCoverage(lcov()));
@@ -342,6 +439,29 @@ test.describe("no coverage", () => {
 
     await expect(page.getByTestId("chip-coverage")).toHaveCount(0);
     await expect(page.getByTestId("tab-coverage")).toHaveText("Coverage");
+  });
+
+  // The one ask available before any report exists, so its scope cannot be a
+  // file or a change set -- there is nothing measured to name.
+  test("the empty state's button asks for coverage to be turned on", async ({ page, makeServer }) => {
+    const asks: AskRequest[] = [];
+    const s = await makeServer({
+      resultsFile: lonelyResults,
+      coverage: true,
+      gitExec: null,
+      onAsk: (req) => { asks.push(req); },
+    });
+    await openCanvas(page, s);
+    await page.getByTestId("tab-coverage").click();
+
+    const button = page.getByTestId("coverage-ask-enable");
+    await button.click();
+
+    await expect(button).toHaveText("Asked the agent");
+    expect(asks).toHaveLength(1);
+    expect(asks[0].coverage?.scope).toBe("enable");
+    // The prompt is the command the empty state was already showing.
+    expect(asks[0].prompt).toContain("XPlat Code Coverage");
   });
 });
 
