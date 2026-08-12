@@ -1,0 +1,12 @@
+# Git already stores every text file in this repo with LF endings. Check them
+# out that way on every platform, rather than letting core.autocrlf rewrite them
+# per-machine.
+#
+# This is load-bearing, not tidiness. dist/ is committed and CI re-builds it to
+# check it is current. esbuild inlines the sources it bundled into
+# dist/client/app.js.map and JSON-escapes their newlines, so building from a
+# CRLF working tree bakes literal "\r\n" into that map. Being escaped text
+# rather than real line endings, git's own eol conversion can never normalize
+# it, so a Windows build and a Linux build commit genuinely different bytes and
+# the dist/ freshness check fails for whoever pushed second.
+* text=auto eol=lf
