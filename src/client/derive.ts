@@ -2,8 +2,8 @@
 // view, and the grouped view. Separated from the component so each step can be
 // read -- and exercised -- on its own.
 import type { TestResult, TestStatus } from "../types";
-import type { Row, GroupBy, SortBy } from "./format";
-import { matchesSearch, groupKeyOf, sortView } from "./format";
+import type { Row, GroupBy } from "./format";
+import { searchHaystack, matchesSearch, groupKeyOf } from "./format";
 
 export interface Counts {
   pass: number;
@@ -42,18 +42,36 @@ export function summarize(all: readonly TestResult[]): Summary {
 }
 
 // Rows carry their reconciled key, so filtering and sorting never separate a
-// result from its identity.
-export function buildView(
-  all: readonly TestResult[],
-  keys: readonly string[],
+// result from its identity. Built once per payload and reused by the stages
+// below.
+export function buildRows(all: readonly TestResult[], keys: readonly string[]): Row[] {
+  const rows: Row[] = new Array(all.length);
+  for (let i = 0; i < all.length; i++) rows[i] = { t: all[i], i, k: keys[i] };
+  return rows;
+}
+
+// Search text for each row, built once per payload.
+export function buildHaystacks(all: readonly TestResult[]): string[] {
+  const haystacks: string[] = new Array(all.length);
+  for (let i = 0; i < all.length; i++) haystacks[i] = searchHaystack(all[i]);
+  return haystacks;
+}
+
+// Status chips and the search box, in one pass. `query` must be lowercased.
+export function filterRows(
+  rows: readonly Row[],
+  haystacks: readonly string[],
   filterStatuses: ReadonlySet<TestStatus>,
   query: string,
-  sortBy: SortBy,
 ): Row[] {
-  let view: Row[] = all.map((t, i) => ({ t, i, k: keys[i] }));
-  if (filterStatuses.size) view = view.filter((x) => filterStatuses.has(x.t.status));
-  if (query) view = view.filter((x) => matchesSearch(x.t, query));
-  return sortView(view, sortBy);
+  if (!filterStatuses.size && !query) return rows as Row[];
+  const out: Row[] = [];
+  for (const row of rows) {
+    if (filterStatuses.size && !filterStatuses.has(row.t.status)) continue;
+    if (query && !matchesSearch(haystacks[row.i], query)) continue;
+    out.push(row);
+  }
+  return out;
 }
 
 // Groups in first-seen order, so they follow the sort the user chose.

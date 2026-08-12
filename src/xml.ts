@@ -15,11 +15,38 @@ export function xmlUnescape(s: unknown): string {
 
 // Read one attribute out of a tag's raw attribute text. Accepts both quoting
 // styles: Cobertura writers emit double quotes, but hand-edited and
-// Python-generated reports use single quotes.
+// Python-generated reports use single quotes. That in turn means a quoted value
+// may itself contain an attribute-like substring (name="parses time='5s'
+// syntax"), so searching for the wanted name directly would find that
+// substring. Walk complete name=value pairs left to right instead: consuming
+// each whole quoted value puts the text inside it out of reach.
+//
+// Hand-rolled rather than a regex: every character is visited at most once and
+// never revisited, so a malformed tag carrying a long token with no "=" costs
+// linear time. A regex pairing a greedy name against a following "=" backtracks
+// over that token from every start position, which is quadratic.
 export function attr(attrs: string | undefined, name: string): string | undefined {
-    const m = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`).exec(String(attrs || ""));
-    if (!m) return undefined;
-    return xmlUnescape(m[1] ?? m[2]);
+    const text = String(attrs || "");
+    const isSpace = (c: string) => c === " " || c === "\t" || c === "\n" || c === "\r";
+    let i = 0;
+    while (i < text.length) {
+        while (i < text.length && isSpace(text[i])) i++;
+        const keyStart = i;
+        while (i < text.length && !isSpace(text[i]) && text[i] !== "=") i++;
+        const key = text.slice(keyStart, i);
+        while (i < text.length && isSpace(text[i])) i++;
+        if (text[i] !== "=") continue; // a bare token, not an attribute
+        i++;
+        while (i < text.length && isSpace(text[i])) i++;
+        const quote = text[i];
+        if (quote !== '"' && quote !== "'") continue; // unquoted value: not well-formed
+        const valueStart = ++i;
+        while (i < text.length && text[i] !== quote) i++;
+        const value = text.slice(valueStart, i);
+        i++; // step past the closing quote
+        if (key === name) return xmlUnescape(value);
+    }
+    return undefined;
 }
 
 // Attribute parsed as a finite number, or undefined.

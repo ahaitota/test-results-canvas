@@ -1,0 +1,17 @@
+// Type-check config for the benchmark harness only.
+//
+// Same reasoning as e2e/tsconfig.json: the harness runs browser-context code
+// inside page.evaluate callbacks, so it needs the DOM lib, which the Node-only
+// sources must never see.
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    "verbatimModuleSyntax": false,
+    "noEmit": true
+  },
+  "include": ["**/*.ts"]
+}

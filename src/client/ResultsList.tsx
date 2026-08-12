@@ -1,7 +1,12 @@
-// Results area: the empty states, the flat list, and the grouped list with
-// collapsible group headers.
-import type { Row, GroupBy } from "./format";
+// Results area: the empty states and the windowed list.
+//
+// Only the slice of the list the viewport is over is rendered, with spacers
+// standing in for the rest (see virtual.ts). A group the window opens partway
+// through is rendered headless and marked "continued".
+import type { VNode } from "preact";
+import type { GroupBy } from "./format";
 import type { Counts, Group } from "./derive";
+import type { VItem, VirtualList } from "./virtual";
 import { TestRow } from "./TestRow";
 
 function MiniCounts({ c }: { c: Counts }) {
@@ -14,10 +19,19 @@ function MiniCounts({ c }: { c: Counts }) {
   );
 }
 
+type Ref = (el: HTMLElement | null) => void;
+
+function composeRefs(a: Ref, b: Ref): Ref {
+  return (el) => {
+    a(el);
+    b(el);
+  };
+}
+
 export interface ResultsListProps {
   total: number;
-  view: Row[];
-  groups: Group[];
+  viewCount: number;
+  items: VItem[];
   groupBy: GroupBy;
   collapsedGroups: Set<string>;
   expandedRows: Set<string>;
@@ -25,47 +39,98 @@ export interface ResultsListProps {
   onToggleGroup: (key: string) => void;
   onToggleRow: (key: string) => void;
   onToggleSecondary: (key: string) => void;
-  setRowRef: (i: number) => (el: HTMLElement | null) => void;
+  setRowRef: (i: number) => Ref;
+  virtual: VirtualList;
 }
 
 export function ResultsList(props: ResultsListProps) {
-  const { total, view, groups, groupBy, collapsedGroups, expandedRows, expandedSecondary } = props;
+  const { total, viewCount, items, groupBy, expandedRows, expandedSecondary, virtual } = props;
+  const { start, end, padTop, padBottom } = virtual;
 
-  const renderRow = (x: Row) => (
+  const renderRow = (item: VItem & { kind: "row" }, index: number) => (
     <TestRow
-      key={x.k}
-      t={x.t}
-      index={x.i}
-      expanded={expandedRows.has(x.k)}
-      secondaryOpen={expandedSecondary.has(x.k)}
-      onToggle={() => props.onToggleRow(x.k)}
-      onToggleMore={() => props.onToggleSecondary(x.k)}
-      innerRef={props.setRowRef(x.i)}
+      key={item.key}
+      t={item.row.t}
+      index={item.row.i}
+      expanded={expandedRows.has(item.row.k)}
+      secondaryOpen={expandedSecondary.has(item.row.k)}
+      onToggle={() => props.onToggleRow(item.row.k)}
+      onToggleMore={() => props.onToggleSecondary(item.row.k)}
+      innerRef={composeRefs(virtual.itemRef(index), props.setRowRef(item.row.i))}
     />
   );
+
+  const renderWindow = () => {
+    const out: VNode[] = [];
+    if (padTop > 0) out.push(<div class="vspace" key="pad-top" aria-hidden="true" style={"height:" + padTop + "px"} />);
+
+    if (groupBy === "none") {
+      for (let i = start; i < end; i++) {
+        const item = items[i];
+        if (item.kind === "row") out.push(renderRow(item, i));
+      }
+    } else {
+      // One container per group the window touches, built as we walk.
+      let openKey: string | null = null;
+      let openHead: Group | null = null;
+      let openHeadIndex = -1;
+      let body: VNode[] = [];
+
+      const flush = () => {
+        if (openKey === null) return;
+        const key = openKey;
+        const head = openHead;
+        const headIndex = openHeadIndex;
+        const collapsed = props.collapsedGroups.has(key);
+        out.push(
+          <div class={"group" + (head ? "" : " continued")} data-testid="group" key={"g\u001f" + key}>
+            {head && (
+              <div class="group-head" data-testid="group-header" ref={virtual.itemRef(headIndex)} onClick={() => props.onToggleGroup(key)}>
+                <button class="toggle" type="button" aria-expanded={collapsed ? "false" : "true"} aria-label="Toggle group">{"\u25B6"}</button>
+                <span class="group-name" title={key}>{key}</span>
+                <span class="group-counts"><MiniCounts c={head.counts} /></span>
+              </div>
+            )}
+            <div class={"group-body" + (collapsed ? " collapsed" : "")} data-testid="group-body">{body}</div>
+          </div>,
+        );
+        openKey = null;
+        openHead = null;
+        openHeadIndex = -1;
+        body = [];
+      };
+
+      for (let i = start; i < end; i++) {
+        const item = items[i];
+        if (item.kind === "head") {
+          flush();
+          openKey = item.group.key;
+          openHead = item.group;
+          openHeadIndex = i;
+        } else {
+          // A row whose header is above the window opens a headless container.
+          if (openKey !== item.groupKey) {
+            flush();
+            openKey = item.groupKey;
+          }
+          body.push(renderRow(item, i));
+        }
+      }
+      flush();
+    }
+
+    if (padBottom > 0) out.push(<div class="vspace" key="pad-bottom" aria-hidden="true" style={"height:" + padBottom + "px"} />);
+    return out;
+  };
 
   let content;
   if (total === 0) {
     content = <p class="empty" data-testid="empty">No test results yet. Ask the agent to run tests and report the results!</p>;
-  } else if (view.length === 0) {
+  } else if (viewCount === 0) {
     content = <p class="empty" data-testid="empty">No tests match the current filter or search.</p>;
-  } else if (groupBy === "none") {
-    content = view.map(renderRow);
   } else {
-    content = groups.map((g) => {
-      const collapsed = collapsedGroups.has(g.key);
-      return (
-        <div class="group" data-testid="group" key={g.key}>
-          <div class="group-head" data-testid="group-header" onClick={() => props.onToggleGroup(g.key)}>
-            <button class="toggle" type="button" aria-expanded={collapsed ? "false" : "true"} aria-label="Toggle group">{"\u25B6"}</button>
-            <span class="group-name" title={g.key}>{g.key}</span>
-            <span class="group-counts"><MiniCounts c={g.counts} /></span>
-          </div>
-          <div class={"group-body" + (collapsed ? " collapsed" : "")} data-testid="group-body">{g.items.map(renderRow)}</div>
-        </div>
-      );
-    });
+    content = renderWindow();
   }
 
-  return <div id="list" data-testid="list">{content}</div>;
+  return <div id="list" data-testid="list" ref={virtual.containerRef}>{content}</div>;
 }

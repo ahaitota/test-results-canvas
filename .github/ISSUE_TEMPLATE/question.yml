@@ -1,0 +1,42 @@
+name: Question or other
+description: Ask a question, request help, or raise something that is not a bug or feature request.
+labels: [question]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for anything that does not fit the bug or feature templates —
+        usage questions, setup help, or general feedback.
+
+        If this is a **security** issue, please use
+        [private vulnerability reporting](https://github.com/ahaitota/test-results-canvas/security/advisories/new)
+        instead of a public issue.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: What would you like to know?
+      description: >
+        Describe your question or the situation you need help with. If you have
+        already tried something, say what and what happened.
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: >
+        Anything that helps us answer — your operating system, Node version,
+        the test framework you use, or the relevant part of a `.trx` / JUnit
+        `.xml` report. Please scrub anything sensitive.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I checked the README and CONTRIBUTING guide.
+          required: true
+        - label: I searched existing issues for an answer.
+          required: true

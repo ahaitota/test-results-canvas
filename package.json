@@ -11,6 +11,7 @@
     "typecheck": "tsc -p tsconfig.json",
     "typecheck:client": "tsc -p src/client/tsconfig.json",
     "typecheck:e2e": "tsc -p e2e/tsconfig.json",
+    "typecheck:bench": "tsc -p bench/tsconfig.json",
     "typecheck:sdk": "node --import tsx scripts/typecheck-sdk.ts",
     "lint": "eslint .",
     "test": "node --import tsx --test test/labels.test.ts test/trx.test.ts test/junit.test.ts test/validate.test.ts test/rowkey.test.ts test/ask.test.ts test/coverage-parsers.test.ts test/coverage-patch.test.ts test/coverage-discover.test.ts test/coverage-derive.test.ts test/coverage-executable.test.ts test/coverage-merge.test.ts",
@@ -20,7 +21,10 @@
     "test:e2e:coverage": "npm run build && node --import tsx scripts/e2e-coverage.ts",
     "coverage": "npm run test:coverage && npm run test:e2e:coverage && npm run coverage:report",
     "coverage:report": "node --import tsx scripts/coverage-report.ts",
-    "test:coverage": "node -e \"require('node:fs').mkdirSync('test-results',{recursive:true})\" && node --import tsx --enable-source-maps --test --experimental-test-coverage --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=test-results/unit-junit.xml --test-reporter=lcov --test-reporter-destination=test-results/lcov.info test/labels.test.ts test/trx.test.ts test/junit.test.ts test/validate.test.ts test/rowkey.test.ts test/ask.test.ts test/coverage-parsers.test.ts test/coverage-patch.test.ts test/coverage-discover.test.ts test/coverage-derive.test.ts test/coverage-executable.test.ts test/coverage-merge.test.ts"
+    "test:coverage": "node -e \"require('node:fs').mkdirSync('test-results',{recursive:true})\" && node --import tsx --enable-source-maps --test --experimental-test-coverage --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=test-results/unit-junit.xml --test-reporter=lcov --test-reporter-destination=test-results/lcov.info test/labels.test.ts test/trx.test.ts test/junit.test.ts test/validate.test.ts test/rowkey.test.ts test/ask.test.ts test/coverage-parsers.test.ts test/coverage-patch.test.ts test/coverage-discover.test.ts test/coverage-derive.test.ts test/coverage-executable.test.ts test/coverage-merge.test.ts",
+    "bench": "playwright test --config=bench/playwright.bench.config.ts",
+    "prebench": "npm run build",
+    "bench:fixtures": "node --import tsx bench/gen-fixtures.ts"
   },
   "engines": {
     "node": "^20.19.0 || >=22.12.0"

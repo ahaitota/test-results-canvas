@@ -2,11 +2,13 @@
 // expansion) and wires the live results stream to the header, toolbar and list.
 // Everything else lives in its own module; see derive.ts for the computations.
 // Behaviour-frozen against the e2e suite (data-testids unchanged).
-import { useEffect, useState } from "preact/hooks";
+import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
 import type { TestStatus } from "../types";
 import type { GroupBy, SortBy } from "./format";
+import { sortView } from "./format";
 import { pruneKeys } from "../rowkey.js";
-import { summarize, buildView, buildGroups, domOrder } from "./derive";
+import { summarize, buildRows, buildHaystacks, filterRows, buildGroups, domOrder } from "./derive";
+import { buildItems, useVirtualList } from "./virtual";
 import { useResultsStream } from "./useResultsStream";
 import { useJumpToFailure } from "./useJumpToFailure";
 import { FilePicker, Banner, Summary } from "./Summary";
@@ -49,20 +51,43 @@ export function App() {
     next.delete(key);
     return next;
   });
-  const jumper = useJumpToFailure(collapsedGroups, expandGroup);
 
+  // Memoized stage by stage, so a change only redoes the stages below it.
   const all = state.results || [];
-  const counts = summarize(all);
-  const view = buildView(all, state.keys, filterStatuses, searchText.trim().toLowerCase(), sortBy);
-  const groups = buildGroups(view, groupBy);
+  const counts = useMemo(() => summarize(all), [all]);
+  const haystacks = useMemo(() => buildHaystacks(all), [all]);
+  const rows = useMemo(() => buildRows(all, state.keys), [all, state.keys]);
+  const query = searchText.trim().toLowerCase();
+  const filtered = useMemo(
+    () => filterRows(rows, haystacks, filterStatuses, query),
+    [rows, haystacks, filterStatuses, query],
+  );
+  const view = useMemo(() => sortView(filtered, sortBy), [filtered, sortBy]);
+  const groups = useMemo(() => buildGroups(view, groupBy), [view, groupBy]);
+  const { items, rowItemIndex } = useMemo(
+    () => buildItems(view, groups, groupBy, collapsedGroups),
+    [view, groups, groupBy, collapsedGroups],
+  );
 
   // Jumping walks rows in the order they appear on screen, not payload order.
-  const rowGroup = new Map<number, string>();
-  for (const g of groups) {
-    for (const x of g.items) rowGroup.set(x.i, g.key);
-  }
-  const failing = domOrder(view, groups, groupBy).filter((x) => x.t.status === "fail").map((x) => x.i);
-  jumper.setNavigationOrder(failing, rowGroup);
+  const navigation = useMemo(() => {
+    const rowGroup = new Map<number, string>();
+    for (const g of groups) {
+      for (const x of g.items) rowGroup.set(x.i, g.key);
+    }
+    const failing = domOrder(view, groups, groupBy).filter((x) => x.t.status === "fail").map((x) => x.i);
+    return { failing, rowGroup };
+  }, [view, groups, groupBy]);
+
+  const virtual = useVirtualList(items, expandedRows);
+  const { scrollToIndex } = virtual;
+  const revealRow = useCallback((payloadIndex: number) => {
+    const itemIndex = rowItemIndex.get(payloadIndex);
+    if (itemIndex !== undefined) scrollToIndex(itemIndex);
+  }, [rowItemIndex, scrollToIndex]);
+
+  const jumper = useJumpToFailure(collapsedGroups, expandGroup, revealRow);
+  jumper.setNavigationOrder(navigation.failing, navigation.rowGroup);
 
   // The jump cursor restarts whenever the failing set could have changed.
   useEffect(() => {
@@ -117,8 +142,8 @@ export function App() {
             />
             <ResultsList
               total={all.length}
-              view={view}
-              groups={groups}
+              viewCount={view.length}
+              items={items}
               groupBy={groupBy}
               collapsedGroups={collapsedGroups}
               expandedRows={expandedRows}
@@ -127,6 +152,7 @@ export function App() {
               onToggleRow={(k) => toggleIn(setExpandedRows, k)}
               onToggleSecondary={(k) => toggleIn(setExpandedSecondary, k)}
               setRowRef={jumper.setRowRef}
+              virtual={virtual}
             />
           </>
         )}

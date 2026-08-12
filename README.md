@@ -174,13 +174,22 @@ extension.mjs            discovery entry point — the Copilot app scans for thi
                          line: it imports dist/extension.js. Never edit.
 extension.ts             the real entry point source (compiled to dist/extension.js)
 src/
-  view.ts                panel HTML shell + all CSS
+  view.ts                HTML shell + CSS served to the panel (no result rendering)
   server.ts              SDK-free HTTP/SSE server, file loading + watching
   ask.ts                 server-side composition of the "ask agent" prompts
   validate.ts            narrows untrusted agent input at the action/open boundary
   labels.ts              file-picker label disambiguation
   rowkey.ts              stable row identity across live payloads
   types.ts               shared TestResult / TestStatus types
+  client/                Preact UI bundled to dist/client/app.js by esbuild
+    main.tsx             client entry point
+    App.tsx              root component, wires up state and the results stream
+    Toolbar.tsx          filter/search controls
+    Summary.tsx          pass/fail/skip totals
+    ResultsList.tsx      the list of results (renders only the visible window)
+    TestRow.tsx          one result row, including failure detail
+    virtual.ts           windowing: flattens the list and tracks row heights
+    useResultsStream.ts  SSE subscription that drives live refresh
   parsers/
     trx.ts               .NET TRX parser
     junit.ts             JUnit XML parser
@@ -230,6 +239,7 @@ coverage-sample/         fixture sources the coverage reports point at. They are
                          project. Outside e2e/ on purpose: anything under a test
                          folder is classified as test code and excluded from
                          ranking.
+bench/                   rendering benchmark over generated runs of 100-50,000 tests
 scripts/
   typecheck-sdk.ts       checks the pinned SDK against the installed app's copy
   wrap-junit.ts          adds the <testsuite> wrapper node:test omits
@@ -239,7 +249,7 @@ scripts/
 dist/                    compiled JS + .d.ts (committed; regenerate with `npm run build`)
 tsconfig.json            type-check config (noEmit)
 tsconfig.build.json      build config (emits dist/)
-.github/workflows/ci.yml CI: typecheck + build + `node --test` (Node 20 & 22) + e2e
+.github/workflows/ci.yml CI: typecheck + build + `node --test` (Node 20 & 22) + e2e + bench
 ```
 
 ## Development
@@ -254,7 +264,28 @@ npm run test:e2e     # build + run Playwright e2e tests
 npm run test:coverage # unit tests + JUnit + LCOV in test-results/, to dogfood the coverage tab
 npm run coverage     # the above plus browser + server coverage from the e2e run,
                      # merged into test-results/lcov-merged.info
+npm run bench        # build + measure rendering against the perf budgets
 ```
+
+### Rendering benchmark
+
+`npm run bench` generates synthetic runs, opens them in a real browser and
+measures first render, keystroke latency, sorting, filtering, grouping and
+scroll pacing against per-scale budgets. It runs 1,000 and 10,000 tests by
+default:
+
+```bash
+npm run bench                                  # 1,000 and 10,000 tests
+BENCH_SCALES=100,1000,10000,50000 npm run bench # every scale
+BENCH_SAMPLES=9 npm run bench                   # more samples per measurement
+```
+
+Fixtures are generated into `bench/fixtures/` (gitignored) and reused. The list
+renders only the rows the viewport is over, so the DOM stays at roughly 150
+nodes whether the run has 100 tests or 50,000; the benchmark asserts that too,
+which is what stops a change from quietly reintroducing a full rebuild.
+
+### Coverage
 
 To see the coverage tab against this project's own code, run `npm run
 test:coverage` and open the canvas on `test-results/unit-junit.xml`; the LCOV
@@ -299,7 +330,8 @@ and Playwright resolve them to the `.ts` sources. After changing any source, run
 > attacker-controlled. The client renders them as Preact text nodes and
 > attributes, which escape on the way in, so the rule is simply: never reach for
 > `dangerouslySetInnerHTML` (or `v-html`, or `{@html}`) to display any of it —
-> that reintroduces exactly this bug. `e2e/xss.spec.ts` and
+> that reintroduces exactly this bug. Neither that nor direct `innerHTML`
+> assignment appears in the codebase today. `e2e/xss.spec.ts` and
 > `e2e/coverage-xss.spec.ts` render hostile fixtures and assert that no `on*`
 > attribute and no injected element reaches the DOM. Keep them passing.
 
@@ -322,4 +354,17 @@ re-checks the project against the SDK inside your installed Copilot app and
 fails if the pinned version no longer agrees with it. Run it before opening a PR
 that touches SDK-facing code; on a machine without the app it prints a notice
 and exits 0, so it is safe to run anywhere.
+
+## Contributing
+
+Bug reports, feature ideas and pull requests are welcome — see
+[CONTRIBUTING.md](CONTRIBUTING.md) for setup, the checks to run before opening a
+PR, and the two invariants that break the extension silently. Participation is
+governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+Found a security issue? Please report it privately — see [SECURITY.md](SECURITY.md).
+
+## License
+
+[MIT](LICENSE) © Alina Haitota
 
