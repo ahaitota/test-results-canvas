@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Three cases, each named after a different subject, so a spec can change one
+     source file and expect exactly one row to be tagged. -->
+<testsuites>
+  <testsuite name="unit" tests="3" failures="0">
+    <testcase name="adds" classname="calc" time="0.010" file="src/calc.test.ts"/>
+    <testcase name="renders" classname="view" time="0.020" file="src/view.test.ts"/>
+    <testcase name="logs in" classname="auth" time="0.030" file="src/auth.test.ts"/>
+  </testsuite>
+</testsuites>

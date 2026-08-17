@@ -86,6 +86,19 @@ test("parseJUnit returns an empty array for empty input", () => {
   assert.deepEqual(parseJUnit(""), []);
 });
 
+// The `file` attribute is the one place a report says outright which source
+// file a test lives in -- diff mode uses it to match a test against the diff.
+test("parseJUnit captures the file attribute when a runner emits one", () => {
+  const xml =
+    `<testsuite name="s">` +
+    `<testcase name="a" classname="Calc" file="src/calc.test.ts"/>` +
+    `<testcase name="b" classname="Calc"/>` +
+    `</testsuite>`;
+  const rows = byName(parseJUnit(xml));
+  assert.equal(rows.a.file, "src/calc.test.ts");
+  assert.equal(rows.b.file, undefined);
+});
+
 // --- Nested <testsuite> handling (issue #2) ------------------------------
 
 // The exact reproduction from the issue: an inner suite followed by a sibling

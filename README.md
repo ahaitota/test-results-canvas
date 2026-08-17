@@ -17,6 +17,45 @@ Once installed, you don't have to do anything special. In **any** project:
 Supported report formats: `.trx` (VSTest/`dotnet test --logger trx`) and JUnit
 `.xml` (Maven Surefire, Gradle, pytest, jest-junit, etc.).
 
+## Diff mode
+
+A run of 4,000 tests answers *"is the suite green?"*. It does not answer the
+question you actually have mid-change: *"which of these has anything to do with
+what I just wrote?"* Diff mode answers that one. When the results sit inside a
+git repository, a strip above the list reports what changed and tags the rows
+that matter, strongest signal first:
+
+| Tag | What it means | How it is known |
+| --- | --- | --- |
+| `NEW` | The test wasn't in the previous run, or lives in a file git has never seen | Certain |
+| `MODIFIED` | You edited the file this test lives in | Certain |
+| `MAYBE` | You edited code this test is *probably* about | A naming convention |
+
+The first two are facts. The third is a guess, and says so. No report format
+records which code a test exercised — TRX names a DLL, JUnit names a class, and
+coverage reports total hits per file without attributing them to any one test.
+What every ecosystem does share is a naming habit: `Calc.cs` ↔ `CalcTests`,
+`calc.ts` ↔ `calc.test.ts`, `calc.py` ↔ `test_calc.py`. Diff mode reads that
+habit, so it labels those rows *maybe* rather than pretending to certainty.
+
+Where the convention runs out, the agent can be asked instead. **Ask agent which
+tests this affects** hands it the changed files; it reads them, works out which
+tests actually cover that code, and reports back through the
+`set_impacted_tests` action. Those rows are tagged too, with a dashed border to
+show the reasoning was the model's rather than git's. The agent only fills gaps —
+it never overrules a `NEW` or `MODIFIED` tag, which are facts about your diff.
+
+**Relevant only** narrows the list to the tagged rows, and composes with the
+status chips and the search box. The per-row `NEW` / `MODIFIED` / `MAYBE` badges
+appear in that narrowed view, where they explain why each row survived the
+filter; across the full run they would be noise. The strip stays out of the way
+entirely outside a git repository, or when nothing has changed.
+
+The comparison is the same one the coverage tab uses: uncommitted work against
+`HEAD`, or the branch against its merge-base when the tree is clean. One
+difference — coverage ignores a tree holding only test edits, since a changed
+test adds no line to cover, while diff mode treats it as the whole point.
+
 ## Coverage
 
 A results file records *which tests ran*, never *which code they exercised* —
@@ -210,6 +249,9 @@ src/
     suggest.ts           the coverage command for the detected ecosystem
     source.ts            allow-listed source reads behind /source
     load.ts              loads + derives one report end to end
+  diff/                  diff mode: which tests the current change makes relevant
+    payload.ts           the SSE wire contract, shared with the client (host-free)
+    relevance.ts         the tagging rules: new / modified / maybe impacted
   client/                Preact app, bundled by esbuild to dist/client/app.js
     App.tsx              cross-cutting state; Tests / Coverage branch
     ViewTabs.tsx         the Tests | Coverage switcher
@@ -217,6 +259,7 @@ src/
     SourceView.tsx       gutter-annotated source for one file
     CoverageEmpty.tsx    the no-coverage state and its ask-agent button
     coverageDerive.ts    merges report + patch + hotspots into one row per file
+    DiffBar.tsx          the diff-mode strip: scope, counts, "relevant only"
     (Summary, Toolbar, ResultsList, TestRow, derive, ...)  the results view
 test/
   trx.test.ts            unit tests for the TRX parser
@@ -229,6 +272,7 @@ test/
   coverage-patch.test.ts     diff parsing, patch intersection, ranking, /source
   coverage-discover.test.ts  discovery, path resolution, project roots
   coverage-merge.test.ts     merging the unit, browser and server LCOV reports
+  diff-relevance.test.ts     diff mode: the tagging rules and the agent matcher
 e2e/                     Playwright browser tests (load the compiled dist server)
   coverage-collect.ts    picks the client bundle out of the browser's V8 coverage
 coverage-sample/         fixture sources the coverage reports point at. They are

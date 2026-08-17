@@ -11,7 +11,7 @@
 import { execFileSync } from "node:child_process";
 import { resolve as resolvePath } from "node:path";
 import { normalizeSlashes } from "./sources.js";
-import { isProductionSource } from "./classify.js";
+import { isProductionSource, isTestPath } from "./classify.js";
 const GIT_TIMEOUT_MS = 5000;
 const MAX_BUFFER = 16 * 1024 * 1024;
 function createGitExec(root) {
@@ -159,7 +159,8 @@ export function changedLines(root, options = {}) {
     const workingFiles = [...files, ...toFileChanges(base, workingChanges, false)];
     // Only let the working tree win when it actually holds code: editing a
     // README beside committed work made the New code section disappear mid-edit.
-    if (workingFiles.some((f) => isProductionSource(f.path))) {
+    const holdsCode = (f) => isProductionSource(f.path) || (options.includeTests === true && isTestPath(f.path));
+    if (workingFiles.some(holdsCode)) {
         return { root: base, against: "uncommitted changes", files: workingFiles };
     }
     // Clean tree: compare the branch against where it forked from.

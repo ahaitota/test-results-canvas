@@ -63,7 +63,10 @@ export const test = base.extend<{ makeServer: MakeServer }>({
       // results file, and e2e/fixtures/coverage/ holds several -- so leaving it
       // on would silently attach a coverage report to every unrelated spec (and
       // shell out to git on each one). Coverage specs pass `coverage: true`.
-      const s = await createResultsServer({ port: 0, watch: false, coverage: false, ...opts });
+      // git is off for the same reason: these specs run inside this repository,
+      // so a live `git diff` would let the developer's working tree decide what
+      // diff mode tags. Specs that want it pass their own `gitExec` stub.
+      const s = await createResultsServer({ port: 0, watch: false, coverage: false, gitExec: null, ...opts });
       started.push(s);
       return s;
     });

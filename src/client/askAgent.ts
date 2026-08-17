@@ -35,3 +35,19 @@ export async function askAgentCoverage(scope: CoverageAskScope, path?: string): 
     return false;
   }
 }
+
+// Diff mode: "which tests does this change affect?". The page sends no
+// argument at all -- the server has the diff -- so this is the narrowest of
+// the three.
+export async function askAgentImpact(): Promise<boolean> {
+  try {
+    const res = await fetch("/ask-impact", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${ASK_TOKEN}` },
+      body: "{}",
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}

@@ -7,6 +7,7 @@ export interface TestResult {
     className?: string;
     method?: string;
     suite?: string;
+    file?: string;
     framework?: string;
     adapter?: string;
     storage?: string;

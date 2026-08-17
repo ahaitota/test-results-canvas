@@ -162,6 +162,48 @@ test("changedLines still prefers the working tree when one source file is in it"
   assert.equal(result.against, "uncommitted changes");
 });
 
+// Diff mode reuses changedLines() but wants the opposite answer for a tree that
+// holds only tests, so the widening is an explicit opt-in.
+test("changedLines keeps a test-only working tree when includeTests is set", () => {
+  const git: GitExec = (args) => {
+    if (args[0] === "rev-parse" && args[1] === "--is-inside-work-tree") return "true\n";
+    if (args[0] === "ls-files") return "";
+    if (args[0] === "diff" && args[args.length - 1] === "HEAD") {
+      return "--- a/test/calc.test.ts\n+++ b/test/calc.test.ts\n@@ -1,0 +2 @@\n+assert\n";
+    }
+    if (args[0] === "symbolic-ref") return "origin/main\n";
+    if (args[0] === "merge-base") return "abc123\n";
+    if (args[0] === "diff") return "--- a/src/x.ts\n+++ b/src/x.ts\n@@ -0,0 +7 @@\n+n\n";
+    return null;
+  };
+
+  // Coverage's reading: an edited test adds no line to cover, so the branch wins.
+  const forCoverage = changedLines("/repo", { exec: git });
+  assert.equal(forCoverage?.against, "this branch vs origin/main");
+
+  // Diff mode's reading: the edited test is precisely what the user is on.
+  const forDiff = changedLines("/repo", { exec: git, includeTests: true });
+  assert.equal(forDiff?.against, "uncommitted changes");
+  assert.deepEqual(forDiff?.files.map((f) => f.path), ["test/calc.test.ts"]);
+});
+
+test("includeTests does not rescue a tree holding only docs", () => {
+  // Widening covers tests, not everything: a README on its own still falls
+  // through to the branch comparison.
+  const git: GitExec = (args) => {
+    if (args[0] === "rev-parse" && args[1] === "--is-inside-work-tree") return "true\n";
+    if (args[0] === "ls-files") return "";
+    if (args[0] === "diff" && args[args.length - 1] === "HEAD") {
+      return "--- a/README.md\n+++ b/README.md\n@@ -1,0 +2 @@\n+docs\n";
+    }
+    if (args[0] === "symbolic-ref") return "origin/main\n";
+    if (args[0] === "merge-base") return "abc123\n";
+    if (args[0] === "diff") return "--- a/src/x.ts\n+++ b/src/x.ts\n@@ -0,0 +7 @@\n+n\n";
+    return null;
+  };
+  assert.equal(changedLines("/repo", { exec: git, includeTests: true })?.against, "this branch vs origin/main");
+});
+
 test("changedLines resolves paths against git's own top level, not the folder it was given", () => {
   // Called with a monorepo package directory, git still reports repo-relative
   // paths; resolving them against the package would fabricate paths that match

@@ -16,11 +16,12 @@ import type { Dirent } from "node:fs";
 import { joinSession, createCanvas } from "@github/copilot-sdk/extension";
 import { createResultsServer, looksLikeResults, RESULT_EXTS } from "./src/server.js";
 import type { ResultsServerHandle, ResultInput } from "./src/server.js";
+import type { AgentTestRef } from "./src/diff/relevance.js";
 import { discoverCoverageFor } from "./src/coverage/discover.js";
 import { findProjectRoot } from "./src/coverage/sources.js";
 import { suggestCoverageCommand } from "./src/coverage/suggest.js";
 // Action/open input reaches handlers typed as `unknown`; narrow it here first.
-import { asResultInput, asOpenInput } from "./src/validate.js";
+import { asResultInput, asOpenInput, asAgentTestRef } from "./src/validate.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const VIEW_PATH = join(__dirname, "src", "view.js");
@@ -176,6 +177,8 @@ joined.session = await joinSession({
                 "Shows pass/fail/skip status, per-test duration, failure messages, a summary, and " +
                 "a coverage view with which lines are covered, how much of the newly changed code " +
                 "is tested, and the uncovered code most worth testing. " +
+                "It also has a diff mode that flags which tests in the run are new, which the " +
+                "change modified, and which it may have impacted. " +
                 "Actions can also report individual results, load a full batch, or clear them.",
             inputSchema: {
                 type: "object",
@@ -302,6 +305,60 @@ joined.session = await joinSession({
                                 skipped: results.filter((t) => t.status === "skip").length,
                             },
                         };
+                    },
+                },
+                {
+                    name: "set_impacted_tests",
+                    description:
+                        "Mark the tests a code change may affect. Use this to answer the canvas's " +
+                        "\"which tests are impacted?\" request: read the changed files, decide which " +
+                        "existing tests exercise that code, and report them here. The canvas already " +
+                        "tags new and modified tests on its own — add the ones only reading the code " +
+                        "reveals. Names must match the test names in the current run.",
+                    inputSchema: {
+                        type: "object",
+                        properties: {
+                            tests: {
+                                type: "array",
+                                description: "The tests the change may affect",
+                                items: {
+                                    type: "object",
+                                    properties: {
+                                        name: { type: "string", description: "The test name, as it appears in the run" },
+                                        className: { type: "string", description: "Its class or suite, if two tests share a name" },
+                                        reason: { type: "string", description: "One short line on why this test is affected" },
+                                    },
+                                    required: ["name"],
+                                },
+                            },
+                        },
+                        required: ["tests"],
+                    },
+                    handler: async (ctx) => {
+                        const handle = servers.get(ctx.instanceId);
+                        if (!handle) return { success: false, error: "canvas not open" };
+                        const raw = ctx.input?.tests;
+                        if (!Array.isArray(raw)) {
+                            return { success: false, error: "invalid input: 'tests' must be an array of test references" };
+                        }
+                        const refs = raw.map(asAgentTestRef).filter((r): r is AgentTestRef => r !== null);
+                        const { matched, unmatched } = handle.markImpacted(refs);
+                        // Naming the misses matters: a wrong name is silent otherwise,
+                        // and the agent can retry with what the run actually calls it.
+                        return unmatched.length > 0
+                            ? { success: true, matched, unmatched, warning: `${unmatched.length} name(s) matched no test in the current run` }
+                            : { success: true, matched };
+                    },
+                },
+                {
+                    name: "clear_impacted_tests",
+                    description: "Remove the impact assessment previously reported with set_impacted_tests",
+                    inputSchema: { type: "object", properties: {} },
+                    handler: async (ctx) => {
+                        const handle = servers.get(ctx.instanceId);
+                        if (!handle) return { success: false, error: "canvas not open" };
+                        handle.clearImpacted();
+                        return { success: true, message: "Impact assessment cleared" };
                     },
                 },
             ],

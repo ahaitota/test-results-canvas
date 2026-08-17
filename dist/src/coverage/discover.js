@@ -6,8 +6,9 @@
 // vitest/jest/c8, target/site/jacoco/jacoco.xml for maven, coverage.xml for
 // coverage.py. Bounded the same way the results scan is.
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
-import { dirname, join, resolve as resolvePath } from "node:path";
+import { dirname, join, relative, resolve as resolvePath } from "node:path";
 import { hasCoverageExt, looksLikeCoverage, nameScore } from "./detect.js";
+import { isTestPath } from "./classify.js";
 const IGNORE_DIRS = new Set([
     "node_modules", ".git", ".hg", ".svn", ".vs", ".idea", ".venv", "venv",
     "packages", ".nuget", ".gradle", ".next", ".nuxt", "__pycache__",
@@ -149,8 +150,10 @@ export function discoverCoverageFor(resultsFile, projectRoot) {
             if (hit)
                 return hit;
         }
-        // 3. Last resort: a bounded walk of the project.
-        return pickBest(findCoverageFiles(projectRoot));
+        // 3. Last resort: a bounded walk of the project. Reports under a test
+        //    folder are fixtures, not this run's output.
+        const walked = findCoverageFiles(projectRoot).filter((c) => !isTestPath(relative(projectRoot, c.path)));
+        return pickBest(walked);
     }
     return null;
 }

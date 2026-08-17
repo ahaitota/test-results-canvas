@@ -219,6 +219,28 @@ export function renderShell(title: string, askToken = ""): string {
   .ask-btn.ask-sent { color: var(--fgColor-success); border-color: var(--fgColor-success); }
   .ask-btn.ask-error { color: var(--fgColor-danger); border-color: var(--fgColor-danger); }
 
+  /* --- Diff mode --- */
+  .diffbar { display:flex; flex-direction:column; gap:8px; margin:12px 0 0;
+             padding:10px 12px; border:1px solid var(--borderColor-default);
+             border-radius:8px; background:var(--bgColor-muted); }
+  .diffbar-row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .diff-lead { font-size:13px; font-weight:600; margin-right:auto; }
+  .diff-scope { font-size:12px; color:var(--fgColor-muted);
+                overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .diff-none { font-size:12px; color:var(--fgColor-muted); }
+  .diff-toggle { cursor:pointer; user-select:none; }
+  .diff-toggle input { accent-color:var(--fgColor-accent); cursor:pointer; }
+  .diff-toggle input:disabled { cursor:default; }
+  /* Relevance badges. Deliberately quieter than the status label: they say why
+     a row is worth a look, not whether it passed. */
+  .rel { font-size:10px; font-weight:700; letter-spacing:.04em; padding:1px 6px;
+         border-radius:999px; border:1px solid currentColor; flex-shrink:0; }
+  .rel-new { color:var(--fgColor-success); background:var(--bgColor-success-muted); }
+  .rel-modified { color:var(--fgColor-accent); background:var(--bgColor-accent-muted); }
+  .rel-impacted { color:var(--fgColor-attention); background:var(--bgColor-attention-muted); }
+  /* The agent's reading of the diff rather than a fact about it. */
+  .rel-agent { border-style:dashed; }
+
   /* --- Coverage --- */
   .pill-coverage { background:var(--bgColor-accent-muted); color:var(--fgColor-accent); cursor:pointer; }
   .pill-coverage:hover { border-color:var(--fgColor-accent); }

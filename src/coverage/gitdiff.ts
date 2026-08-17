@@ -12,7 +12,7 @@
 import { execFileSync } from "node:child_process";
 import { resolve as resolvePath } from "node:path";
 import { normalizeSlashes } from "./sources.js";
-import { isProductionSource } from "./classify.js";
+import { isProductionSource, isTestPath } from "./classify.js";
 
 // Injected so tests can drive the parser with canned git output.
 export type GitExec = (args: string[]) => string | null;
@@ -154,6 +154,10 @@ function toFileChanges(root: string, byPath: Map<string, Set<number>>, all: bool
 export interface DiffOptions {
     // Override for tests; defaults to a real git in `root`.
     exec?: GitExec;
+    // Whether an edited test file, on its own, counts as the change set.
+    // Coverage says no -- a changed test adds no production line to cover.
+    // Diff mode says yes: an edited test is exactly what it points at.
+    includeTests?: boolean;
 }
 
 // Changed lines for the project at `root`, or null when this is not a git
@@ -183,7 +187,9 @@ export function changedLines(root: string, options: DiffOptions = {}): DiffResul
     const workingFiles = [...files, ...toFileChanges(base, workingChanges, false)];
     // Only let the working tree win when it actually holds code: editing a
     // README beside committed work made the New code section disappear mid-edit.
-    if (workingFiles.some((f) => isProductionSource(f.path))) {
+    const holdsCode = (f: FileChanges) =>
+        isProductionSource(f.path) || (options.includeTests === true && isTestPath(f.path));
+    if (workingFiles.some(holdsCode)) {
         return { root: base, against: "uncommitted changes", files: workingFiles };
     }
 

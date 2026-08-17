@@ -2,6 +2,7 @@
 // view, and the grouped view. Separated from the component so each step can be
 // read -- and exercised -- on its own.
 import type { TestResult, TestStatus } from "../types";
+import type { RelevanceTags } from "../diff/payload";
 import type { Row, GroupBy } from "./format";
 import { searchHaystack, matchesSearch, groupKeyOf } from "./format";
 
@@ -57,18 +58,22 @@ export function buildHaystacks(all: readonly TestResult[]): string[] {
   return haystacks;
 }
 
-// Status chips and the search box, in one pass. `query` must be lowercased.
+// Status chips, the search box, and -- when it is on -- diff mode's "relevant
+// only", in one pass. `query` must be lowercased. `relevant` is null unless the
+// user asked to see only tagged rows.
 export function filterRows(
   rows: readonly Row[],
   haystacks: readonly string[],
   filterStatuses: ReadonlySet<TestStatus>,
   query: string,
+  relevant: RelevanceTags | null = null,
 ): Row[] {
-  if (!filterStatuses.size && !query) return rows as Row[];
+  if (!filterStatuses.size && !query && !relevant) return rows as Row[];
   const out: Row[] = [];
   for (const row of rows) {
     if (filterStatuses.size && !filterStatuses.has(row.t.status)) continue;
     if (query && !matchesSearch(haystacks[row.i], query)) continue;
+    if (relevant && !relevant[row.i]) continue;
     out.push(row);
   }
   return out;
