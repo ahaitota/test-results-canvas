@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TestRun id="a1111111-1111-1111-1111-111111111111" name="Billing" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Results>
+    <UnitTestResult testId="a0000000-0000-0000-0000-000000000001" testName="ChargesCard" outcome="Passed" duration="00:00:00.0120000" computerName="build-01" startTime="2024-05-01T10:00:00.000000+00:00" endTime="2024-05-01T10:00:00.012000+00:00" />
+    <UnitTestResult testId="a0000000-0000-0000-0000-000000000002" testName="RejectsNegativeAmount" outcome="Failed" duration="00:00:00.0450000" computerName="build-01" startTime="2024-05-01T10:00:00.020000+00:00" endTime="2024-05-01T10:00:00.065000+00:00">
+      <Output>
+        <ErrorInfo>
+          <Message>Expected an ArgumentException for -1</Message>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest id="a0000000-0000-0000-0000-000000000001" name="ChargesCard">
+      <TestMethod codeBase="Billing.Tests.dll" adapterTypeName="executor://mstestadapter/v2" className="Billing.Tests.CardTests" name="ChargesCard" />
+    </UnitTest>
+    <UnitTest id="a0000000-0000-0000-0000-000000000002" name="RejectsNegativeAmount">
+      <TestMethod codeBase="Billing.Tests.dll" adapterTypeName="executor://mstestadapter/v2" className="Billing.Tests.CardTests" name="RejectsNegativeAmount" />
+    </UnitTest>
+  </TestDefinitions>
+</TestRun>

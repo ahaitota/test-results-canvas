@@ -18,4 +18,7 @@ export interface TestResult {
   computerName?: string;
   startTime?: string;
   endTime?: string;
+  // Which results file this row came from. Set only when several files are
+  // merged into one run; a single-file run leaves it undefined.
+  source?: string;
 }

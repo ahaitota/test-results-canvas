@@ -302,6 +302,17 @@ test("quotes and newlines are neutralised in every label field", () => {
   assert.equal(prompt.split("\n").length, 5, "one sentence plus four fact lines");
 });
 
+test("the prompt names the results file a merged row came from", () => {
+  const prompt = composeAskPrompt({ name: "t1", status: "fail", source: "Billing/results.trx" });
+  assert.ok(prompt.includes("- Source: Billing/results.trx"), prompt);
+});
+
+test("a source is flattened and capped like every other label", () => {
+  const prompt = composeAskPrompt({ name: "t1", status: "fail", source: 'a"b\nc' });
+  assert.ok(prompt.includes("- Source: a'b c"), prompt);
+  assert.ok(composeAskPrompt({ name: "t1", status: "fail", source: "s".repeat(300000) }).length < 1500);
+});
+
 test("long label fields cannot inflate the prompt", () => {
   const prompt = composeAskPrompt({
     name: "x".repeat(300000),
@@ -309,6 +320,7 @@ test("long label fields cannot inflate the prompt", () => {
     className: "z".repeat(300000),
     method: "m".repeat(300000),
     framework: "f".repeat(300000),
+    source: "s".repeat(300000),
     status: "fail",
     message: "short",
   });

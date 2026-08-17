@@ -51,6 +51,10 @@ export function composeAskPrompt(t) {
         facts.push(`- Method: ${label(t.method)}`);
     if (t.framework)
         facts.push(`- Framework: ${label(t.framework)}`);
+    // Which results file the row came from. On a merged run that is the only thing
+    // telling the agent which project failed.
+    if (t.source)
+        facts.push(`- Source: ${label(t.source)}`);
     if (t.durationMs != null)
         facts.push(`- Duration: ${t.durationMs}ms`);
     if (facts.length)

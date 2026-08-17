@@ -10,7 +10,7 @@
 // connection to /events, and the server pushes new state whenever results change.
 
 import { fileURLToPath } from "node:url";
-import { dirname, join, resolve as resolvePath } from "node:path";
+import { basename, dirname, join, resolve as resolvePath } from "node:path";
 import { watchFile, readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import type { Dirent } from "node:fs";
 import { joinSession, createCanvas } from "@github/copilot-sdk/extension";
@@ -20,7 +20,7 @@ import { discoverCoverageFor } from "./src/coverage/discover.js";
 import { findProjectRoot } from "./src/coverage/sources.js";
 import { suggestCoverageCommand } from "./src/coverage/suggest.js";
 // Action/open input reaches handlers typed as `unknown`; narrow it here first.
-import { asResultInput, asOpenInput } from "./src/validate.js";
+import { asResultInput, asOpenInput, asFilesInput } from "./src/validate.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const VIEW_PATH = join(__dirname, "src", "view.js");
@@ -58,12 +58,18 @@ const TEST_CMD_RE =
 // Per-working-dir key of the last results file we surfaced, so we don't nag.
 const lastSurfaced = new Map<string, string>();
 
-// Bounded search for the newest valid results file under a directory (used by the
-// tool hook after a test run). Depth- and budget-capped so it stays cheap even in
-// large repos, and skips build/vcs/dependency noise.
-function scanForRecentResults(rootDir: string, sinceMs: number): string | null {
+// Bounded search for the valid results files written under a directory since
+// `sinceMs` (used by the tool hook after a test run). Depth- and budget-capped so
+// it stays cheap even in large repos, and skips build/vcs/dependency noise.
+//
+// All of them, not just the newest: one `dotnet test` over a solution writes one
+// TRX per test project, and surfacing only the newest would hide the rest.
+// Returned newest-first, so the single-file case still resolves to the same file
+// it always did.
+function scanForRecentResults(rootDir: string, sinceMs: number): string[] {
     const IGNORE = new Set(["node_modules", ".git", ".hg", ".svn", "bin", "obj", "dist", "out", ".vs", ".idea", ".venv"]);
-    let best: string | null = null, bestMtime = sinceMs, budget = 4000;
+    const found: { path: string; mtimeMs: number }[] = [];
+    let budget = 4000;
     const stack: { dir: string; depth: number }[] = [{ dir: rootDir, depth: 0 }];
     while (stack.length) {
         const { dir, depth } = stack.pop()!;
@@ -74,7 +80,7 @@ function scanForRecentResults(rootDir: string, sinceMs: number): string | null {
             continue;
         }
         for (const ent of entries) {
-            if (--budget < 0) return best;
+            if (--budget < 0) return ordered(found);
             if (ent.isDirectory()) {
                 if (depth >= 4 || IGNORE.has(ent.name)) continue;
                 stack.push({ dir: resolvePath(dir, ent.name), depth: depth + 1 });
@@ -85,14 +91,21 @@ function scanForRecentResults(rootDir: string, sinceMs: number): string | null {
             const abs = resolvePath(dir, ent.name);
             try {
                 const st = statSync(abs);
-                if (st.mtimeMs <= bestMtime) continue;
+                if (st.mtimeMs <= sinceMs) continue;
                 if (!looksLikeResults(readFileSync(abs, "utf8"))) continue;
-                best = abs;
-                bestMtime = st.mtimeMs;
+                found.push({ path: abs, mtimeMs: st.mtimeMs });
             } catch { /* ignore unreadable */ }
         }
     }
-    return best;
+    return ordered(found);
+}
+
+// Newest first, then by path: directory iteration order is not guaranteed, and
+// the guidance (and the dedupe key built from it) has to be stable across runs.
+function ordered(found: { path: string; mtimeMs: number }[]): string[] {
+    return found
+        .sort((a, b) => b.mtimeMs - a.mtimeMs || a.path.localeCompare(b.path))
+        .map((f) => f.path);
 }
 
 // Tool hook body (shared by success + failure): if the tool was a test run and a
@@ -104,45 +117,66 @@ function surfaceIfResults(input: { toolArgs?: unknown; workingDirectory?: string
         if (!TEST_CMD_RE.test(argText)) return undefined;
         const root = input?.workingDirectory;
         if (!root || !existsSync(root)) return undefined;
-        const abs = scanForRecentResults(root, Date.now() - 120000);
-        if (!abs) return undefined;
+        const found = scanForRecentResults(root, Date.now() - 120000);
+        if (!found.length) return undefined;
+        // Newest first, so this is the file the hook has always surfaced.
+        const abs = found[0];
+        const merged = found.length > 1;
 
         // The coverage report the same run wrote, if any. Discovery is bounded
         // and only runs once we already know a test run happened.
-        let coverage: string | null = null;
+        //
+        // A merged run never names one: it would be a single project's report
+        // standing in for all of them. The canvas attaches coverage itself when
+        // exactly one source owns a report, so all the hook needs to know is
+        // whether ANY did — that is what decides the suggestion below.
+        let coverageFile: string | null = null;
+        let hasCoverage = false;
         let projectRoot: string | undefined;
         try {
             projectRoot = findProjectRoot(dirname(abs));
-            coverage = discoverCoverageFor(abs, projectRoot);
+            if (merged) {
+                // No projectRoot on purpose: with it, every project finds some
+                // report somewhere in the repo, usually another project's.
+                hasCoverage = found.some((f) => Boolean(discoverCoverageFor(f)));
+            } else {
+                coverageFile = discoverCoverageFor(abs, projectRoot);
+                hasCoverage = Boolean(coverageFile);
+            }
         } catch { /* coverage is best-effort; results still surface */ }
 
         // Keyed on the coverage file too: a re-run that adds coverage to an
         // otherwise unchanged report is worth surfacing again.
-        const key = `${abs}:${statSync(abs).mtimeMs}:${coverage ?? ""}`;
+        const key = `${found.join("|")}:${statSync(abs).mtimeMs}:${coverageFile ?? (hasCoverage ? "some" : "")}`;
         if (lastSurfaced.get(root) === key) return undefined; // already told the agent
         lastSurfaced.set(root, key);
-        console.error(`[example-canvas] hook surfacing results: ${abs}${coverage ? ` (+ coverage ${coverage})` : ""}`);
+        console.error(`[example-canvas] hook surfacing results: ${found.join(", ")}${coverageFile ? ` (+ coverage ${coverageFile})` : ""}`);
 
-        const openInput = coverage
-            ? `{ "resultsFile": ${JSON.stringify(abs)}, "coverageFile": ${JSON.stringify(coverage)} }`
-            : `{ "resultsFile": ${JSON.stringify(abs)} }`;
+        const openInput = merged
+            ? `{ "name": ${JSON.stringify(basename(root))}, "resultsFiles": ${JSON.stringify(found)} }`
+            : coverageFile
+                ? `{ "resultsFile": ${JSON.stringify(abs)}, "coverageFile": ${JSON.stringify(coverageFile)} }`
+                : `{ "resultsFile": ${JSON.stringify(abs)} }`;
 
         // With no coverage report, name the command that would produce one --
         // most runners collect nothing unless asked, and the panel is far more
         // useful once it can show which code the run actually exercised.
-        const suggestion = coverage ? "" : (() => {
+        const suggestion = hasCoverage ? "" : (() => {
             const hint = suggestCoverageCommand(projectRoot, abs);
             return ` This run produced no code-coverage report. After opening the canvas, offer to re-run the tests with coverage collected (${hint.ecosystem}: \`${hint.command}\`, which writes ${hint.outputHint}) so the panel can also show which code is covered.`;
         })();
 
-        return {
-            additionalContext:
-                `The test run just produced a results file at "${abs}". ` +
-                `Immediately open the "Test Results" canvas (canvasId "${CANVAS_ID}") with ` +
-                `input ${openInput} so the user sees the results UI. ` +
-                `Open it right away without asking, and don't print the results as text instead.` +
-                suggestion,
-        };
+        const headline = merged
+            ? `The test run produced ${found.length} results files: ${found.map((f) => `"${f}"`).join(", ")}. ` +
+              `Immediately open the "Test Results" canvas (canvasId "${CANVAS_ID}") with ` +
+              `input ${openInput} so the user sees all of them merged into one run. ` +
+              `Open it right away without asking, don't pick just one of the files, and don't print the results as text instead.`
+            : `The test run just produced a results file at "${abs}". ` +
+              `Immediately open the "Test Results" canvas (canvasId "${CANVAS_ID}") with ` +
+              `input ${openInput} so the user sees the results UI. ` +
+              `Open it right away without asking, and don't print the results as text instead.`;
+
+        return { additionalContext: headline + suggestion };
     } catch (err) {
         console.error("[example-canvas] surfaceIfResults error:", err instanceof Error ? err.message : err);
         return undefined;
@@ -169,7 +203,10 @@ joined.session = await joinSession({
                 "IMPORTANT: after running a project's tests, open this canvas and pass the " +
                 "results file as input so it appears automatically — set `resultsFile` to the " +
                 "absolute path of the generated .trx/.xml, or `resultsDir` to the folder that " +
-                "contains it (the newest results file is picked). If the run also produced a " +
+                "contains it (the newest results file is picked). If the run wrote SEVERAL results " +
+                "files (a .NET solution writes one TRX per test project), pass them all as " +
+                "`resultsFiles` with a `name` for the run instead of picking one and losing the " +
+                "rest. If the run also produced a " +
                 "coverage report (Cobertura, LCOV or JaCoCo), pass `coverageFile` too — otherwise " +
                 "the canvas discovers it next to the results file. The canvas then watches those " +
                 "folders and refreshes live over SSE on every re-run — no need to reopen it. " +
@@ -192,6 +229,21 @@ joined.session = await joinSession({
                             "Absolute path to a folder containing test-results files. The newest valid " +
                             ".trx/.xml is loaded and the folder is watched for re-runs. Ignored if " +
                             "resultsFile is given and valid.",
+                    },
+                    resultsFiles: {
+                        type: "array",
+                        items: { type: "string" },
+                        description:
+                            "Absolute paths to several test-results files, merged into one run. Use this " +
+                            "for a repo whose test suite writes one report per project (e.g. a .NET " +
+                            "solution with several test projects) instead of opening one file and losing " +
+                            "the rest. Takes precedence over resultsFile/resultsDir.",
+                    },
+                    name: {
+                        type: "string",
+                        description:
+                            "Display name for a merged run, e.g. \"AITestAgentTests\". Only meaningful " +
+                            "alongside resultsFiles.",
                     },
                     coverageFile: {
                         type: "string",
@@ -231,8 +283,9 @@ joined.session = await joinSession({
                         if (!result) {
                             return { success: false, error: "invalid input: expected an object with a non-empty string 'name'" };
                         }
-                        const total = handle.addResult(result);
-                        return { success: true, totalResults: total };
+                        const written = handle.addResult(result);
+                        if (!written.ok) return { success: false, error: written.error };
+                        return { success: true, totalResults: written.total };
                     },
                 },
                 {
@@ -269,10 +322,11 @@ joined.session = await joinSession({
                         // were unusable, rather than failing the whole batch.
                         const results = raw.map(asResultInput).filter((r): r is ResultInput => r !== null);
                         const skipped = raw.length - results.length;
-                        const total = handle.setResults(results);
+                        const written = handle.setResults(results);
+                        if (!written.ok) return { success: false, error: written.error };
                         return skipped > 0
-                            ? { success: true, totalResults: total, skipped, warning: `${skipped} entr${skipped === 1 ? "y" : "ies"} skipped: missing a valid 'name'` }
-                            : { success: true, totalResults: total };
+                            ? { success: true, totalResults: written.total, skipped, warning: `${skipped} entr${skipped === 1 ? "y" : "ies"} skipped: missing a valid 'name'` }
+                            : { success: true, totalResults: written.total };
                     },
                 },
                 {
@@ -282,8 +336,48 @@ joined.session = await joinSession({
                     handler: async (ctx) => {
                         const handle = servers.get(ctx.instanceId);
                         if (!handle) return { success: false, error: "canvas not open" };
-                        handle.clearResults();
+                        const written = handle.clearResults();
+                        if (!written.ok) return { success: false, error: written.error };
                         return { success: true, message: "All results cleared" };
+                    },
+                },
+                {
+                    name: "open_files",
+                    description:
+                        "Merge several test-results files into one run and show them as a single named " +
+                        "group, e.g. open_files(name: \"AITestAgentTests\", files: [A.trx, B.trx, C.trx]). " +
+                        "Use after a run that wrote one report per test project. Returns per-file counts " +
+                        "so the merge can be verified.",
+                    inputSchema: {
+                        type: "object",
+                        properties: {
+                            name: { type: "string", description: "Display name for the merged run" },
+                            files: {
+                                type: "array",
+                                items: { type: "string" },
+                                description: "Absolute paths to the .trx/JUnit .xml files to merge",
+                            },
+                        },
+                        required: ["files"],
+                    },
+                    handler: async (ctx) => {
+                        const handle = servers.get(ctx.instanceId);
+                        if (!handle) return { success: false, error: "canvas not open" };
+                        // Non-string and over-cap entries are dropped before any
+                        // path reaches the filesystem.
+                        const { name, files } = asFilesInput(ctx.input);
+                        if (!files.length) {
+                            return { success: false, error: "invalid input: 'files' must be an array of file paths" };
+                        }
+                        const merged = handle.openFiles({ name, files });
+                        if (!merged.ok) return { success: false, error: merged.error, skipped: merged.skipped };
+                        return {
+                            success: true,
+                            name: handle.currentFile(),
+                            total: merged.total,
+                            sources: merged.sources,
+                            ...(merged.skipped.length ? { skipped: merged.skipped } : {}),
+                        };
                     },
                 },
                 {
@@ -320,8 +414,10 @@ joined.session = await joinSession({
                     handle = await createResultsServer({
                         title,
                         port: FIXED_PORT,
+                        name: seed.name,
                         resultsFile: seed.resultsFile,
                         resultsDir: seed.resultsDir,
+                        resultsFiles: seed.resultsFiles,
                         coverageFile: seed.coverageFile,
                         coverageDir: seed.coverageDir,
                         // The server composed this prompt from its own results;

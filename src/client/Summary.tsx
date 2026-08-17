@@ -2,7 +2,34 @@
 // clickable status chips that drive filtering.
 import type { TestStatus } from "../types";
 import type { Summary as SummaryCounts } from "./derive";
+import type { GroupSource } from "./useResultsStream";
 import { fmtDur } from "./format";
+
+// Shown only for a merged run, where "6 tests" on its own hides the fact that
+// they came from three different projects and one of them may be missing.
+export function GroupSummary({ name, sources, total }: {
+  name: string;
+  sources: GroupSource[];
+  total: number;
+}) {
+  const files = sources.length;
+  return (
+    <div class="group-summary" data-testid="group-summary">
+      <span class="group-name" data-testid="group-name">{name}</span>
+      <span class="group-counts" data-testid="group-counts">
+        {`${files} file${files === 1 ? "" : "s"} \u00B7 ${total} test${total === 1 ? "" : "s"}`}
+      </span>
+      <span class="group-sources">
+        {sources.map((s) => (
+          <span class="group-source" data-testid="group-source" key={s.label}>
+            {s.label}
+            <span class="group-source-count">{s.count}</span>
+          </span>
+        ))}
+      </span>
+    </div>
+  );
+}
 
 export function FilePicker({ files, file, onPick, onFocus }: {
   files: string[];

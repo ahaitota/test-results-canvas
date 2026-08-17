@@ -11,6 +11,7 @@ export interface ToolbarProps {
   onJump: () => void;
   groupBy: GroupBy;
   onGroupBy: (value: GroupBy) => void;
+  canGroupByFile: boolean;
   sortBy: SortBy;
   onSortBy: (value: SortBy) => void;
   showingText: string;
@@ -63,7 +64,8 @@ export function Toolbar(props: ToolbarProps) {
         <div class="ctl-pair">
           <label class="ctl">Group
             <select data-testid="group-by" value={props.groupBy} onChange={(e) => props.onGroupBy((e.currentTarget as HTMLSelectElement).value as GroupBy)}>
-              {GROUP_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              {GROUP_OPTIONS.filter((o) => o.value !== "file" || props.canGroupByFile)
+                .map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
           </label>
           <label class="ctl">Sort

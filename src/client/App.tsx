@@ -11,7 +11,7 @@ import { summarize, buildRows, buildHaystacks, filterRows, buildGroups, domOrder
 import { buildItems, useVirtualList } from "./virtual";
 import { useResultsStream } from "./useResultsStream";
 import { useJumpToFailure } from "./useJumpToFailure";
-import { FilePicker, Banner, Summary } from "./Summary";
+import { FilePicker, Banner, Summary, GroupSummary } from "./Summary";
 import { Toolbar } from "./Toolbar";
 import { ResultsList } from "./ResultsList";
 import { ViewTabs } from "./ViewTabs";
@@ -63,10 +63,15 @@ export function App() {
     [rows, haystacks, filterStatuses, query],
   );
   const view = useMemo(() => sortView(filtered, sortBy), [filtered, sortBy]);
-  const groups = useMemo(() => buildGroups(view, groupBy), [view, groupBy]);
+  // File grouping only exists while a merged run is loaded. Derived rather than
+  // reset on change, so drilling from a merged run into one of its files can't
+  // leave the select showing "File" over a list bucketed under "(no file)".
+  const canGroupByFile = Boolean(state.group);
+  const grouping = groupBy === "file" && !canGroupByFile ? "suite" : groupBy;
+  const groups = useMemo(() => buildGroups(view, grouping), [view, grouping]);
   const { items, rowItemIndex } = useMemo(
-    () => buildItems(view, groups, groupBy, collapsedGroups),
-    [view, groups, groupBy, collapsedGroups],
+    () => buildItems(view, groups, grouping, collapsedGroups),
+    [view, groups, grouping, collapsedGroups],
   );
 
   // Jumping walks rows in the order they appear on screen, not payload order.
@@ -75,9 +80,9 @@ export function App() {
     for (const g of groups) {
       for (const x of g.items) rowGroup.set(x.i, g.key);
     }
-    const failing = domOrder(view, groups, groupBy).filter((x) => x.t.status === "fail").map((x) => x.i);
+    const failing = domOrder(view, groups, grouping).filter((x) => x.t.status === "fail").map((x) => x.i);
     return { failing, rowGroup };
-  }, [view, groups, groupBy]);
+  }, [view, groups, grouping]);
 
   const virtual = useVirtualList(items, expandedRows);
   const { scrollToIndex } = virtual;
@@ -92,7 +97,7 @@ export function App() {
   // The jump cursor restarts whenever the failing set could have changed.
   useEffect(() => {
     jumper.resetCursor();
-  }, [state.results, groupBy, sortBy, searchText, filterStatuses]);
+  }, [state.results, grouping, sortBy, searchText, filterStatuses]);
 
   const onPickFile = (e: Event) => {
     const v = (e.currentTarget as HTMLSelectElement).value;
@@ -113,6 +118,7 @@ export function App() {
     <>
       <FilePicker files={state.files} file={state.file} onPick={onPickFile} onFocus={onFocusFiles} />
       <div class="head"><h1><span data-testid="title">{state.title || "Test Results"}</span></h1></div>
+      {state.group && <GroupSummary name={state.group.name} sources={state.group.sources} total={all.length} />}
       <Banner total={all.length} failed={counts.failed} passRate={counts.passRate} />
       <hr />
       <Summary
@@ -134,8 +140,9 @@ export function App() {
               onSearch={setSearchText}
               jumpDisabled={jumper.failingCount === 0}
               onJump={() => jumper.jump(1)}
-              groupBy={groupBy}
+              groupBy={grouping}
               onGroupBy={setGroupBy}
+              canGroupByFile={canGroupByFile}
               sortBy={sortBy}
               onSortBy={setSortBy}
               showingText={showingText}
@@ -144,7 +151,7 @@ export function App() {
               total={all.length}
               viewCount={view.length}
               items={items}
-              groupBy={groupBy}
+              groupBy={grouping}
               collapsedGroups={collapsedGroups}
               expandedRows={expandedRows}
               expandedSecondary={expandedSecondary}

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TestRun id="b2222222-2222-2222-2222-222222222222" name="Shipping" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Results>
+    <UnitTestResult testId="b0000000-0000-0000-0000-000000000001" testName="CalculatesPostage" outcome="Passed" duration="00:00:00.0080000" computerName="build-02" startTime="2024-05-01T10:05:00.000000+00:00" endTime="2024-05-01T10:05:00.008000+00:00" />
+    <UnitTestResult testId="b0000000-0000-0000-0000-000000000002" testName="SkipsInternational" outcome="NotExecuted" duration="00:00:00.0000000" computerName="build-02" startTime="2024-05-01T10:05:00.010000+00:00" endTime="2024-05-01T10:05:00.010000+00:00" />
+    <UnitTestResult testId="b0000000-0000-0000-0000-000000000003" testName="ChargesCard" outcome="Passed" duration="00:00:00.0030000" computerName="build-02" startTime="2024-05-01T10:05:00.012000+00:00" endTime="2024-05-01T10:05:00.015000+00:00" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest id="b0000000-0000-0000-0000-000000000001" name="CalculatesPostage">
+      <TestMethod codeBase="Shipping.Tests.dll" adapterTypeName="executor://mstestadapter/v2" className="Shipping.Tests.PostageTests" name="CalculatesPostage" />
+    </UnitTest>
+    <UnitTest id="b0000000-0000-0000-0000-000000000002" name="SkipsInternational">
+      <TestMethod codeBase="Shipping.Tests.dll" adapterTypeName="executor://mstestadapter/v2" className="Shipping.Tests.PostageTests" name="SkipsInternational" />
+    </UnitTest>
+    <UnitTest id="b0000000-0000-0000-0000-000000000003" name="ChargesCard">
+      <TestMethod codeBase="Shipping.Tests.dll" adapterTypeName="executor://mstestadapter/v2" className="Shipping.Tests.PostageTests" name="ChargesCard" />
+    </UnitTest>
+  </TestDefinitions>
+</TestRun>
