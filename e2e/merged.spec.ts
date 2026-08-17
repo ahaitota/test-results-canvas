@@ -90,10 +90,12 @@ test.describe("merged runs", () => {
     await expect(options.filter({ hasText: "Solution" })).toHaveCount(1);
     await expect(options.filter({ hasText: "merge-billing.trx" })).toHaveCount(1);
 
-    // Drilling into one file leaves the merged run behind, so the header goes.
+    // Drilling into one file leaves the merged run behind, so the header goes —
+    // but the run itself must stay listed, or there is no way back to it.
     await page.getByTestId("file-select").selectOption("merge-billing.trx");
     await expect(page.getByTestId("test-row")).toHaveCount(2);
     await expect(page.getByTestId("group-summary")).toHaveCount(0);
+    await expect(options.filter({ hasText: "Solution" })).toHaveCount(1);
   });
 
   test("a single file is not presented as a merged run", async ({ page, makeServer }) => {
@@ -125,6 +127,30 @@ test.describe("merged runs", () => {
     await expect(page.getByTestId("group-by")).not.toHaveValue("file");
     await expect(page.getByTestId("group-header").filter({ hasText: "(no file)" })).toHaveCount(0);
     await expect(page.getByTestId("test-row")).toHaveCount(2);
+  });
+
+  // Twice round, because a restore that only half-rebuilds tends to pass the
+  // first lap and fail the second.
+  test("picking the merged run again rebuilds it", async ({ page, makeServer }) => {
+    const s = await makeServer({ name: "Solution", resultsFiles: [billing(), shipping()] });
+    await openCanvas(page, s);
+    const picker = page.getByTestId("file-select");
+
+    for (const lap of [1, 2]) {
+      await picker.selectOption("merge-shipping.trx");
+      await expect(page.getByTestId("test-row"), `lap ${lap}`).toHaveCount(3);
+
+      await picker.selectOption("Solution");
+      await expect(page.getByTestId("test-row"), `lap ${lap}`).toHaveCount(5);
+      await expect(page.getByTestId("group-summary")).toBeVisible();
+      await expect(page.getByTestId("group-counts")).toHaveText("2 files \u00B7 5 tests");
+      await expect(page.getByTestId("group-source")).toHaveCount(2);
+      await expect(page.getByTestId("group-by").locator("option[value='file']")).toHaveCount(1);
+    }
+
+    // The restored run is a real merge, not just a restored header.
+    await page.getByTestId("group-by").selectOption("file");
+    await expect(page.getByTestId("group")).toHaveCount(2);
   });
 
   // Copies rather than the fixtures themselves: this is the one spec that

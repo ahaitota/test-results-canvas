@@ -200,6 +200,10 @@ export async function createResultsServer(options = {}) {
     let entries = [];
     // The display name of a merged run, or null when a single file is loaded.
     let groupName = null;
+    // The group that was opened, remembered independently of what is displayed:
+    // picking one member out of the picker switches the view, and must not
+    // destroy the only way back to the merge.
+    let groupDef = null;
     // One watcher per directory the sources live in.
     const watchers = new Map();
     // `coverageWatcher` follows the report's folder so a re-run refreshes the
@@ -361,10 +365,12 @@ export async function createResultsServer(options = {}) {
     }
     // --- The source set ---
     // The merged run appears in the picker under its own name, alongside the
-    // individual files.
+    // individual files. Listed from the group that was opened rather than the
+    // one on screen, so drilling into a member leaves a way back.
     function selectableFiles() {
         const list = listResultFiles(discovered);
-        return groupName && !list.includes(groupName) ? [groupName, ...list] : list;
+        const name = groupDef?.name;
+        return name && !list.includes(name) ? [name, ...list] : list;
     }
     function buildEntry(abs) {
         const rows = parseResultsFile(abs);
@@ -404,6 +410,10 @@ export async function createResultsServer(options = {}) {
     function applySources(list, name) {
         entries = list;
         groupName = name;
+        // Recorded from what actually resolved, so a path that could not be read
+        // is not retried on every restore.
+        if (name)
+            groupDef = { name, paths: list.map((e) => e.source.path) };
         rebuild();
         if (watchEnabled)
             syncWatchers();
@@ -535,6 +545,9 @@ export async function createResultsServer(options = {}) {
             const entry = abs ? buildEntry(abs) : null;
             if (entry) {
                 applySources([entry], null);
+                // A fresh seed re-points the whole panel, so a group left over
+                // from a previous open must not stay in the picker.
+                groupDef = null;
                 loaded = true;
             }
         }
@@ -553,7 +566,8 @@ export async function createResultsServer(options = {}) {
     }
     // Load one file on its own, leaving any merged run behind — picking a file
     // outside it is a deliberate departure. `label` is the picker name chosen,
-    // which is what the <select> expects to see back.
+    // which is what the <select> expects to see back. `groupDef` survives, so
+    // the merge stays listed and can be picked again.
     function loadSingle(abs, label) {
         const entry = buildEntry(abs);
         // Registered but unparseable: keep the old behaviour of showing an empty
@@ -561,6 +575,20 @@ export async function createResultsServer(options = {}) {
         applySources(entry ? [entry] : [], null);
         file = label;
         attachCoverage(abs);
+    }
+    // Re-open the group after drilling into one of its files. Re-collected from
+    // disk rather than cached, so a member rewritten meanwhile comes back
+    // current. False when nothing resolves any more, leaving the view alone.
+    function restoreGroup(def) {
+        const built = collectSources(def.paths);
+        // A member deleted since the group was opened drops out; the rest still
+        // merge, and the per-source counts in the header show what came back.
+        if (!built.entries.length)
+            return false;
+        applySources(built.entries, def.name);
+        if (!explicitCoverage)
+            attachCoverageForSources();
+        return true;
     }
     // A merged run is spread over files this server does not own, so a report or
     // clear action would be thrown away by the next refresh. Refuse, with
@@ -801,11 +829,18 @@ export async function createResultsServer(options = {}) {
         if (url.startsWith("/load")) {
             const u = new URL(url, "http://localhost");
             const name = u.searchParams.get("file") || "";
-            // The merged run is listed in the picker under its own name, so
-            // re-selecting it must not 404 — it is already what is loaded.
-            if (groupName && name === groupName) {
-                res.writeHead(200, { "Content-Type": "application/json" });
-                res.end(JSON.stringify({ ok: true, file: name }));
+            // The merged run is listed in the picker under its own name.
+            // Re-selecting it while displayed is a no-op; selecting it after
+            // drilling into a member rebuilds the merge.
+            if (groupDef && name === groupDef.name) {
+                // Read before restoring: restoreGroup sets groupName, so asking
+                // afterwards would never see that this was a real switch.
+                const active = groupName === name;
+                const ok = active || restoreGroup(groupDef);
+                if (ok && !active)
+                    broadcast();
+                res.writeHead(ok ? 200 : 400, { "Content-Type": "application/json" });
+                res.end(JSON.stringify(ok ? { ok: true, file: name } : { ok: false, error: "no source of that group could be read" }));
                 return;
             }
             const abs = resolveResultPath(name, discovered);
@@ -903,8 +938,14 @@ export async function createResultsServer(options = {}) {
             return { ok: true, total: 0 };
         },
         loadNamed(name) {
-            if (groupName && name === groupName)
+            if (groupDef && name === groupDef.name) {
+                if (groupName === name)
+                    return true;
+                if (!restoreGroup(groupDef))
+                    return false;
+                broadcast();
                 return true;
+            }
             const abs = resolveResultPath(name, discovered);
             if (!abs)
                 return false;
