@@ -10,17 +10,17 @@
 // connection to /events, and the server pushes new state whenever results change.
 
 import { fileURLToPath } from "node:url";
-import { dirname, join, resolve as resolvePath } from "node:path";
-import { watchFile, readFileSync, existsSync, readdirSync, statSync } from "node:fs";
-import type { Dirent } from "node:fs";
+import { dirname, join } from "node:path";
+import { watchFile, existsSync, statSync } from "node:fs";
 import { joinSession, createCanvas } from "@github/copilot-sdk/extension";
-import { createResultsServer, looksLikeResults, RESULT_EXTS } from "./src/server.js";
+import { createResultsServer, scanForResults } from "./src/server.js";
 import type { ResultsServerHandle, ResultInput } from "./src/server.js";
 // Action/open input reaches handlers typed as `unknown`; narrow it here first.
 import { asResultInput, asOpenInput } from "./src/validate.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const VIEW_PATH = join(__dirname, "src", "view.js");
+const STYLES_PATH = join(__dirname, "src", "styles.js");
 const CLIENT_BUNDLE = join(__dirname, "client", "app.js");
 
 // The canvas id declared below (used when programmatically opening the panel).
@@ -55,41 +55,10 @@ const TEST_CMD_RE =
 // Per-working-dir key of the last results file we surfaced, so we don't nag.
 const lastSurfaced = new Map<string, string>();
 
-// Bounded search for the newest valid results file under a directory (used by the
-// tool hook after a test run). Depth- and budget-capped so it stays cheap even in
-// large repos, and skips build/vcs/dependency noise.
+// Newest valid results file under a directory, written since `sinceMs` (used by
+// the tool hook after a test run).
 function scanForRecentResults(rootDir: string, sinceMs: number): string | null {
-    const IGNORE = new Set(["node_modules", ".git", ".hg", ".svn", "bin", "obj", "dist", "out", ".vs", ".idea", ".venv"]);
-    let best: string | null = null, bestMtime = sinceMs, budget = 4000;
-    const stack: { dir: string; depth: number }[] = [{ dir: rootDir, depth: 0 }];
-    while (stack.length) {
-        const { dir, depth } = stack.pop()!;
-        let entries: Dirent[];
-        try {
-            entries = readdirSync(dir, { withFileTypes: true });
-        } catch {
-            continue;
-        }
-        for (const ent of entries) {
-            if (--budget < 0) return best;
-            if (ent.isDirectory()) {
-                if (depth >= 4 || IGNORE.has(ent.name)) continue;
-                stack.push({ dir: resolvePath(dir, ent.name), depth: depth + 1 });
-                continue;
-            }
-            if (!ent.isFile()) continue;
-            if (!RESULT_EXTS.some((e) => ent.name.toLowerCase().endsWith(e))) continue;
-            const abs = resolvePath(dir, ent.name);
-            try {
-                const st = statSync(abs);
-                if (st.mtimeMs <= bestMtime) continue;
-                if (!looksLikeResults(readFileSync(abs, "utf8"))) continue;
-                best = abs;
-                bestMtime = st.mtimeMs;
-            } catch { /* ignore unreadable */ }
-        }
-    }
-    return best;
+    return scanForResults(rootDir, { sinceMs })[0]?.path ?? null;
 }
 
 // Tool hook body (shared by success + failure): if the tool was a test run and a
@@ -120,15 +89,14 @@ function surfaceIfResults(input: { toolArgs?: unknown; workingDirectory?: string
     }
 }
 
-// When the compiled view (dist/src/view.js) or the Preact bundle
-// (dist/client/app.js) changes on disk, reload every open panel so UI edits
-// appear with no extension reload.
-watchFile(VIEW_PATH, { interval: 400 }, (curr, prev) => {
-    if (curr.mtimeMs !== prev.mtimeMs) for (const h of servers.values()) h.reload();
-});
-watchFile(CLIENT_BUNDLE, { interval: 400 }, (curr, prev) => {
-    if (curr.mtimeMs !== prev.mtimeMs) for (const h of servers.values()) h.reload();
-});
+// When the compiled view (dist/src/view.js), the shared stylesheet
+// (dist/src/styles.js) or the Preact bundle (dist/client/app.js) changes on
+// disk, reload every open panel so UI edits appear with no extension reload.
+for (const path of [VIEW_PATH, STYLES_PATH, CLIENT_BUNDLE]) {
+    watchFile(path, { interval: 400 }, (curr, prev) => {
+        if (curr.mtimeMs !== prev.mtimeMs) for (const h of servers.values()) h.reload();
+    });
+}
 
 joined.session = await joinSession({
     canvases: [

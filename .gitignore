@@ -26,3 +26,8 @@ tsconfig.sdk-check.json
 node_modules/
 .DS_Store
 Thumbs.db
+
+# VS Code extension build output — rebuilt with `npm run build:vscode`, and
+# packaged into the .vsix rather than committed.
+vscode/dist/
+*.vsix

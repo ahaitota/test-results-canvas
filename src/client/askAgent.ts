@@ -1,19 +1,10 @@
-// Posts a row reference to the extension, which composes the message and sends
-// it into the agent session. The page never sends prompt text -- see src/ask.ts.
-const ASK_TOKEN = (window as unknown as { __ASK_TOKEN__?: string }).__ASK_TOKEN__ || "";
+// Posts a row reference to the host, which composes the message and sends it
+// into the agent session. The page never sends prompt text -- see src/ask.ts.
+import { bridge } from "@bridge";
 
-// `index` is the row's position in the payload the server broadcast, which
-// survives filtering and sorting; `name` lets the server reject a click that
-// raced a refresh.
-export async function askAgent(index: number, name: string): Promise<boolean> {
-  try {
-    const res = await fetch("/ask", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${ASK_TOKEN}` },
-      body: JSON.stringify({ index, name }),
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
+// `index` is the row's position in the payload the host pushed, which survives
+// filtering and sorting; `name` lets the host reject a click that raced a
+// refresh.
+export function askAgent(index: number, name: string): Promise<boolean> {
+  return bridge.ask(index, name);
 }

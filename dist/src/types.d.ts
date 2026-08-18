@@ -14,3 +14,9 @@ export interface TestResult {
     startTime?: string;
     endTime?: string;
 }
+export interface CanvasState {
+    title: string;
+    results: TestResult[];
+    file: string;
+    files: string[];
+}
