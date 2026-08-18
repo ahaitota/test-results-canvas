@@ -52,6 +52,11 @@ jobs:
       - name: Type-check client
         run: npm run typecheck:client
 
+      # The VS Code host and its webview are a separate tsconfig with their own
+      # lib and module settings, so the checks above never look at them.
+      - name: Type-check VS Code extension
+        run: npm run typecheck:vscode
+
       # Catches what the type-checker cannot: dead assignments, unused bindings
       # and unreadable one-liners. Covers src, test, e2e and scripts.
       - name: Lint
@@ -73,6 +78,13 @@ jobs:
             git --no-pager diff -- dist/
             exit 1
           fi
+
+      # vscode/dist/ is gitignored rather than committed -- a VSIX is built from
+      # source -- so there is nothing to verify afterwards. Bundling is still the
+      # only check that the host and webview resolve their cross-package imports
+      # and stay bundleable, which a typecheck alone does not prove.
+      - name: Build VS Code extension
+        run: npm run build:vscode
 
       # test:ci writes a JUnit XML alongside the console output.
       - name: Run unit tests
