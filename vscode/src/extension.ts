@@ -9,13 +9,12 @@
 // rather than opening as an editor tab.
 
 import * as vscode from "vscode";
-import { ResultsStore, looksLikeResults } from "../../src/core/store.js";
+import { ResultsStore, looksLikeResults, scanForResults } from "../../src/core/store.js";
 import { composeAskPrompt } from "../../src/ask.js";
 import { THEME_VSCODE, BASE_CSS } from "../../src/styles.js";
 import type { CanvasState } from "../../src/types.js";
 
 const VIEW_ID = "testResults.view";
-const EXCLUDE = "**/node_modules/**";
 
 // Messages the webview sends us.
 type Incoming =
@@ -37,6 +36,7 @@ class TestResultsViewProvider implements vscode.WebviewViewProvider {
     constructor(
         private readonly extensionUri: vscode.Uri,
         private readonly store: ResultsStore,
+        private readonly log: vscode.LogOutputChannel,
     ) {}
 
     resolveWebviewView(view: vscode.WebviewView): void {
@@ -58,7 +58,9 @@ class TestResultsViewProvider implements vscode.WebviewViewProvider {
 
     private async onMessage(msg: Incoming): Promise<void> {
         if (msg.type === "ready") {
-            this.post(this.store.state());
+            const state = this.store.state();
+            this.log.info(`webview ready; sending ${state.results.length} result(s) from ${state.file}`);
+            this.post(state);
             return;
         }
         if (msg.type === "load") {
@@ -112,11 +114,18 @@ class TestResultsViewProvider implements vscode.WebviewViewProvider {
     }
 }
 
-// Newest results file in the workspace, so the view has something to show as
-// soon as it opens.
-async function findResultFiles(): Promise<vscode.Uri[]> {
-    const glob = config("watchGlob", "**/*.{trx,xml}");
-    return vscode.workspace.findFiles(glob, EXCLUDE, 500);
+// Results files in the workspace, newest first, so the view has something to show
+// as soon as it opens.
+//
+// A filesystem walk rather than vscode.workspace.findFiles: findFiles goes
+// through the search service, which honours .gitignore by default — and test
+// reports are almost always gitignored, so the index would never see them.
+function findResultFiles(): string[] {
+    return (vscode.workspace.workspaceFolders ?? [])
+        .filter((f) => f.uri.scheme === "file")
+        .flatMap((f) => scanForResults(f.uri.fsPath))
+        .sort((a, b) => b.mtimeMs - a.mtimeMs)
+        .map((f) => f.path);
 }
 
 async function isResults(uri: vscode.Uri): Promise<boolean> {
@@ -128,28 +137,17 @@ async function isResults(uri: vscode.Uri): Promise<boolean> {
     }
 }
 
-async function newestResults(uris: vscode.Uri[]): Promise<vscode.Uri | undefined> {
-    let best: vscode.Uri | undefined;
-    let bestTime = -1;
-    for (const uri of uris) {
-        try {
-            const stat = await vscode.workspace.fs.stat(uri);
-            if (stat.mtime > bestTime && await isResults(uri)) {
-                best = uri;
-                bestTime = stat.mtime;
-            }
-        } catch { /* vanished between find and stat */ }
-    }
-    return best;
-}
-
 export function activate(context: vscode.ExtensionContext): void {
+    // Surfaces discovery in the Output panel, since a view that finds no results
+    // otherwise looks identical to a view that is broken.
+    const log = vscode.window.createOutputChannel("Test Results", { log: true });
     // watch:false because VS Code's own file watcher (below) already honours the
     // user's exclude settings and reaches files this store never walks.
     const store = new ResultsStore({ rootDir: context.extensionUri.fsPath, title: "Test Results", watch: false });
-    const provider = new TestResultsViewProvider(context.extensionUri, store);
+    const provider = new TestResultsViewProvider(context.extensionUri, store, log);
 
     context.subscriptions.push(
+        log,
         { dispose: () => store.dispose() },
         { dispose: store.onChange((state) => provider.post(state)) },
         vscode.window.registerWebviewViewProvider(VIEW_ID, provider, {
@@ -189,6 +187,7 @@ export function activate(context: vscode.ExtensionContext): void {
         // A writer can produce several change events for one save.
         pending = setTimeout(async () => {
             if (!await isResults(uri)) return;
+            log.info(`results file changed: ${uri.fsPath}`);
             store.register([uri.fsPath]);
             store.loadInput({ resultsFile: uri.fsPath });
             if (config("autoReveal", true)) await reveal();
@@ -202,10 +201,8 @@ export function activate(context: vscode.ExtensionContext): void {
     context.subscriptions.push(vscode.lm.registerTool<{ file?: string }>("show_test_results", {
         async invoke(options) {
             const wanted = options.input?.file;
-            const uri = wanted
-                ? vscode.Uri.file(wanted)
-                : await newestResults(await findResultFiles());
-            if (uri) await show(uri);
+            const file = wanted ?? findResultFiles()[0];
+            if (file) await show(vscode.Uri.file(file));
             const results = store.getResults();
             if (!results.length) {
                 return new vscode.LanguageModelToolResult([
@@ -224,12 +221,17 @@ export function activate(context: vscode.ExtensionContext): void {
     }));
 
     // Populate the file picker and seed the view, without blocking activation.
-    void (async () => {
-        const uris = await findResultFiles();
-        store.register(uris.map((u) => u.fsPath));
-        const newest = await newestResults(uris);
-        if (newest) store.loadInput({ resultsFile: newest.fsPath });
-    })();
+    const seed = () => {
+        const files = findResultFiles();
+        log.info(`found ${files.length} results file(s); showing ${files[0] ?? "none"}`);
+        store.register(files);
+        if (files[0]) store.loadInput({ resultsFile: files[0] });
+    };
+    // Folders can arrive after activation — an extension development host starts
+    // empty and opens its folder a moment later, and any window can gain a folder
+    // without a reload — so re-scan whenever the set of folders changes.
+    context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(seed));
+    setTimeout(seed, 0);
 }
 
 export function deactivate(): void { /* everything is in context.subscriptions */ }

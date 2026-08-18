@@ -3,6 +3,14 @@ export declare const RESULT_EXTS: string[];
 export declare function looksLikeResults(xml: unknown): boolean;
 export declare function newestResultsFileIn(dir: string): string | null;
 export declare function normalizeStatus(raw: unknown): TestStatus;
+export interface FoundResults {
+    path: string;
+    mtimeMs: number;
+}
+export declare function scanForResults(rootDir: string, options?: {
+    sinceMs?: number;
+    maxFiles?: number;
+}): FoundResults[];
 export interface ResultInput {
     name: string;
     status: unknown;

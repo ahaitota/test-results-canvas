@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { TestResult } from "./types.js";
-export { RESULT_EXTS, looksLikeResults, newestResultsFileIn, normalizeStatus } from "./core/store.js";
+export { RESULT_EXTS, looksLikeResults, newestResultsFileIn, normalizeStatus, scanForResults } from "./core/store.js";
 export type { ResultInput } from "./core/store.js";
 import type { ResultInput } from "./core/store.js";
 export interface ResultsServerOptions {

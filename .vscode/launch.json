@@ -5,7 +5,7 @@
       "name": "Run VS Code extension",
       "type": "extensionHost",
       "request": "launch",
-      "args": ["--extensionDevelopmentPath=${workspaceFolder}/vscode"],
+      "args": ["${workspaceFolder}", "--extensionDevelopmentPath=${workspaceFolder}/vscode"],
       "outFiles": ["${workspaceFolder}/vscode/dist/**/*.js"],
       "preLaunchTask": "npm: build:vscode"
     }

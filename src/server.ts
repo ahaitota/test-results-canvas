@@ -18,7 +18,7 @@ import type { TestResult } from "./types.js";
 
 // Re-exported because extension.ts, the tests and the e2e suite already import
 // them from here; the implementations moved into the shared store.
-export { RESULT_EXTS, looksLikeResults, newestResultsFileIn, normalizeStatus } from "./core/store.js";
+export { RESULT_EXTS, looksLikeResults, newestResultsFileIn, normalizeStatus, scanForResults } from "./core/store.js";
 export type { ResultInput } from "./core/store.js";
 import type { ResultInput } from "./core/store.js";
 

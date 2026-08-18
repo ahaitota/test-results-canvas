@@ -91,7 +91,7 @@
         "testResults.watchGlob": {
           "type": "string",
           "default": "**/*.{trx,xml}",
-          "description": "Glob for the results files to watch and offer in the file picker."
+          "description": "Glob for the results files to watch for live updates."
         },
         "testResults.autoReveal": {
           "type": "boolean",

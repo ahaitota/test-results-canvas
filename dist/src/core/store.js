@@ -52,6 +52,57 @@ export function normalizeStatus(raw) {
         return "fail";
     return "skip";
 }
+// Bounded walk for results files under a directory, newest first. Depth- and
+// budget-capped so it stays cheap in large repos, and it skips build/vcs/
+// dependency noise.
+//
+// Deliberately a filesystem walk rather than an editor/search index lookup:
+// test reports are almost always gitignored, and an index that honours
+// .gitignore would never see them.
+export function scanForResults(rootDir, options = {}) {
+    const IGNORE = new Set(["node_modules", ".git", ".hg", ".svn", "bin", "obj", "dist", "out", ".vs", ".idea", ".venv"]);
+    const sinceMs = options.sinceMs ?? -1;
+    const maxFiles = options.maxFiles ?? 200;
+    const found = [];
+    const newestFirst = () => found.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    let budget = 4000;
+    const stack = [{ dir: rootDir, depth: 0 }];
+    while (stack.length) {
+        const { dir, depth } = stack.pop();
+        let entries;
+        try {
+            entries = readdirSync(dir, { withFileTypes: true });
+        }
+        catch {
+            continue;
+        }
+        for (const ent of entries) {
+            if (--budget < 0 || found.length >= maxFiles)
+                return newestFirst();
+            if (ent.isDirectory()) {
+                if (depth >= 4 || IGNORE.has(ent.name))
+                    continue;
+                stack.push({ dir: resolvePath(dir, ent.name), depth: depth + 1 });
+                continue;
+            }
+            if (!ent.isFile())
+                continue;
+            if (!RESULT_EXTS.some((e) => ent.name.toLowerCase().endsWith(e)))
+                continue;
+            const abs = resolvePath(dir, ent.name);
+            try {
+                const st = statSync(abs);
+                if (st.mtimeMs <= sinceMs)
+                    continue;
+                if (!looksLikeResults(readFileSync(abs, "utf8")))
+                    continue;
+                found.push({ path: abs, mtimeMs: st.mtimeMs });
+            }
+            catch { /* ignore unreadable */ }
+        }
+    }
+    return newestFirst();
+}
 export class ResultsStore {
     title;
     root;

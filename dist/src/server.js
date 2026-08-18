@@ -13,7 +13,7 @@ import { randomBytes } from "node:crypto";
 import { ResultsStore } from "./core/store.js";
 // Re-exported because extension.ts, the tests and the e2e suite already import
 // them from here; the implementations moved into the shared store.
-export { RESULT_EXTS, looksLikeResults, newestResultsFileIn, normalizeStatus } from "./core/store.js";
+export { RESULT_EXTS, looksLikeResults, newestResultsFileIn, normalizeStatus, scanForResults } from "./core/store.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const VIEW_PATH = join(__dirname, "view.js");
 const STYLES_PATH = join(__dirname, "styles.js");
