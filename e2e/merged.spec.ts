@@ -114,6 +114,48 @@ test.describe("merged runs", () => {
     await expect(page.getByTestId("group-by").locator("option[value='file']")).toHaveCount(0);
   });
 
+  // The action path, which reaches the panel after it is already open. A
+  // one-element list is the reviewer's case: it must land as an ordinary run,
+  // not a group of one with nothing to group by.
+  for (const named of [false, true]) {
+    const groupName = named ? "Billing only" : "Merged results";
+    test(`open_files with one file is an ordinary run${named ? ", even when named" : ""}`, async ({ page, makeServer }) => {
+      const s = await makeServer();
+      await openCanvas(page, s);
+      const r = s.openFiles(named ? { name: groupName, files: [billing()] } : { files: [billing()] });
+
+      // The receipt still reports the one source it merged.
+      expect(r.ok).toBe(true);
+      expect(r.sources).toEqual([{ label: "merge-billing.trx", count: 2 }]);
+
+      // Payload: no group, and rows carry no originating file to show.
+      await expect(page.getByTestId("test-row")).toHaveCount(2);
+      expect(s.getResults().some((t) => "source" in t)).toBe(false);
+
+      await expect(page.getByTestId("group-summary")).toHaveCount(0);
+      await expect(page.getByTestId("group-by").locator("option[value='file']")).toHaveCount(0);
+      // The name must not reach the picker either, or it offers a group to
+      // return to that was never really there.
+      const options = page.getByTestId("file-select").locator("option");
+      await expect(options.filter({ hasText: groupName })).toHaveCount(0);
+    });
+  }
+
+  test("a one-file open_files clears the group it replaced", async ({ page, makeServer }) => {
+    const s = await makeServer({ name: "Solution", resultsFiles: [billing(), shipping()] });
+    await openCanvas(page, s);
+    await expect(page.getByTestId("group-summary")).toBeVisible();
+
+    s.openFiles({ name: "Shipping only", files: [shipping()] });
+
+    await expect(page.getByTestId("test-row")).toHaveCount(3);
+    await expect(page.getByTestId("group-summary")).toHaveCount(0);
+    // The superseded run must not linger as a way back to a merge that is gone.
+    const options = page.getByTestId("file-select").locator("option");
+    await expect(options.filter({ hasText: "Solution" })).toHaveCount(0);
+    await expect(options.filter({ hasText: "Shipping only" })).toHaveCount(0);
+  });
+
   test("drilling out of a merged run drops the File grouping with it", async ({ page, makeServer }) => {
     const s = await makeServer({ name: "Solution", resultsFiles: [billing(), shipping()] });
     await openCanvas(page, s);

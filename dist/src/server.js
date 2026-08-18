@@ -560,9 +560,11 @@ export async function createResultsServer(options = {}) {
             attachCoverageForSources();
         return entries[0].source.path;
     }
-    // A named set keeps its name even at one file — the caller asked for one.
+    // One source is never a group, however it was opened and whatever the caller
+    // called it: there is nothing to group by, so a name would only buy the UI a
+    // File grouping that buckets every row under "(no file)".
     function groupNameFor(name, count) {
-        return name || (count > 1 ? "Merged results" : null);
+        return count > 1 ? (name || "Merged results") : null;
     }
     // Load one file on its own, leaving any merged run behind — picking a file
     // outside it is a deliberate departure. `label` is the picker name chosen,
@@ -585,7 +587,9 @@ export async function createResultsServer(options = {}) {
         // merge, and the per-source counts in the header show what came back.
         if (!built.entries.length)
             return false;
-        applySources(built.entries, def.name);
+        // Decayed to one readable file, it is no longer a merge — but `groupDef`
+        // stays, because the group still exists and the member may return.
+        applySources(built.entries, groupNameFor(def.name, built.entries.length));
         if (!explicitCoverage)
             attachCoverageForSources();
         return true;
@@ -961,7 +965,12 @@ export async function createResultsServer(options = {}) {
             if (!built.entries.length) {
                 return { ok: false, error: "none of those paths could be read as a test-results file", skipped: built.skipped };
             }
-            applySources(built.entries, input.name || "Merged results");
+            const name = groupNameFor(input.name, built.entries.length);
+            applySources(built.entries, name);
+            // Resolved to a single file, so this is an ordinary run, not a merge:
+            // any group left from an earlier open must not stay in the picker.
+            if (!name)
+                groupDef = null;
             if (!explicitCoverage)
                 attachCoverageForSources();
             broadcast();
