@@ -1,28 +1,41 @@
 // SDK-free HTTP server for the Test Results canvas: serves the view, streams
-// updates over SSE, loads TRX/JUnit files, and watches the results directory.
+// updates over SSE, and exposes the shared ResultsStore over loopback.
+//
+// All the state (file discovery, parsing, watching, mutation) lives in
+// ./core/store.ts so the VS Code host can reuse it without an HTTP hop; this
+// module is only the Copilot-canvas transport around it.
 import { createServer } from "node:http";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { dirname, join, basename, resolve as resolvePath } from "node:path";
-import { watch, readFileSync, writeFileSync, existsSync, readdirSync, statSync } from "node:fs";
-import { serializeTrx, parseTrx } from "./parsers/trx.js";
-import { parseJUnit } from "./parsers/junit.js";
-import { labelForPath } from "./labels.js";
+import { dirname, join } from "node:path";
+import { readFileSync, existsSync, statSync } from "node:fs";
 import { composeAskPrompt } from "./ask.js";
 import { randomBytes } from "node:crypto";
+import { ResultsStore } from "./core/store.js";
+// Re-exported because extension.ts, the tests and the e2e suite already import
+// them from here; the implementations moved into the shared store.
+export { RESULT_EXTS, looksLikeResults, newestResultsFileIn, normalizeStatus } from "./core/store.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const VIEW_PATH = join(__dirname, "view.js");
+const STYLES_PATH = join(__dirname, "styles.js");
 const CLIENT_BUNDLE = join(__dirname, "..", "client", "app.js");
-// Re-imported only when view.js actually changes, so edits show up on a canvas
-// refresh without leaking one cached ESM module per request.
-let viewModule;
-let viewMtimeMs = -1;
-async function renderShell(title, askToken) {
-    const mtimeMs = statSync(VIEW_PATH).mtimeMs;
-    if (!viewModule || mtimeMs !== viewMtimeMs) {
-        viewModule = (await import(`${pathToFileURL(VIEW_PATH).href}?t=${mtimeMs}`));
-        viewMtimeMs = mtimeMs;
+// Re-imported only when the file actually changes, so edits show up on a canvas
+// refresh without leaking one cached ESM module per request. The stylesheet is
+// tracked separately from the shell: view.js imports it statically, so a
+// CSS-only edit would otherwise stay pinned to the first cached copy.
+async function freshImport(path, cache) {
+    const mtimeMs = statSync(path).mtimeMs;
+    if (!cache.mod || mtimeMs !== cache.mtimeMs) {
+        cache.mod = (await import(`${pathToFileURL(path).href}?t=${mtimeMs}`));
+        cache.mtimeMs = mtimeMs;
     }
-    return viewModule.renderShell(title, askToken);
+    return cache.mod;
+}
+const viewCache = { mtimeMs: -1 };
+const stylesCache = { mtimeMs: -1 };
+async function renderShell(title, askToken) {
+    const view = await freshImport(VIEW_PATH, viewCache);
+    const styles = await freshImport(STYLES_PATH, stylesCache);
+    return view.renderShell(title, askToken, styles.THEME_COPILOT + styles.BASE_CSS);
 }
 // Walk up to the folder that owns package.json so bundled samples and local
 // report files resolve the same whether this runs compiled (dist/src) or straight
@@ -38,118 +51,6 @@ function findExtensionRoot(start) {
     return dir;
 }
 const EXTENSION_ROOT = findExtensionRoot(__dirname);
-const SAMPLES_DIR = join(EXTENSION_ROOT, "samples");
-const DEFAULT_FILE = "results.trx";
-export const RESULT_EXTS = [".trx", ".xml"];
-// Cheap content check so we only treat genuine test-results XML as results.
-export function looksLikeResults(xml) {
-    const head = String(xml || "").slice(0, 8192);
-    return /<testsuites?[\s>]/i.test(head) || /<TestRun[\s>]/i.test(head) || /<UnitTestResult[\s>]/i.test(head);
-}
-// Newest results file directly inside a directory (non-recursive).
-export function newestResultsFileIn(dir) {
-    let best = null, bestMtime = -1;
-    let names;
-    try {
-        names = readdirSync(dir);
-    }
-    catch {
-        return null;
-    }
-    for (const n of names) {
-        if (!RESULT_EXTS.some((e) => n.toLowerCase().endsWith(e)))
-            continue;
-        const abs = resolvePath(dir, n);
-        try {
-            const st = statSync(abs);
-            if (st.isFile() && st.mtimeMs > bestMtime && looksLikeResults(readFileSync(abs, "utf8"))) {
-                best = abs;
-                bestMtime = st.mtimeMs;
-            }
-        }
-        catch { /* ignore unreadable */ }
-    }
-    return best;
-}
-export function normalizeStatus(raw) {
-    const s = String(raw || "").toLowerCase();
-    if (s === "pass" || s === "passed" || s === "ok" || s === "success")
-        return "pass";
-    if (s === "fail" || s === "failed" || s === "error")
-        return "fail";
-    return "skip";
-}
-function listLocalNames() {
-    try {
-        return readdirSync(EXTENSION_ROOT).filter((f) => RESULT_EXTS.some((e) => f.toLowerCase().endsWith(e)));
-    }
-    catch {
-        return [];
-    }
-}
-// Selectable files = local extension-folder reports + discovered project files.
-function listResultFiles(discovered) {
-    let local = [];
-    try {
-        local = readdirSync(EXTENSION_ROOT).filter((f) => RESULT_EXTS.some((e) => f.toLowerCase().endsWith(e))).sort();
-    }
-    catch {
-        local = [];
-    }
-    const extras = [...discovered.keys()].filter((l) => !local.includes(l)).sort();
-    return [...local, ...extras];
-}
-// Resolve a picker name to a safe absolute path (discovered label or a basename
-// inside the extension folder — no path traversal). null if missing/unsupported.
-function resolveResultPath(name, discovered) {
-    const raw = String(name || "");
-    if (discovered.has(raw)) {
-        const abs = discovered.get(raw);
-        return existsSync(abs) ? abs : null;
-    }
-    const base = basename(raw);
-    if (!RESULT_EXTS.some((e) => base.toLowerCase().endsWith(e)))
-        return null;
-    const full = join(EXTENSION_ROOT, base);
-    return existsSync(full) ? full : null;
-}
-// Parse a named file, auto-detecting TRX vs JUnit by content.
-function loadFile(name, discovered) {
-    const full = resolveResultPath(name, discovered);
-    if (!full)
-        return [];
-    try {
-        const xml = readFileSync(full, "utf8");
-        return /<testsuites?[\s>]/i.test(xml) ? parseJUnit(xml) : parseTrx(xml);
-    }
-    catch {
-        return [];
-    }
-}
-// Persist results as TRX, but only for writable local .trx files (never a
-// discovered project file — that's the agent's own output).
-function persist(results, name, discovered) {
-    if (discovered.has(String(name || "")))
-        return;
-    const base = basename(String(name || DEFAULT_FILE)) || DEFAULT_FILE;
-    if (!base.toLowerCase().endsWith(".trx"))
-        return;
-    try {
-        writeFileSync(join(EXTENSION_ROOT, base), serializeTrx(results, { runName: "Test Results" }), "utf8");
-    }
-    catch (err) {
-        console.error("[server] failed to write TRX:", err instanceof Error ? err.message : err);
-    }
-}
-function registerSamples(discovered) {
-    try {
-        for (const f of readdirSync(SAMPLES_DIR)) {
-            if (RESULT_EXTS.some((e) => f.toLowerCase().endsWith(e)))
-                discovered.set(f, join(SAMPLES_DIR, f));
-        }
-    }
-    catch { /* no samples bundled */ }
-}
 // Start one Test Results server. Returns a handle with the URL plus methods the
 // SDK actions (and tests) use to mutate state and tear down.
 export async function createResultsServer(options = {}) {
@@ -159,101 +60,30 @@ export async function createResultsServer(options = {}) {
     // the user's agent -- is gated on a secret minted per instance and handed
     // only to the page this server rendered.
     const askToken = randomBytes(16).toString("hex");
-    const discovered = new Map();
-    registerSamples(discovered);
-    for (const p of options.alsoRegister || []) {
-        try {
-            const abs = resolvePath(String(p));
-            if (existsSync(abs))
-                discovered.set(labelForPath(abs, discovered, listLocalNames()), abs);
-        }
-        catch { /* ignore */ }
-    }
+    const store = new ResultsStore({
+        rootDir: EXTENSION_ROOT,
+        resultsFile,
+        resultsDir,
+        title,
+        watch: watchEnabled,
+        alsoRegister: options.alsoRegister,
+    });
     const clients = new Set();
-    let file = DEFAULT_FILE;
-    let results = [];
-    let watcher = null;
     function statePayload() {
-        return JSON.stringify({ title, results, file, files: listResultFiles(discovered) });
+        return JSON.stringify(store.state());
     }
     function broadcast() {
+        const data = statePayload();
         for (const res of clients)
-            res.write(`data: ${statePayload()}\n\n`);
+            res.write(`data: ${data}\n\n`);
     }
     function reload() {
         for (const res of clients)
             res.write(`event: reload\ndata: 1\n\n`);
     }
-    function stopWatcher() {
-        if (!watcher)
-            return;
-        try {
-            watcher.close();
-        }
-        catch { /* already closed */ }
-        watcher = null;
-    }
-    function refreshFromDir(dir) {
-        const abs = newestResultsFileIn(dir);
-        if (!abs)
-            return;
-        const label = labelForPath(abs, discovered, listLocalNames());
-        discovered.set(label, abs);
-        file = label;
-        results = loadFile(label, discovered);
-        broadcast();
-    }
-    function watchDir(dir) {
-        stopWatcher();
-        const debounce = new Map();
-        try {
-            watcher = watch(dir, { persistent: false }, (_event, filename) => {
-                if (!filename)
-                    return;
-                const name = String(filename);
-                if (!RESULT_EXTS.some((e) => name.toLowerCase().endsWith(e)))
-                    return;
-                const abs = resolvePath(dir, name);
-                clearTimeout(debounce.get(abs));
-                debounce.set(abs, setTimeout(() => {
-                    debounce.delete(abs);
-                    refreshFromDir(dir);
-                }, 400));
-            });
-            watcher.on("error", (err) => console.error("[server] watcher error:", err?.message || err));
-        }
-        catch (err) {
-            console.error(`[server] watch failed for ${dir}:`, err instanceof Error ? err.message : err);
-        }
-    }
-    // Seed from an explicit file or the newest file in a directory.
-    function seed(input) {
-        let abs = null;
-        if (input.resultsFile) {
-            const p = resolvePath(String(input.resultsFile));
-            try {
-                if (existsSync(p) && statSync(p).isFile() && looksLikeResults(readFileSync(p, "utf8")))
-                    abs = p;
-            }
-            catch { /* unreadable */ }
-        }
-        if (!abs && input.resultsDir) {
-            const d = resolvePath(String(input.resultsDir));
-            if (existsSync(d))
-                abs = newestResultsFileIn(d);
-        }
-        if (!abs)
-            return null;
-        const label = labelForPath(abs, discovered, listLocalNames());
-        discovered.set(label, abs);
-        file = label;
-        results = loadFile(label, discovered);
-        if (watchEnabled)
-            watchDir(dirname(abs));
-        return abs;
-    }
-    if (!seed({ resultsFile, resultsDir }))
-        results = loadFile(file, discovered);
+    // Every store mutation — including one made by the directory watcher — reaches
+    // the page through here.
+    const unsubscribe = store.onChange(broadcast);
     // Read a small JSON body. Still capped even though callers are authenticated
     // by this point, so a wedged page cannot grow the buffer without limit.
     async function readJsonBody(req) {
@@ -311,7 +141,7 @@ export async function createResultsServer(options = {}) {
         if (typeof payload.index !== "number" || !Number.isInteger(payload.index)) {
             return sendJson(res, 400, { ok: false, error: "index must be an integer" });
         }
-        const test = results[payload.index];
+        const test = store.getResults()[payload.index];
         if (!test)
             return sendJson(res, 404, { ok: false, error: "no such row" });
         if (typeof payload.name === "string" && payload.name !== test.name) {
@@ -362,20 +192,17 @@ export async function createResultsServer(options = {}) {
         }
         if (url.startsWith("/files")) {
             res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ files: listResultFiles(discovered), current: file }));
+            res.end(JSON.stringify({ files: store.state().files, current: store.currentFile() }));
             return;
         }
         if (url.startsWith("/load")) {
             const u = new URL(url, "http://localhost");
             const name = u.searchParams.get("file") || "";
-            if (!resolveResultPath(name, discovered)) {
+            if (!store.loadNamed(name)) {
                 res.writeHead(400, { "Content-Type": "application/json" });
                 res.end(JSON.stringify({ ok: false, error: "unknown file" }));
                 return;
             }
-            file = name;
-            results = loadFile(name, discovered);
-            broadcast();
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ ok: true, file: name }));
             return;
@@ -425,44 +252,19 @@ export async function createResultsServer(options = {}) {
         port: boundPort,
         // Exposed so tests can post to /ask without scraping it out of the HTML.
         askToken,
-        currentFile: () => file,
-        getResults: () => results,
-        setResults(list) {
-            results = (list || []).map((t) => ({ name: t.name, status: normalizeStatus(t.status), durationMs: t.durationMs, message: t.message }));
-            persist(results, file, discovered);
-            broadcast();
-            return results.length;
-        },
-        addResult(t) {
-            results.push({ name: t.name, status: normalizeStatus(t.status), durationMs: t.durationMs, message: t.message });
-            persist(results, file, discovered);
-            broadcast();
-            return results.length;
-        },
-        clearResults() {
-            results = [];
-            persist(results, file, discovered);
-            broadcast();
-        },
-        loadNamed(name) {
-            if (!resolveResultPath(name, discovered))
-                return false;
-            file = name;
-            results = loadFile(name, discovered);
-            broadcast();
-            return true;
-        },
+        currentFile: () => store.currentFile(),
+        getResults: () => store.getResults(),
+        setResults: (list) => store.setResults(list),
+        addResult: (t) => store.addResult(t),
+        clearResults: () => store.clearResults(),
+        loadNamed: (name) => store.loadNamed(name),
         // Re-seed from fresh open input (e.g. a re-open pointing at a new file).
-        loadInput(input = {}) {
-            const abs = seed(input);
-            if (abs)
-                broadcast();
-            return abs;
-        },
+        loadInput: (input = {}) => store.loadInput(input),
         broadcast,
         reload,
         async close() {
-            stopWatcher();
+            unsubscribe();
+            store.dispose();
             for (const res of clients) {
                 try {
                     res.end();

@@ -1,0 +1,107 @@
+{
+  "name": "test-results-canvas-vscode",
+  "displayName": "Test Results Canvas",
+  "description": "Renders .NET TRX and JUnit XML test runs as a live panel in the sidebar.",
+  "version": "0.1.0",
+  "publisher": "ahaitota",
+  "license": "MIT",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ahaitota/test-results-canvas.git",
+    "directory": "vscode"
+  },
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Testing",
+    "Visualization"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "testResults",
+          "title": "Test Results",
+          "icon": "media/beaker.svg"
+        }
+      ]
+    },
+    "views": {
+      "testResults": [
+        {
+          "type": "webview",
+          "id": "testResults.view",
+          "name": "Test Results"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "testResults.open",
+        "title": "Show Panel",
+        "category": "Test Results"
+      },
+      {
+        "command": "testResults.openFile",
+        "title": "Open Results File",
+        "category": "Test Results"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "testResults.openFile",
+          "when": "resourceExtname == .trx || resourceExtname == .xml",
+          "group": "navigation@9"
+        }
+      ]
+    },
+    "languageModelTools": [
+      {
+        "name": "show_test_results",
+        "displayName": "Show Test Results",
+        "modelDescription": "Open the Test Results panel on a TRX or JUnit XML report and return a summary of the run: total, passed, failed and skipped counts plus the names of failing tests. Call this after running tests, or when the user asks what failed.",
+        "userDescription": "Show a test run in the Test Results panel",
+        "toolReferenceName": "testResults",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(beaker)",
+        "tags": [
+          "testing"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "file": {
+              "type": "string",
+              "description": "Absolute path to a .trx or JUnit .xml file. Omit to use the newest report in the workspace."
+            }
+          }
+        }
+      }
+    ],
+    "configuration": {
+      "title": "Test Results",
+      "properties": {
+        "testResults.watchGlob": {
+          "type": "string",
+          "default": "**/*.{trx,xml}",
+          "description": "Glob for the results files to watch and offer in the file picker."
+        },
+        "testResults.autoReveal": {
+          "type": "boolean",
+          "default": true,
+          "description": "Reveal the Test Results panel when a results file is written."
+        }
+      }
+    }
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.95.0"
+  }
+}

@@ -21,6 +21,7 @@ import { asResultInput, asOpenInput } from "./src/validate.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const VIEW_PATH = join(__dirname, "src", "view.js");
+const STYLES_PATH = join(__dirname, "src", "styles.js");
 const CLIENT_BUNDLE = join(__dirname, "client", "app.js");
 
 // The canvas id declared below (used when programmatically opening the panel).
@@ -120,15 +121,14 @@ function surfaceIfResults(input: { toolArgs?: unknown; workingDirectory?: string
     }
 }
 
-// When the compiled view (dist/src/view.js) or the Preact bundle
-// (dist/client/app.js) changes on disk, reload every open panel so UI edits
-// appear with no extension reload.
-watchFile(VIEW_PATH, { interval: 400 }, (curr, prev) => {
-    if (curr.mtimeMs !== prev.mtimeMs) for (const h of servers.values()) h.reload();
-});
-watchFile(CLIENT_BUNDLE, { interval: 400 }, (curr, prev) => {
-    if (curr.mtimeMs !== prev.mtimeMs) for (const h of servers.values()) h.reload();
-});
+// When the compiled view (dist/src/view.js), the shared stylesheet
+// (dist/src/styles.js) or the Preact bundle (dist/client/app.js) changes on
+// disk, reload every open panel so UI edits appear with no extension reload.
+for (const path of [VIEW_PATH, STYLES_PATH, CLIENT_BUNDLE]) {
+    watchFile(path, { interval: 400 }, (curr, prev) => {
+        if (curr.mtimeMs !== prev.mtimeMs) for (const h of servers.values()) h.reload();
+    });
+}
 
 joined.session = await joinSession({
     canvases: [

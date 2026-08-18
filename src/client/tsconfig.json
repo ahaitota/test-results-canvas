@@ -10,7 +10,14 @@
     "jsx": "react-jsx",
     "jsxImportSource": "preact",
     "types": [],
-    "noEmit": true
+    "noEmit": true,
+    // The build swaps this for the VS Code implementation with esbuild's --alias;
+    // typechecking against the SSE one covers the shared UI, and the include
+    // below then checks the VS Code bridge against the same interface.
+    "baseUrl": ".",
+    "paths": {
+      "@bridge": ["./bridge.sse.ts"]
+    }
   },
-  "include": ["**/*.ts", "**/*.tsx", "../types.ts", "../rowkey.ts"]
+  "include": ["**/*.ts", "**/*.tsx", "../types.ts", "../rowkey.ts", "../../vscode/src/client/**/*.ts"]
 }

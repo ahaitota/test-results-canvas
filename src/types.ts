@@ -1,7 +1,6 @@
 // Shared result shape used across the parsers, server, and SDK actions.
 
 export type TestStatus = "pass" | "fail" | "skip";
-
 // One test outcome. The core four fields come from every source; the rest are
 // enrichment the TRX/JUnit parsers add when the report carries them.
 export interface TestResult {
@@ -19,3 +18,12 @@ export interface TestResult {
   startTime?: string;
   endTime?: string;
 }
+
+// One snapshot of everything the UI renders, pushed by whichever host is running.
+export interface CanvasState {
+  title: string;
+  results: TestResult[];
+  file: string;
+  files: string[];
+}
+

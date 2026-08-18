@@ -7,9 +7,13 @@
   "main": "dist/extension.js",
   "scripts": {
     "build": "tsc -p tsconfig.build.json && npm run build:client",
-    "build:client": "esbuild src/client/main.tsx --bundle --outfile=dist/client/app.js --format=esm --target=es2022 --jsx=automatic --jsx-import-source=preact --minify",
+    "build:client": "esbuild src/client/main.tsx --bundle --outfile=dist/client/app.js --format=esm --target=es2022 --jsx=automatic --jsx-import-source=preact --alias:@bridge=./src/client/bridge.sse.ts --minify",
+    "build:vscode": "npm run build:vscode:host && npm run build:vscode:client",
+    "build:vscode:host": "esbuild vscode/src/extension.ts --bundle --outfile=vscode/dist/extension.js --platform=node --format=cjs --target=node20 --external:vscode --minify",
+    "build:vscode:client": "esbuild src/client/main.tsx --bundle --outfile=vscode/dist/client/app.js --format=iife --target=es2022 --jsx=automatic --jsx-import-source=preact --alias:@bridge=./vscode/src/client/bridge.vscode.ts --minify",
     "typecheck": "tsc -p tsconfig.json",
     "typecheck:client": "tsc -p src/client/tsconfig.json",
+    "typecheck:vscode": "tsc -p vscode/tsconfig.json",
     "typecheck:e2e": "tsc -p e2e/tsconfig.json",
     "typecheck:bench": "tsc -p bench/tsconfig.json",
     "typecheck:sdk": "node --import tsx scripts/typecheck-sdk.ts",
@@ -25,6 +29,9 @@
   "engines": {
     "node": "^20.19.0 || >=22.12.0"
   },
+  "workspaces": [
+    "vscode"
+  ],
   "license": "MIT",
   "devDependencies": {
     "@eslint/js": "^10.0.1",

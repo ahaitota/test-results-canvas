@@ -10,6 +10,7 @@ import { pruneKeys } from "../rowkey.js";
 import { summarize, buildRows, buildHaystacks, filterRows, buildGroups, domOrder } from "./derive";
 import { buildItems, useVirtualList } from "./virtual";
 import { useResultsStream } from "./useResultsStream";
+import { bridge } from "@bridge";
 import { useJumpToFailure } from "./useJumpToFailure";
 import { FilePicker, Banner, Summary } from "./Summary";
 import { Toolbar } from "./Toolbar";
@@ -92,12 +93,13 @@ export function App() {
   const onPickFile = (e: Event) => {
     const v = (e.currentTarget as HTMLSelectElement).value;
     setState((s) => ({ ...s, file: v }));
-    fetch("/load?file=" + encodeURIComponent(v)).catch(() => {});
+    bridge.load(v);
   };
   const onFocusFiles = () => {
-    fetch("/files")
-      .then((r) => r.json())
-      .then((d) => setState((s) => ({ ...s, files: d.files, file: d.current ?? s.file })))
+    bridge.requestFiles()
+      .then((d) => {
+        if (d) setState((s) => ({ ...s, files: d.files, file: d.current ?? s.file }));
+      })
       .catch(() => {});
   };
 

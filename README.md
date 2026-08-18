@@ -53,23 +53,33 @@ extension.mjs            discovery entry point — the Copilot app scans for thi
                          line: it imports dist/extension.js. Never edit.
 extension.ts             the real entry point source (compiled to dist/extension.js)
 src/
-  view.ts                HTML shell + CSS served to the panel (no result rendering)
-  server.ts              SDK-free HTTP/SSE server, file loading + watching
+  view.ts                HTML shell served to the Copilot panel (no result rendering)
+  styles.ts              the stylesheet, shared by both hosts (Copilot + VS Code themes)
+  server.ts              SDK-free HTTP/SSE transport for the Copilot canvas
+  core/
+    store.ts             host-free state: discovery, parsing, watching, mutation
   validate.ts            narrows untrusted agent input at the action/open boundary
   labels.ts              file-picker label disambiguation
-  types.ts               shared TestResult / TestStatus types
+  types.ts               shared TestResult / TestStatus / CanvasState types
   client/                Preact UI bundled to dist/client/app.js by esbuild
     main.tsx             client entry point
     App.tsx              root component, wires up state and the results stream
+    bridge.ts            the host seam the UI imports as "@bridge" (types only)
+    bridge.sse.ts        Copilot implementation of the bridge (EventSource + fetch)
     Toolbar.tsx          filter/search controls
     Summary.tsx          pass/fail/skip totals
     ResultsList.tsx      the list of results (renders only the visible window)
     TestRow.tsx          one result row, including failure detail
     virtual.ts           windowing: flattens the list and tracks row heights
-    useResultsStream.ts  SSE subscription that drives live refresh
+    useResultsStream.ts  bridge subscription that drives live refresh
   parsers/
     trx.ts               .NET TRX parser
     junit.ts             JUnit XML parser
+vscode/                  the VS Code extension (same store, same UI, different host)
+  package.json           manifest: sidebar view, commands, language model tool
+  src/extension.ts       activate(): WebviewViewProvider + file watcher + lm tool
+  src/client/
+    bridge.vscode.ts     VS Code implementation of the bridge (postMessage)
 test/
   trx.test.ts            unit tests for the TRX parser
   junit.test.ts          unit tests for the JUnit parser
@@ -97,6 +107,50 @@ npm test             # run unit tests (via tsx)
 npm run test:e2e     # build + run Playwright e2e tests
 npm run bench        # build + measure rendering against the perf budgets
 ```
+
+## VS Code extension
+
+The same parsers, state and Preact UI also run as a VS Code extension that docks
+in the sidebar like Copilot Chat. Only the host differs:
+
+| | Copilot app | VS Code |
+| --- | --- | --- |
+| host glue | `extension.ts` + `src/server.ts` | `vscode/src/extension.ts` |
+| transport | HTTP + SSE on loopback | webview `postMessage` |
+| bridge | `src/client/bridge.sse.ts` | `vscode/src/client/bridge.vscode.ts` |
+| theme | `THEME_COPILOT` | `THEME_VSCODE` (`--vscode-*` tokens) |
+
+The UI imports the transport as `@bridge`; each build swaps in one implementation
+with [esbuild's `--alias`](https://esbuild.github.io/api/#alias), so neither host
+ever ships the other's code. Everything below `@bridge` — `src/core/store.ts`,
+`src/parsers/`, `src/client/` and `src/styles.ts` — is shared verbatim.
+
+```bash
+npm run build:vscode   # bundle the host (CJS) + the webview UI (IIFE) into vscode/dist
+npm run typecheck:vscode
+```
+
+Then press <kbd>F5</kbd> (**Run VS Code extension**) to launch an Extension
+Development Host with it loaded, or package it:
+
+```bash
+npx @vscode/vsce package --no-dependencies   # run inside vscode/
+code --install-extension test-results-canvas-vscode-0.1.0.vsix
+```
+
+What it adds on the VS Code side:
+
+- a **Test Results** container in the activity bar holding a webview view, so the
+  panel docks in the sidebar (and can be dragged to the secondary side bar)
+- a workspace file watcher on `testResults.watchGlob` (default `**/*.{trx,xml}`),
+  so a run written by any terminal or task refreshes the panel — and reveals it,
+  unless `testResults.autoReveal` is off
+- **Test Results: Open Results File** in the command palette and on the explorer
+  context menu for `.trx`/`.xml`
+- a `show_test_results` language model tool, so the agent can put a run on screen
+  and read the failures back; reference it in chat with `#testResults`
+- **Ask agent** on a failing row opens Copilot Chat with the question pre-filled
+
 
 ### Rendering benchmark
 
