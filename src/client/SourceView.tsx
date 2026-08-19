@@ -1,7 +1,7 @@
 // The expanded file: real source with a per-line gutter.
 //
-// Percentages say there is a problem; this says where. Green = executed (with
-// its hit count), red = executable but never ran, dim = not executable. Lines
+// Percentages say there is a problem; this says where. Blue = executed (with
+// its hit count), orange = executable but never ran, dim = not executable. Lines
 // the current diff touched get a marker, so "new and untested" is one glance
 // rather than a cross-reference.
 //
@@ -62,7 +62,7 @@ export function SourceView({ path }: { path: string }) {
         {view.firstUncovered != null && (
           <button
             type="button"
-            class={"ask-btn" + (asked === "sent" ? " ask-sent" : asked === "error" ? " ask-error" : "")}
+            class={"ask-btn ask-cov" + (asked === "sent" ? " ask-sent" : asked === "error" ? " ask-error" : "")}
             data-testid="source-ask"
             onClick={onAsk}
             disabled={asked === "sent"}

@@ -122,7 +122,7 @@ function PatchBanner({ coverage }: { coverage: CoveragePayload }) {
     );
   }
 
-  // Unmeasured files are not "clean": nothing observed them, so the green state
+  // Unmeasured files are not "clean": nothing observed them, so a pass here
   // would be claiming a result the report cannot support.
   const clean = patch.total > 0 && patch.covered === patch.total && patch.unmeasuredFiles === 0;
   const onAsk = async () => {
@@ -132,7 +132,7 @@ function PatchBanner({ coverage }: { coverage: CoveragePayload }) {
 
   return (
     <div class="cov-patch" data-testid="coverage-patch">
-      <div class={"cov-patch-head" + (clean ? " ok" : " warn")}>
+      <div class="cov-patch-head">
         <span class="cov-patch-label">New code</span>
         <span data-testid="patch-headline">{patchHeadline(coverage)}</span>
         <span class="cov-spacer" />
@@ -146,7 +146,7 @@ function PatchBanner({ coverage }: { coverage: CoveragePayload }) {
       {!clean && (
         <button
           type="button"
-          class={"ask-btn" + (asked === "sent" ? " ask-sent" : asked === "error" ? " ask-error" : "")}
+          class={"ask-btn ask-cov" + (asked === "sent" ? " ask-sent" : asked === "error" ? " ask-error" : "")}
           data-testid="patch-ask"
           onClick={onAsk}
           disabled={asked === "sent"}

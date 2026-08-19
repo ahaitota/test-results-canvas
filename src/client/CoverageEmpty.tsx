@@ -35,7 +35,7 @@ export function CoverageEmpty({ hint }: { hint: CoverageSuggestion | null }) {
       )}
       <button
         type="button"
-        class={"ask-btn" + (sent === "sent" ? " ask-sent" : sent === "error" ? " ask-error" : "")}
+        class={"ask-btn ask-cov" + (sent === "sent" ? " ask-sent" : sent === "error" ? " ask-error" : "")}
         data-testid="coverage-ask-enable"
         onClick={onAsk}
         disabled={sent === "sent"}
