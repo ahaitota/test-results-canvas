@@ -11,11 +11,14 @@ import { askAgentCoverage } from "./askAgent";
 
 // A report was found but could not be used. Without this the panel would say
 // "no coverage", sending the user off to re-run tests that already worked.
+// The server decides when a reason is worth showing -- a file that simply is
+// not a report is an ordinary miss during discovery, but a mistake when the
+// caller named it -- so every reason that arrives here is displayed.
 const FAILURE_TEXT: Record<CoverageLoadFailure, string> = {
   "missing": "The coverage report was named but is no longer on disk.",
   "unreadable": "The coverage report could not be read.",
   "too-large": "The coverage report is too large for this panel to open.",
-  "not-coverage": "",
+  "not-coverage": "That file is not a coverage report in any format this panel reads.",
 };
 
 export function CoverageEmpty({ hint, error }: { hint: CoverageSuggestion | null; error?: CoverageLoadFailure | null }) {
