@@ -27,6 +27,7 @@ export function asOpenInput(input) {
         resultsDir: asString(input?.resultsDir),
         coverageFile: asString(input?.coverageFile),
         coverageDir: asString(input?.coverageDir),
+        projectRoot: asString(input?.projectRoot),
     };
 }
 //# sourceMappingURL=validate.js.map

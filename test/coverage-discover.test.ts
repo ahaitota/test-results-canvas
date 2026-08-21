@@ -156,11 +156,12 @@ test("report paths are normalised to forward slashes so git and the UI agree", (
 test("loadCoverageFile produces a payload with resolved sources", () => {
   // skipGit: the fixture lives in a temp dir, and the surrounding repository's
   // own diff would be noise.
-  const loaded = loadCoverageFile(join(root, "TestResults", "abc-guid", "coverage.cobertura.xml"), {
+  const result = loadCoverageFile(join(root, "TestResults", "abc-guid", "coverage.cobertura.xml"), {
     projectRoot: root,
     skipGit: true,
   });
-  assert.ok(loaded);
+  assert.ok(result.ok);
+  const loaded = result.coverage;
   assert.equal(loaded.payload.format, "cobertura");
   assert.equal(loaded.payload.totals.totalLines, 3);
   assert.equal(loaded.payload.totals.percent, 33);
@@ -176,17 +177,24 @@ test("loadCoverageFile produces a payload with resolved sources", () => {
   assert.equal(loaded.payload.hotspots[0].path, "src/calc.ts");
 });
 
-test("loadCoverageFile returns null for a missing or non-coverage file", () => {
-  assert.equal(loadCoverageFile(join(root, "does-not-exist.xml"), { skipGit: true }), null);
-  assert.equal(loadCoverageFile(join(root, "TestResults", "run.trx"), { skipGit: true }), null);
+test("loadCoverageFile reports why it could not load a file", () => {
+  const missing = loadCoverageFile(join(root, "does-not-exist.xml"), { skipGit: true });
+  assert.equal(missing.ok, false);
+  assert.equal(missing.ok === false && missing.reason, "missing");
+
+  // A real file that simply isn't a coverage report.
+  const notCoverage = loadCoverageFile(join(root, "TestResults", "run.trx"), { skipGit: true });
+  assert.equal(notCoverage.ok, false);
+  assert.equal(notCoverage.ok === false && notCoverage.reason, "not-coverage");
 });
 
 test("readSourceView annotates each line with its hit count", () => {
-  const loaded = loadCoverageFile(join(root, "TestResults", "abc-guid", "coverage.cobertura.xml"), {
+  const result = loadCoverageFile(join(root, "TestResults", "abc-guid", "coverage.cobertura.xml"), {
     projectRoot: root,
     skipGit: true,
-  })!;
-  const view = readSourceView(loaded, "src/calc.ts");
+  });
+  assert.ok(result.ok);
+  const view = readSourceView(result.coverage, "src/calc.ts");
   assert.notEqual(typeof view, "string");
   if (typeof view === "string") return;
 
@@ -202,10 +210,11 @@ test("/source only serves files the loaded report names", () => {
   // The allow-list is the whole defence: the served path always comes from the
   // report's own entry, never from the request, so traversal is impossible by
   // construction rather than by filtering.
-  const loaded = loadCoverageFile(join(root, "TestResults", "abc-guid", "coverage.cobertura.xml"), {
+  const result = loadCoverageFile(join(root, "TestResults", "abc-guid", "coverage.cobertura.xml"), {
     projectRoot: root,
     skipGit: true,
-  })!;
+  });
+  assert.ok(result.ok);
   for (const hostile of [
     "../../../../etc/passwd",
     "src/../../../etc/passwd",
@@ -215,7 +224,7 @@ test("/source only serves files the loaded report names", () => {
     "src/calc.ts\u0000.png",
     "",
   ]) {
-    assert.equal(readSourceView(loaded, hostile), "unknown-file", `must refuse ${JSON.stringify(hostile)}`);
+    assert.equal(readSourceView(result.coverage, hostile), "unknown-file", `must refuse ${JSON.stringify(hostile)}`);
   }
 });
 

@@ -99,3 +99,7 @@ export interface CoverageSuggestion {
     command: string;
     outputHint: string;
 }
+
+// Why a report could not be loaded. Sent to the panel so it can explain a file
+// it found but could not use, rather than implying none was collected.
+export type CoverageLoadFailure = "missing" | "unreadable" | "too-large" | "not-coverage";

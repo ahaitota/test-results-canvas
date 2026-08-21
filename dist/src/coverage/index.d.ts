@@ -1,5 +1,5 @@
 export { loadCoverageFile } from "./load.js";
-export type { LoadedCoverage, LoadOptions } from "./load.js";
+export type { LoadedCoverage, LoadOptions, CoverageLoadResult, CoverageLoadFailure } from "./load.js";
 export { discoverCoverageFor, newestCoverageFileIn } from "./discover.js";
 export { readSourceView } from "./sources/view.js";
 export type { SourceError } from "./sources/view.js";

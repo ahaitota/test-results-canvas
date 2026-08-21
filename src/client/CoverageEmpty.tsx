@@ -6,11 +6,21 @@
 // have the agent do it, is what turns the tab into something worth opening.
 
 import { useState } from "preact/hooks";
-import type { CoverageSuggestion } from "../coverage/model/payload";
+import type { CoverageSuggestion, CoverageLoadFailure } from "../coverage/model/payload";
 import { askAgentCoverage } from "./askAgent";
 
-export function CoverageEmpty({ hint }: { hint: CoverageSuggestion | null }) {
+// A report was found but could not be used. Without this the panel would say
+// "no coverage", sending the user off to re-run tests that already worked.
+const FAILURE_TEXT: Record<CoverageLoadFailure, string> = {
+  "missing": "The coverage report was named but is no longer on disk.",
+  "unreadable": "The coverage report could not be read.",
+  "too-large": "The coverage report is too large for this panel to open.",
+  "not-coverage": "",
+};
+
+export function CoverageEmpty({ hint, error }: { hint: CoverageSuggestion | null; error?: CoverageLoadFailure | null }) {
   const [sent, setSent] = useState<"idle" | "sent" | "error">("idle");
+  const failure = error ? FAILURE_TEXT[error] : "";
 
   const onAsk = async () => {
     const ok = await askAgentCoverage("enable");
@@ -20,10 +30,14 @@ export function CoverageEmpty({ hint }: { hint: CoverageSuggestion | null }) {
   return (
     <div class="cov-empty" data-testid="coverage-empty">
       <p class="cov-empty-title">No coverage data for this run</p>
-      <p class="cov-empty-body">
-        A test-results file records which tests ran, not which code they exercised.
-        Coverage comes from a separate report written during the same run.
-      </p>
+      {failure
+        ? <p class="cov-empty-body" data-testid="coverage-error">{failure}</p>
+        : (
+          <p class="cov-empty-body">
+            A test-results file records which tests ran, not which code they exercised.
+            Coverage comes from a separate report written during the same run.
+          </p>
+        )}
       {hint && (
         <>
           <p class="cov-empty-body">

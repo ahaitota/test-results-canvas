@@ -125,7 +125,7 @@ export function App() {
       />
       <ViewTabs tab={tab} onTab={setTab} coveragePercent={coveragePercent} hasCoverage={Boolean(state.coverage)} />
       {tab === "coverage"
-        ? <CoverageView coverage={state.coverage} hint={state.coverageHint} />
+        ? <CoverageView coverage={state.coverage} hint={state.coverageHint} error={state.coverageError} />
         : (
           <>
             <Toolbar

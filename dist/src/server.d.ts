@@ -10,6 +10,7 @@ export interface ResultsServerOptions {
     resultsDir?: string;
     coverageFile?: string;
     coverageDir?: string;
+    projectRoot?: string;
     title?: string;
     port?: number;
     watch?: boolean;
@@ -37,6 +38,7 @@ export interface SeedInput {
     resultsDir?: string;
     coverageFile?: string;
     coverageDir?: string;
+    projectRoot?: string;
 }
 export type ResultsServerHandle = Awaited<ReturnType<typeof createResultsServer>>;
 export declare function createResultsServer(options?: ResultsServerOptions): Promise<{

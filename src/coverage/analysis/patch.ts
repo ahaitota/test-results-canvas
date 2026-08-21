@@ -80,7 +80,8 @@ export function computePatchCoverage(
                     uncoveredLines: [],
                     percent: null,
                     unmeasured: true,
-                    changedLines: change.lines.size,
+                    // Untracked files carry their length instead of a diff.
+                    changedLines: change.lineCount ?? change.lines.size,
                 });
             }
             continue;
@@ -110,7 +111,7 @@ export function computePatchCoverage(
             uncoveredLines,
             percent: percentOf(coveredLines.length, coveredLines.length + uncoveredLines.length),
             unmeasured: false,
-            changedLines: change.lines.size,
+            changedLines: change.lineCount ?? change.lines.size,
         });
     }
 

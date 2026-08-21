@@ -2,7 +2,7 @@
 // that lets expansion state follow a test rather than its position in the array.
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { TestResult } from "../types";
-import type { CoveragePayload, CoverageSuggestion } from "../coverage/model/payload";
+import type { CoveragePayload, CoverageSuggestion, CoverageLoadFailure } from "../coverage/model/payload";
 import { reconcileRowKeys } from "../rowkey.js";
 
 // What the server pushes over SSE.
@@ -15,6 +15,8 @@ export interface ServerState {
   coverage: CoveragePayload | null;
   // How to produce coverage for this project, shown when there is none.
   coverageHint: CoverageSuggestion | null;
+  // Set when a report was found but could not be read.
+  coverageError: CoverageLoadFailure | null;
 }
 
 // Plus the row keys reconciled for that payload -- stored together so a row and
@@ -28,7 +30,7 @@ const INITIAL_TITLE = (window as unknown as { __INITIAL_TITLE__?: string }).__IN
 // `onReconcile` is handed the keys that survived the new payload, so the caller
 // can drop expansion state belonging to rows that are gone.
 export function useResultsStream(onReconcile: (reused: Set<string>) => void) {
-  const [state, setState] = useState<AppState>({ title: INITIAL_TITLE, results: [], file: "", files: [], coverage: null, coverageHint: null, keys: [] });
+  const [state, setState] = useState<AppState>({ title: INITIAL_TITLE, results: [], file: "", files: [], coverage: null, coverageHint: null, coverageError: null, keys: [] });
   const prevPayload = useRef<{ results: TestResult[]; keys: string[] }>({ results: [], keys: [] });
   const keySeq = useRef(new Map<string, number>());
   // Read through a ref so the subscription never needs re-creating.

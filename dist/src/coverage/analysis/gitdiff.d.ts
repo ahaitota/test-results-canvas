@@ -4,6 +4,7 @@ export interface FileChanges {
     absPath: string;
     lines: Set<number>;
     all: boolean;
+    lineCount?: number;
 }
 export interface DiffResult {
     root: string;

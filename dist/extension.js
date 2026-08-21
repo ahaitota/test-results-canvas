@@ -197,6 +197,13 @@ joined.session = await joinSession({
                             "report is loaded and the folder is watched for re-runs. Ignored if " +
                             "coverageFile is given and valid.",
                     },
+                    projectRoot: {
+                        type: "string",
+                        description: "Absolute path to the repository or package the coverage report describes. " +
+                            "Optional — when omitted it is inferred from the results file. Pass it when " +
+                            "the tests live in a sub-package of a monorepo, so source files and the " +
+                            "changed-lines diff resolve against the right project.",
+                    },
                 },
             },
             actions: [
@@ -316,6 +323,7 @@ joined.session = await joinSession({
                         resultsDir: seed.resultsDir,
                         coverageFile: seed.coverageFile,
                         coverageDir: seed.coverageDir,
+                        projectRoot: seed.projectRoot,
                         // The server composed this prompt from its own results;
                         // nothing here is supplied by the page.
                         onAsk: async ({ prompt }) => {

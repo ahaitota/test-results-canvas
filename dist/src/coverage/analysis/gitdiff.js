@@ -9,11 +9,15 @@
 // git is always run with a fixed argument list, never a shell string, and only
 // inside the resolved project root.
 import { execFileSync } from "node:child_process";
+import { readFileSync, statSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { normalizeSlashes } from "../sources/paths.js";
 import { isProductionSource } from "../sources/classify.js";
 const GIT_TIMEOUT_MS = 5000;
 const MAX_BUFFER = 16 * 1024 * 1024;
+// Past this a file is generated or vendored, and its exact length tells nobody
+// anything useful.
+const MAX_COUNT_BYTES = 2 * 1024 * 1024;
 // Runs git commands inside one project root, returning null on any failure.
 function createGitExec(root) {
     return (args) => {
@@ -30,6 +34,23 @@ function createGitExec(root) {
             return null;
         }
     };
+}
+// How many lines a file has, or undefined if it can't be read. A trailing
+// newline ends the last line rather than starting an empty one.
+function countLines(absPath) {
+    try {
+        const st = statSync(absPath);
+        if (!st.isFile() || st.size > MAX_COUNT_BYTES)
+            return undefined;
+        const text = readFileSync(absPath, "utf8");
+        if (!text)
+            return 0;
+        const n = text.split(/\r?\n/).length;
+        return text.endsWith("\n") ? n - 1 : n;
+    }
+    catch {
+        return undefined;
+    }
 }
 // git quotes awkward paths as a C string: "src/a\tb.ts". Non-ASCII arrives as
 // one octal escape per UTF-8 byte, so a single character can span several
@@ -153,8 +174,13 @@ export function changedLines(root, options = {}) {
     const untracked = git(["ls-files", "--others", "--exclude-standard"]);
     for (const raw of String(untracked || "").split(/\r?\n/)) {
         const path = normalizeSlashes(unquotePath(raw));
-        if (path)
-            files.push({ path, absPath: resolvePath(base, path), lines: new Set(), all: true });
+        if (!path)
+            continue;
+        const absPath = resolvePath(base, path);
+        // Only production files reach patch coverage, so only they are worth
+        // opening to measure.
+        const lineCount = isProductionSource(path) ? countLines(absPath) : undefined;
+        files.push({ path, absPath, lines: new Set(), all: true, lineCount });
     }
     // Uncommitted edits (staged and unstaged) against HEAD.
     const working = git(["diff", "--unified=0", "--no-color", "--no-ext-diff", "HEAD"]);

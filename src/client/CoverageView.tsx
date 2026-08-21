@@ -9,7 +9,7 @@
 // it stays a header stat rather than the headline.
 
 import { useState } from "preact/hooks";
-import type { CoveragePayload, CoverageSuggestion } from "../coverage/model/payload";
+import type { CoveragePayload, CoverageSuggestion, CoverageLoadFailure } from "../coverage/model/payload";
 import type { CoverageRow, CoverageSort } from "./coverageDerive";
 import { bandOf, buildCoverageRows, headlinePercent, headlineTotals, patchHeadline, rowNote } from "./coverageDerive";
 import { CoverageEmpty } from "./CoverageEmpty";
@@ -157,12 +157,12 @@ const SORTS: { key: CoverageSort; label: string; hint: string }[] = [
   { key: "name", label: "Name", hint: "alphabetical by path" },
 ];
 
-export function CoverageView({ coverage, hint }: { coverage: CoveragePayload | null; hint: CoverageSuggestion | null }) {
+export function CoverageView({ coverage, hint, error }: { coverage: CoveragePayload | null; hint: CoverageSuggestion | null; error: CoverageLoadFailure | null }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<CoverageSort>("actionable");
 
-  if (!coverage) return <CoverageEmpty hint={hint} />;
+  if (!coverage) return <CoverageEmpty hint={hint} error={error} />;
 
   // Keyed by path, which is now enough: one row per file means a path
   // identifies a row again. It did not when the same file appeared in three

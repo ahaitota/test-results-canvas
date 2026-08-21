@@ -16,10 +16,10 @@ import { rankUncovered } from "./analysis/rank.js";
 import { isProductionSource, isTestPath } from "./sources/classify.js";
 import { commentSyntaxFor, nonExecutableLines } from "./sources/executable.js";
 import type { CoverageFile, CoverageReport } from "./model/types.js";
-import type { CoverageFileSummary, CoveragePayload } from "./model/payload.js";
+import type { CoverageFileSummary, CoveragePayload, CoverageLoadFailure } from "./model/payload.js";
 import { percentOf, tallyLines, totalsOf } from "./model/totals.js";
 
-export type { CoverageFileSummary, CoveragePayload } from "./model/payload.js";
+export type { CoverageFileSummary, CoveragePayload, CoverageLoadFailure } from "./model/payload.js";
 
 // A coverage report for a very large solution is still only tens of MB; past
 // this it isn't something the panel can usefully render.
@@ -81,6 +81,12 @@ export interface LoadedCoverage {
     changedByPath: Map<string, FileChanges>;
 }
 
+// Why a report could not be loaded. Declared with the wire contract, since the
+// panel is shown the reason too.
+export type CoverageLoadResult =
+    | { ok: true; coverage: LoadedCoverage }
+    | { ok: false; reason: CoverageLoadFailure };
+
 // One row per file for the panel: its percentage, whether the diff touched it,
 // and whether it is itself a test.
 function summarize(files: readonly CoverageFile[], changedPaths: readonly string[]): CoverageFileSummary[] {
@@ -131,23 +137,32 @@ export interface LoadOptions {
     keepNonExecutable?: boolean;
 }
 
-// Read one coverage report and derive everything from it. Returns null when the
-// file is missing, too large, or not a coverage report at all.
-export function loadCoverageFile(coverageFile: string, options: LoadOptions = {}): LoadedCoverage | null {
+// Read one coverage report and derive everything from it. Failure is reported
+// with a reason rather than a bare null, so the caller can tell "there is no
+// report" from "the report was too big to read".
+export function loadCoverageFile(coverageFile: string, options: LoadOptions = {}): CoverageLoadResult {
     const abs = resolvePath(String(coverageFile || ""));
-    let text: string;
     let mtimeMs: number;
+    let size: number;
     try {
         const st = statSync(abs);
-        if (!st.isFile() || st.size > MAX_REPORT_BYTES) return null;
+        if (!st.isFile()) return { ok: false, reason: "missing" };
         mtimeMs = st.mtimeMs;
+        size = st.size;
+    } catch {
+        return { ok: false, reason: "missing" };
+    }
+    if (size > MAX_REPORT_BYTES) return { ok: false, reason: "too-large" };
+
+    let text: string;
+    try {
         text = readFileSync(abs, "utf8");
     } catch {
-        return null;
+        return { ok: false, reason: "unreadable" };
     }
 
     const parsed = parseCoverage(text);
-    if (!parsed) return null;
+    if (!parsed) return { ok: false, reason: "not-coverage" };
 
     const projectRoot = options.projectRoot ?? findProjectRoot(dirname(abs));
     const resolved = resolveReportSources(parsed, { projectRoot });
@@ -172,20 +187,23 @@ export function loadCoverageFile(coverageFile: string, options: LoadOptions = {}
     const production = productionOnly(report.files);
 
     return {
-        path: abs,
-        mtimeMs,
-        report,
-        projectRoot,
-        changedByPath,
-        payload: {
-            file: basename(abs),
-            format: report.format,
-            totals: report.totals,
-            files: summarize(report.files, changedPaths),
-            productionPercent: percentOf(production.coveredLines, production.totalLines),
-            productionTotals: production,
-            patch,
-            hotspots,
+        ok: true,
+        coverage: {
+            path: abs,
+            mtimeMs,
+            report,
+            projectRoot,
+            changedByPath,
+            payload: {
+                file: basename(abs),
+                format: report.format,
+                totals: report.totals,
+                files: summarize(report.files, changedPaths),
+                productionPercent: percentOf(production.coveredLines, production.totalLines),
+                productionTotals: production,
+                patch,
+                hotspots,
+            },
         },
     };
 }

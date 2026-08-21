@@ -100,25 +100,35 @@ function productionOnly(files) {
     }
     return { coveredLines, totalLines, files: count };
 }
-// Read one coverage report and derive everything from it. Returns null when the
-// file is missing, too large, or not a coverage report at all.
+// Read one coverage report and derive everything from it. Failure is reported
+// with a reason rather than a bare null, so the caller can tell "there is no
+// report" from "the report was too big to read".
 export function loadCoverageFile(coverageFile, options = {}) {
     const abs = resolvePath(String(coverageFile || ""));
-    let text;
     let mtimeMs;
+    let size;
     try {
         const st = statSync(abs);
-        if (!st.isFile() || st.size > MAX_REPORT_BYTES)
-            return null;
+        if (!st.isFile())
+            return { ok: false, reason: "missing" };
         mtimeMs = st.mtimeMs;
+        size = st.size;
+    }
+    catch {
+        return { ok: false, reason: "missing" };
+    }
+    if (size > MAX_REPORT_BYTES)
+        return { ok: false, reason: "too-large" };
+    let text;
+    try {
         text = readFileSync(abs, "utf8");
     }
     catch {
-        return null;
+        return { ok: false, reason: "unreadable" };
     }
     const parsed = parseCoverage(text);
     if (!parsed)
-        return null;
+        return { ok: false, reason: "not-coverage" };
     const projectRoot = options.projectRoot ?? findProjectRoot(dirname(abs));
     const resolved = resolveReportSources(parsed, { projectRoot });
     const report = options.keepNonExecutable ? resolved : dropNonExecutable(resolved);
@@ -139,20 +149,23 @@ export function loadCoverageFile(coverageFile, options = {}) {
         changedByPath.set(normalizeSlashes(f.absPath).toLowerCase(), f);
     const production = productionOnly(report.files);
     return {
-        path: abs,
-        mtimeMs,
-        report,
-        projectRoot,
-        changedByPath,
-        payload: {
-            file: basename(abs),
-            format: report.format,
-            totals: report.totals,
-            files: summarize(report.files, changedPaths),
-            productionPercent: percentOf(production.coveredLines, production.totalLines),
-            productionTotals: production,
-            patch,
-            hotspots,
+        ok: true,
+        coverage: {
+            path: abs,
+            mtimeMs,
+            report,
+            projectRoot,
+            changedByPath,
+            payload: {
+                file: basename(abs),
+                format: report.format,
+                totals: report.totals,
+                files: summarize(report.files, changedPaths),
+                productionPercent: percentOf(production.coveredLines, production.totalLines),
+                productionTotals: production,
+                patch,
+                hotspots,
+            },
         },
     };
 }

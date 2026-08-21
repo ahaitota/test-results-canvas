@@ -30,11 +30,13 @@ export function asOpenInput(input: { [k: string]: unknown } | undefined): {
     resultsDir?: string;
     coverageFile?: string;
     coverageDir?: string;
+    projectRoot?: string;
 } {
     return {
         resultsFile: asString(input?.resultsFile),
         resultsDir: asString(input?.resultsDir),
         coverageFile: asString(input?.coverageFile),
         coverageDir: asString(input?.coverageDir),
+        projectRoot: asString(input?.projectRoot),
     };
 }

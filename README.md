@@ -17,125 +17,8 @@ Once installed, you don't have to do anything special. In **any** project:
 Supported report formats: `.trx` (VSTest/`dotnet test --logger trx`) and JUnit
 `.xml` (Maven Surefire, Gradle, pytest, jest-junit, etc.).
 
-## Coverage
-
-A results file records *which tests ran*, never *which code they exercised* —
-that comes from a separate report written by a coverage collector during the same
-run. The canvas finds that report next to the results it already loaded and adds
-a **Coverage** tab beside **Tests**.
-
-| Results loaded | Coverage format it looks for | Produced by |
-| --- | --- | --- |
-| `.trx` (.NET) | Cobertura XML | `dotnet test --collect:"XPlat Code Coverage"` |
-| JUnit `.xml` (Java) | JaCoCo XML | Maven + jacoco-maven-plugin, `gradle jacocoTestReport` |
-| JUnit `.xml` (JS/TS, Python, Go, Rust) | LCOV or Cobertura | `vitest --coverage`, `jest --coverage`, `c8`, `nyc`, `pytest --cov --cov-report=xml` |
-
-The format is detected by **content**, not filename, because Cobertura and JaCoCo
-both use `.xml` and would otherwise collide with JUnit results.
-
-The tab is **one list, one row per file**, ordered by what most needs a test. Each
-row carries everything known about that file at once:
-
-- **Its coverage** — covered/total lines, a bar and a percentage.
-- **Whether the change set touched it** — a `changed` tag, plus how its changed
-  lines fared: *"3 of 12 changed lines untested: 40–42"*. This is what answers
-  *"the agent wrote new code — did it test it?"*; a repo-wide percentage cannot,
-  because forty new untested lines barely move it. The change set is compared
-  against uncommitted work over `HEAD`, or the branch against its merge-base when
-  the tree is clean.
-- **Where its worst untested block is** — *"biggest gap lines 120–188 (69
-  untested), +2 more blocks"*, ranked with changed files first, then the largest
-  contiguous gaps, skipping tests and generated files.
-- **Whether it was measured at all** — a changed file the report never mentions
-  reads `not measured` / `no data`, never `0%`, and says how much it hides:
-  *"212 changed lines, none of them measured"*. The two states look alike and
-  mean opposite things: one is untested code, the other is code nothing even
-  observed. Size is the only measure a blind spot has, so it is also what ranks
-  them against each other.
-
-Expanding a row shows the real source with a per-line gutter: green = executed
-(with its hit count), red = executable but never ran, dim = not executable.
-
-### Why a file says `not measured`
-
-A coverage report only knows about files that were **loaded and executed while
-the tests ran**. A file the test process never loaded is absent from the report
-entirely, which is not the same as scoring zero. The usual causes:
-
-- **A different runtime than the one being measured.** Browser code under a Node
-  runner, or vice versa. It may be thoroughly tested by a browser-driving suite
-  such as Playwright, but unless that suite also writes a coverage report,
-  nothing records it.
-- **A different language.** A Node run cannot measure C#, and a coverlet run
-  cannot measure TypeScript.
-- **Nothing left to execute.** A file of only type declarations or interfaces
-  compiles away to no runtime code, so there is nothing a test could cover.
-- **Entry points loaded only in production**, such as host or plugin glue that
-  no test imports.
-
-The panel deliberately does not guess which of these applies: it reports that
-nobody looked, and how much code that leaves unobserved. A blind spot is worth
-seeing even when it turns out to be harmless — and *especially* when the reason
-is the first one, because that code looks tested and is not being watched.
-
-### Measuring the browser and server halves too
-
-The first cause above was this repository's own biggest blind spot: everything
-in `src/client/` is driven hard by the Playwright suite, but Playwright wrote no
-coverage, so a third of the codebase read `not measured`. One command now
-collects all three:
-
-```bash
-npm run coverage
-```
-
-It runs the unit tests with Node's coverage, re-runs the e2e suite collecting
-V8 coverage from **both** the browser (the client bundle) and Node
-(`NODE_V8_COVERAGE`, which catches the server the specs boot in-process), maps
-each back through source maps to the original `.ts`/`.tsx`, and merges the three
-into `test-results/lcov-merged.info` — the file to point the canvas at.
-
-On this repository that moves the picture from *78% over 24 files* to *87% over
-41 files*: `src/server.ts` goes from 56% to 84% once the e2e requests count, and
-seventeen client files stop reading `not measured` altogether. Nothing is
-double-counted; a line covered by two runners is still one line.
-
-Two details worth knowing if you change this:
-
-- **The measured bundle is built unminified.** Minified code collapses whole
-  functions onto one line, so a source map can only place a handful of
-  positions per file and a 300-line component reports two dozen lines. The
-  runner rebuilds unminified, keeps that bundle aside for the report, and
-  restores the shipped minified one when the run ends — `dist/` is committed,
-  and CI fails if a run leaves it dirty.
-- **V8 line coverage is coarser than instrumentation.** It is derived from
-  execution ranges rather than a counter on every statement, so JSX-heavy files
-  report fewer measurable lines than they have. The percentages are real; the
-  line totals are a floor, not a census.
-
-The default sort, *Most useful to test*, puts unmeasured new code first, then
-changed files by how many new lines went untested, then the biggest remaining
-gaps; test files sink to the bottom. *Lowest coverage* and *Name* are there for
-browsing, and the filter box narrows by path.
-
-> This replaced three separate lists — *New code*, *Worth covering* and *All
-> files*. They overlapped rather than partitioned, so a changed file holding an
-> untested block was drawn three times with a third of its story in each, and
-> nothing on screen said they were the same file.
-
-When a run produced **no** coverage — by far the most common case, since almost no
-runner collects it unless asked — the tab names the exact command for the project
-in front of you and offers one click to have the agent re-run with it.
-
-> **The `/source` route serves files by allow-list, never by path filtering.**
-> A request is answered only if the resolved path is already present in the loaded
-> coverage report, so traversal is impossible by construction rather than by
-> sanitising — the same approach `resolveResultPath` takes for results files. The
-> "ask agent" prompts are composed server-side from the server's own report; the
-> page only ever posts a file reference, gated on the per-instance ask token.
-> `git` is spawned with a fixed argument list (never a shell string) inside the
-> resolved project root, and its absence degrades to "no changed-line data" rather
-> than an error.
+It also shows **code coverage** when the run produced a report (Cobertura, LCOV
+or JaCoCo), in a **Coverage** tab beside **Tests**.
 
 
 ## Install (once, per user — works in every project)
@@ -229,6 +112,7 @@ test/
   coverage-patch.test.ts     diff parsing, patch intersection, ranking, /source
   coverage-discover.test.ts  discovery, path resolution, project roots
   coverage-merge.test.ts     merging the unit, browser and server LCOV reports
+  coverage-server.test.ts    coverage state following the loaded results file
 e2e/                     Playwright browser tests (load the compiled dist server)
   coverage-collect.ts    picks the client bundle out of the browser's V8 coverage
 coverage-sample/         fixture sources the coverage reports point at. They are
@@ -284,36 +168,6 @@ Fixtures are generated into `bench/fixtures/` (gitignored) and reused. The list
 renders only the rows the viewport is over, so the DOM stays at roughly 150
 nodes whether the run has 100 tests or 50,000; the benchmark asserts that too,
 which is what stops a change from quietly reintroducing a full rebuild.
-
-### Coverage
-
-To see the coverage tab against this project's own code, run `npm run
-test:coverage` and open the canvas on `test-results/unit-junit.xml`; the LCOV
-report lands beside it and is discovered automatically. It uses Node's built-in
-`--experimental-test-coverage`, so it costs no extra dependency — and it is
-worth doing before touching `src/coverage/`, since running the feature on a real
-repository is what caught three bugs the fixtures could not.
-
-`--enable-source-maps` is load-bearing there, not decoration. Without it Node
-attributes V8's coverage ranges to the type-stripped JavaScript rather than to
-the `.ts` you wrote, and the line data comes back shifted: `composeAskPrompt`
-and its prompt-fencing helper reported zero hits despite ten tests calling them,
-while the project total was flattered by ~14 points.
-
-> **Read the Node-generated report's line detail with some suspicion anyway.**
-> Even with source maps, coverage over type-stripped TypeScript marks lines that
-> never survive to runtime as executable-but-uncovered. Comments and blank lines
-> are the bulk of it, and those the canvas now discards by consulting the source
-> (see `src/coverage/executable.ts`) — on this repository that was 1,059 lines
-> the report called coverable, 286 of them counted as *untested prose*, which
-> had put two file-header comments at the top of "worth covering".
->
-> What remains are type declarations: a `type` alias or an `interface` body is
-> real code to read but emits nothing to run. Those are left counted on purpose.
-> A rule sharp enough to recognise a type declaration would also be sharp enough
-> to hide genuine untested code, which is much the worse failure — whereas a
-> comment is provably inert, so removing it can hide nothing. Cobertura from
-> coverlet, and JaCoCo, report executable lines only and need none of this.
 
 Intra-project imports use `.js` specifiers (required by NodeNext ESM); `tsc`, `tsx`,
 and Playwright resolve them to the `.ts` sources. After changing any source, run

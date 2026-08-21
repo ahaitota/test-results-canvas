@@ -10,6 +10,7 @@
 // inside the resolved project root.
 
 import { execFileSync } from "node:child_process";
+import { readFileSync, statSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { normalizeSlashes } from "../sources/paths.js";
 import { isProductionSource } from "../sources/classify.js";
@@ -19,6 +20,9 @@ export type GitExec = (args: string[]) => string | null;
 
 const GIT_TIMEOUT_MS = 5000;
 const MAX_BUFFER = 16 * 1024 * 1024;
+// Past this a file is generated or vendored, and its exact length tells nobody
+// anything useful.
+const MAX_COUNT_BYTES = 2 * 1024 * 1024;
 
 // Runs git commands inside one project root, returning null on any failure.
 function createGitExec(root: string): GitExec {
@@ -37,6 +41,21 @@ function createGitExec(root: string): GitExec {
     };
 }
 
+// How many lines a file has, or undefined if it can't be read. A trailing
+// newline ends the last line rather than starting an empty one.
+function countLines(absPath: string): number | undefined {
+    try {
+        const st = statSync(absPath);
+        if (!st.isFile() || st.size > MAX_COUNT_BYTES) return undefined;
+        const text = readFileSync(absPath, "utf8");
+        if (!text) return 0;
+        const n = text.split(/\r?\n/).length;
+        return text.endsWith("\n") ? n - 1 : n;
+    } catch {
+        return undefined;
+    }
+}
+
 export interface FileChanges {
     // Repo-relative and forward-slashed, as git reports it.
     path: string;
@@ -46,6 +65,9 @@ export interface FileChanges {
     // A new or untracked file, where every executable line counts as new. Saves
     // reading the file just to list its lines.
     all: boolean;
+    // How long the file is, filled in only for untracked files. They have no
+    // diff to count, so without this they would look like zero-line changes.
+    lineCount?: number;
 }
 
 export interface DiffResult {
@@ -177,7 +199,12 @@ export function changedLines(root: string, options: DiffOptions = {}): DiffResul
     const untracked = git(["ls-files", "--others", "--exclude-standard"]);
     for (const raw of String(untracked || "").split(/\r?\n/)) {
         const path = normalizeSlashes(unquotePath(raw));
-        if (path) files.push({ path, absPath: resolvePath(base, path), lines: new Set(), all: true });
+        if (!path) continue;
+        const absPath = resolvePath(base, path);
+        // Only production files reach patch coverage, so only they are worth
+        // opening to measure.
+        const lineCount = isProductionSource(path) ? countLines(absPath) : undefined;
+        files.push({ path, absPath, lines: new Set(), all: true, lineCount });
     }
 
     // Uncommitted edits (staged and unstaged) against HEAD.

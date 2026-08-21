@@ -69,3 +69,4 @@ export interface CoverageSuggestion {
     command: string;
     outputHint: string;
 }
+export type CoverageLoadFailure = "missing" | "unreadable" | "too-large" | "not-coverage";

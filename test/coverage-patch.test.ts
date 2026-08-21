@@ -4,7 +4,9 @@
 // Run with: node --test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { resolve as resolvePath } from "node:path";
+import { resolve as resolvePath, join } from "node:path";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { parseUnifiedDiff, changedLines } from "../src/coverage/analysis/gitdiff.js";
 import type { GitExec, FileChanges } from "../src/coverage/analysis/gitdiff.js";
 import { computePatchCoverage, matchCoverageFile, toRanges } from "../src/coverage/analysis/patch.js";
@@ -103,6 +105,44 @@ test("changedLines prefers uncommitted work and marks untracked files as wholly 
   const edited = result.files.find((f) => f.path === "src/calc.ts")!;
   assert.deepEqual([...edited.lines], [2, 3]);
   assert.ok(!calls.some((c) => c[0] === "merge-base"), "a dirty tree must not fall back to the branch diff");
+});
+
+test("changedLines counts the lines of an untracked file so it is not sized zero", () => {
+  // An untracked file has no diff to count. Without a length it reported "0
+  // changed lines" and ranked below every measured file.
+  const dir = mkdtempSync(join(tmpdir(), "cov-untracked-"));
+  mkdirSync(join(dir, "src"));
+  writeFileSync(join(dir, "src", "brand-new.ts"), "a\nb\nc\n");
+  writeFileSync(join(dir, "README.md"), "one\ntwo\n");
+
+  const git: GitExec = (args) => {
+    if (args[0] === "rev-parse" && args[1] === "--show-toplevel") return `${dir}\n`;
+    if (args[0] === "rev-parse") return "true\n";
+    if (args[0] === "ls-files") return "src/brand-new.ts\nREADME.md\n";
+    if (args[0] === "diff") return "";
+    return null;
+  };
+  const result = changedLines(dir, { exec: git });
+  assert.ok(result);
+
+  const brandNew = result.files.find((f) => f.path === "src/brand-new.ts")!;
+  assert.equal(brandNew.lineCount, 3, "a trailing newline must not add a phantom line");
+
+  const readme = result.files.find((f) => f.path === "README.md")!;
+  assert.equal(readme.lineCount, undefined, "only production source is worth counting");
+
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("an unmeasured untracked file reports its length, not zero changed lines", () => {
+  const changes = {
+    against: "uncommitted changes",
+    files: [{ ...change("src/brand-new.ts", [], true), lineCount: 42 }],
+  };
+  const patch = computePatchCoverage(report([{ path: "src/other.ts", lines: { 1: 1 } }]), changes);
+  assert.ok(patch);
+  assert.equal(patch.files[0].unmeasured, true);
+  assert.equal(patch.files[0].changedLines, 42);
 });
 
 test("changedLines falls back to the merge-base when the tree is clean", () => {

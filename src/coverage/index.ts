@@ -19,7 +19,7 @@
 
 // Read one report and derive everything: parse, resolve, diff, rank, summarise.
 export { loadCoverageFile } from "./load.js";
-export type { LoadedCoverage, LoadOptions } from "./load.js";
+export type { LoadedCoverage, LoadOptions, CoverageLoadResult, CoverageLoadFailure } from "./load.js";
 
 // Find the report belonging to a results file, without being told where it is.
 export { discoverCoverageFor, newestCoverageFileIn } from "./discover.js";

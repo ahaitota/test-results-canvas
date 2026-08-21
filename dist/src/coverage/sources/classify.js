@@ -1,5 +1,5 @@
 // Tells application code apart from tests, generated output and non-code files.
-// The client bundle imports this too, so it stays dependency-free.
+// Pure string matching, so it can run anywhere and needs no filesystem access.
 import { normalizeSlashes } from "./paths.js";
 const SOURCE_EXTS = [
     ".cs", ".fs", ".vb",

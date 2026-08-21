@@ -180,7 +180,18 @@ export async function createResultsServer(options = {}) {
     let coverage = null;
     let coverageWatcher = null;
     let projectRoot;
+    // A root the caller named. Inference must never overwrite it: the agent ran
+    // the command and knows which package the report belongs to.
+    let explicitProjectRoot = options.projectRoot ? resolvePath(String(options.projectRoot)) : undefined;
+    if (explicitProjectRoot)
+        projectRoot = explicitProjectRoot;
     let coverageHint = null;
+    // Set when a report was found but could not be used, so the empty state can
+    // say why instead of implying no coverage was collected.
+    let coverageError = null;
+    // Remembered so a re-run does not fall back to discovery when the agent
+    // already named the report.
+    let explicitCoverageInput = null;
     // Used to find the coverage report that belongs with the loaded results.
     let resultsAbsPath = null;
     const loadOptions = () => ({
@@ -199,6 +210,7 @@ export async function createResultsServer(options = {}) {
             files: listResultFiles(discovered),
             coverage: coverage?.payload ?? null,
             coverageHint,
+            coverageError,
         });
     }
     function broadcast() {
@@ -233,20 +245,25 @@ export async function createResultsServer(options = {}) {
         if (!coverage)
             return false;
         const next = loadCoverageFile(coverage.path, loadOptions());
-        if (!next)
+        if (!next.ok)
             return false;
-        coverage = next;
+        coverage = next.coverage;
+        coverageError = null;
         return true;
     }
     // Returns false when the path is not a readable coverage report, leaving
-    // the previous state alone.
+    // the previous state alone. The reason is kept so the panel can explain a
+    // report it found but could not use.
     function setCoverage(absPath) {
         const loaded = loadCoverageFile(absPath, loadOptions());
-        if (!loaded)
+        if (!loaded.ok) {
+            coverageError = loaded.reason === "not-coverage" ? null : loaded.reason;
             return false;
-        coverage = loaded;
+        }
+        coverage = loaded.coverage;
+        coverageError = null;
         if (!projectRoot)
-            projectRoot = loaded.projectRoot;
+            projectRoot = loaded.coverage.projectRoot;
         refreshCoverageHint();
         if (watchEnabled)
             watchCoverageDir(dirname(absPath));
@@ -282,14 +299,24 @@ export async function createResultsServer(options = {}) {
         }
     }
     // Find and load the report that belongs with the results file just loaded.
+    //
+    // Whatever was loaded before belongs to a different run, so it is dropped
+    // first. Finding nothing must leave the panel with no coverage rather than
+    // the previous run's numbers.
     function attachCoverage(resultsAbs) {
         if (!coverageEnabled)
             return;
         resultsAbsPath = resultsAbs;
-        if (resultsAbs)
+        if (resultsAbs && !explicitProjectRoot)
             projectRoot = findProjectRoot(dirname(resultsAbs));
+        coverage = null;
+        coverageError = null;
+        stopCoverageWatcher();
         refreshCoverageHint();
         if (!resultsAbs)
+            return;
+        // A report the agent named outranks anything discovery would guess at.
+        if (explicitCoverageInput && seedCoverage(explicitCoverageInput, resultsAbs))
             return;
         const found = discoverCoverageFor(resultsAbs, projectRoot);
         if (found)
@@ -367,12 +394,18 @@ export async function createResultsServer(options = {}) {
         if (!coverageEnabled)
             return false;
         resultsAbsPath = resultsAbs ?? resultsAbsPath;
+        if (input.projectRoot) {
+            explicitProjectRoot = resolvePath(String(input.projectRoot));
+            projectRoot = explicitProjectRoot;
+        }
         if (input.coverageFile) {
             const p = resolvePath(String(input.coverageFile));
             if (!projectRoot)
                 projectRoot = findProjectRoot(dirname(p));
-            if (setCoverage(p))
+            if (setCoverage(p)) {
+                explicitCoverageInput = input;
                 return true;
+            }
         }
         if (input.coverageDir) {
             const d = resolvePath(String(input.coverageDir));
@@ -380,8 +413,10 @@ export async function createResultsServer(options = {}) {
             if (found) {
                 if (!projectRoot)
                     projectRoot = findProjectRoot(dirname(found));
-                if (setCoverage(found))
+                if (setCoverage(found)) {
+                    explicitCoverageInput = input;
                     return true;
+                }
             }
         }
         return false;
