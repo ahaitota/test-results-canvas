@@ -233,6 +233,143 @@ test("a watched report that goes bad clears the panel and says why, then recover
   }
 });
 
+// --- Review findings on replacing an explicit report ------------------------
+
+test("naming a report that cannot be read replaces the one on screen", () => {
+  const root = makeFixture();
+  const reportA = join(root, "with", "run", "coverage.cobertura.xml");
+  const gone = join(root, "with", "run", "gone.cobertura.xml");
+  return (async () => {
+    const handle = await createResultsServer({
+      port: 0, watch: false, projectRoot: join(root, "without"), gitExec: null,
+      resultsFile: join(root, "with", "run", "run.trx"),
+      coverageFile: reportA,
+    });
+    try {
+      assert.ok(handle.getCoverage());
+
+      // Naming coverage without naming a run: nothing re-attaches coverage to
+      // a results file here, so only the pointer itself can clear the panel.
+      handle.loadInput({ coverageFile: gone });
+      assert.equal(handle.getCoverage(), null, "the old report is not an answer to this request");
+      assert.equal(handle.coveragePath(), null);
+      // With coverage still on screen the client renders the report, not the
+      // empty state, so the reason would never reach the user.
+      assert.equal(handle.coverageError(), "missing");
+
+      // Same again through the direct call, which skips seeding entirely.
+      handle.loadCoverage(reportA);
+      assert.ok(handle.getCoverage(), "a good path loads again");
+      handle.loadCoverage(gone);
+      assert.equal(handle.getCoverage(), null);
+      assert.equal(handle.coverageError(), "missing");
+    } finally {
+      await handle.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  })();
+});
+
+test("a named report that does not exist yet is picked up when it appears", async () => {
+  const root = makeWatchFixture();
+  const pending = join(root, "a-cov", "later.cobertura.xml");
+  const handle = await createResultsServer({
+    port: 0, watch: true, projectRoot: join(root, "b"), gitExec: null,
+    resultsFile: join(root, "a", "run", "run.trx"),
+    coverageFile: pending,
+  });
+  try {
+    assert.equal(handle.getCoverage(), null, "named but not written yet");
+    assert.equal(handle.coverageError(), "missing");
+
+    // The run finishes and writes the file the caller named.
+    writeFileSync(pending, COBERTURA.replace("SRC", root));
+    await settle(900);
+    assert.ok(handle.getCoverage(), "the named path must load once it exists");
+    assert.equal(handle.coveragePath(), pending);
+  } finally {
+    await handle.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("waiting for a named report does not settle for a different one", async () => {
+  const root = makeWatchFixture();
+  const pending = join(root, "a-cov", "later.cobertura.xml");
+  const handle = await createResultsServer({
+    port: 0, watch: true, projectRoot: join(root, "b"), gitExec: null,
+    resultsFile: join(root, "a", "run", "run.trx"),
+    coverageFile: pending,
+  });
+  try {
+    assert.equal(handle.getCoverage(), null);
+
+    // A different report lands in the watched folder. The caller asked for a
+    // specific file, so this one is somebody else's.
+    writeFileSync(join(root, "a-cov", "other.cobertura.xml"), COBERTURA.replace("SRC", root));
+    await settle(900);
+    assert.equal(handle.getCoverage(), null, "only the named path may satisfy a named request");
+    assert.equal(handle.coverageError(), "missing");
+  } finally {
+    await handle.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a named report waits for a folder that the test run has not created yet", async () => {
+  const root = makeWatchFixture();
+  // The folder itself does not exist: naming coverage/lcov.info before the run
+  // writes it is the ordinary case, not an edge case.
+  const pending = join(root, "a-cov", "nested", "later.cobertura.xml");
+  const handle = await createResultsServer({
+    port: 0, watch: true, projectRoot: join(root, "b"), gitExec: null,
+    resultsFile: join(root, "a", "run", "run.trx"),
+    coverageFile: pending,
+  });
+  try {
+    assert.equal(handle.getCoverage(), null);
+
+    mkdirSync(join(root, "a-cov", "nested"));
+    await settle(700);
+    writeFileSync(pending, COBERTURA.replace("SRC", root));
+    await settle(900);
+    assert.ok(handle.getCoverage(), "the watch must follow the folder down as it appears");
+    assert.equal(handle.coveragePath(), pending);
+  } finally {
+    await handle.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a named folder holding no report clears the panel and waits for one", async () => {
+  const root = makeWatchFixture();
+  const empty = join(root, "empty-cov");
+  mkdirSync(empty);
+  const handle = await createResultsServer({
+    port: 0, watch: true, projectRoot: join(root, "b"), gitExec: null,
+    resultsFile: join(root, "a", "run", "run.trx"),
+    coverageFile: join(root, "a-cov", "coverage.cobertura.xml"),
+  });
+  try {
+    assert.ok(handle.getCoverage(), "the named file loads first");
+
+    // Pointing at a different folder is a new request; the old report is not
+    // an answer to it.
+    handle.loadInput({ coverageDir: empty });
+    assert.equal(handle.getCoverage(), null);
+    assert.equal(handle.coverageError(), "missing");
+
+    // The run finishes and drops a report in the folder that was named.
+    writeFileSync(join(empty, "coverage.cobertura.xml"), COBERTURA.replace("SRC", root));
+    await settle(900);
+    assert.ok(handle.getCoverage(), "a report appearing in the named folder is picked up");
+    assert.equal(handle.coveragePath(), join(empty, "coverage.cobertura.xml"));
+  } finally {
+    await handle.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a debounced watcher callback cannot resurrect the report of a retired run", async () => {
   const root = makeWatchFixture();
   const report = join(root, "a-cov", "coverage.cobertura.xml");
