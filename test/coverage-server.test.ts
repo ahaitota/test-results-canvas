@@ -446,7 +446,8 @@ async function coverageEvents(url: string, signal: AbortSignal): Promise<string[
         const line = frame.split("\n").find((l) => l.startsWith("data: "));
         if (!line || frame.startsWith("event:")) continue;
         const state = JSON.parse(line.slice(6));
-        seen.push(state.coverage ? "coverage" : (state.coverageError ?? "empty"));
+        const c = state.coverage;
+        seen.push(c ? `${c.totals.coveredLines}/${c.totals.totalLines}` : (state.coverageError ?? "empty"));
       }
     }
   } catch { /* aborted */ }
@@ -472,7 +473,7 @@ test("clients are told when a named report finally arrives", async () => {
     abort.abort();
     const seen = await events;
     assert.equal(seen[0], "missing", "the first frame reports nothing is there yet");
-    assert.ok(seen.includes("coverage"), `recovery must reach clients, saw: ${seen.join(" -> ")}`);
+    assert.ok(seen.includes("1/2"), `recovery must reach clients, saw: ${seen.join(" -> ")}`);
   } finally {
     abort.abort();
     await handle.close();
@@ -502,6 +503,242 @@ test("a re-run writing its report under a new name is picked up", async () => {
     assert.ok(handle.getCoverage(), "the re-run's report must load");
   } finally {
     await handle.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// --- Review findings on telling clients, and on stale bindings --------------
+
+// The same report rewritten with different numbers, which is what a re-run
+// overwriting coverage.cobertura.xml in place produces.
+const COBERTURA_FULL = COBERTURA
+  .replace('line-rate="0.5"', 'line-rate="1"')
+  .replace('<line number="2" hits="0" />', '<line number="2" hits="4" />');
+
+test("a re-run overwriting the report in place reaches the panel", async () => {
+  const root = makeWatchFixture();
+  const report = join(root, "a-cov", "coverage.cobertura.xml");
+  const handle = await createResultsServer({
+    port: 0, watch: true, projectRoot: join(root, "b"), gitExec: null,
+    resultsFile: join(root, "a", "run", "run.trx"),
+    coverageFile: report,
+  });
+  const abort = new AbortController();
+  const events = coverageEvents(handle.url, abort.signal);
+  try {
+    assert.equal(handle.getCoverage()?.totals.coveredLines, 1);
+
+    // Same path, still valid, different numbers. Nothing about the request
+    // changed, so only the contents can tell clients anything happened.
+    await settle(200);
+    writeFileSync(report, COBERTURA_FULL.replace("SRC", root));
+    await settle(900);
+    assert.equal(handle.getCoverage()?.totals.coveredLines, 2, "the handle sees the re-run");
+
+    abort.abort();
+    const seen = await events;
+    assert.deepEqual(seen, ["1/2", "2/2"], `the panel must see it too, saw: ${seen.join(" -> ")}`);
+  } finally {
+    abort.abort();
+    await handle.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a named folder built one level at a time is still picked up", async () => {
+  const root = makeWatchFixture();
+  const later = join(root, "step-cov", "inner", "deep");
+  const handle = await createResultsServer({
+    port: 0, watch: true, projectRoot: join(root, "b"), gitExec: null,
+    resultsFile: join(root, "a", "run", "run.trx"),
+    coverageDir: later,
+  });
+  try {
+    assert.equal(handle.coverageError(), "missing");
+
+    // A build script making the path one mkdir at a time. The watcher has to
+    // move down with it; standing on the first ancestor cannot see the rest.
+    for (const dir of [join(root, "step-cov"), join(root, "step-cov", "inner"), later]) {
+      mkdirSync(dir);
+      await settle(700);
+    }
+    writeFileSync(join(later, "coverage.cobertura.xml"), COBERTURA.replace("SRC", root));
+    await settle(900);
+    assert.ok(handle.getCoverage(), "the report must load once the last level holds it");
+  } finally {
+    await handle.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a watched folder that is deleted and remade recovers", async () => {
+  const root = makeWatchFixture();
+  const dir = join(root, "gone-cov");
+  mkdirSync(dir);
+  writeFileSync(join(dir, "coverage.cobertura.xml"), COBERTURA.replace("SRC", root));
+  const handle = await createResultsServer({
+    port: 0, watch: true, projectRoot: join(root, "b"), gitExec: null,
+    resultsFile: join(root, "a", "run", "run.trx"),
+    coverageDir: dir,
+  });
+  try {
+    assert.ok(handle.getCoverage(), "the folder holds a report to begin with");
+
+    // Test runners routinely wipe their output folder before writing it again,
+    // which kills the watch standing inside it.
+    rmSync(dir, { recursive: true, force: true });
+    await settle(900);
+    assert.equal(handle.getCoverage(), null);
+
+    mkdirSync(dir);
+    await settle(700);
+    writeFileSync(join(dir, "coverage.cobertura.xml"), COBERTURA.replace("SRC", root));
+    await settle(900);
+    assert.ok(handle.getCoverage(), "the rebuilt folder must be picked up again");
+
+    // And the folder must be watched again, or the next re-run goes unseen.
+    writeFileSync(join(dir, "coverage.cobertura.xml"), COBERTURA_FULL.replace("SRC", root));
+    await settle(900);
+    assert.equal(handle.getCoverage()?.totals.coveredLines, 2, "the rebuilt folder must be watched again");
+  } finally {
+    await handle.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a watched folder that is emptied, deleted and remade recovers", async () => {
+  const root = makeWatchFixture();
+  const dir = join(root, "empty-gone-cov");
+  mkdirSync(dir);
+  const handle = await createResultsServer({
+    port: 0, watch: true, projectRoot: join(root, "b"), gitExec: null,
+    resultsFile: join(root, "a", "run", "run.trx"),
+    coverageDir: dir,
+  });
+  try {
+    assert.equal(handle.coverageError(), "missing", "the folder is there but holds nothing");
+
+    // Deleting a folder with nothing in it gives the watcher no file event to
+    // notice, so only losing the watch itself can be the signal.
+    rmSync(dir, { recursive: true, force: true });
+    await settle(900);
+
+    mkdirSync(dir);
+    await settle(700);
+    writeFileSync(join(dir, "coverage.cobertura.xml"), COBERTURA.replace("SRC", root));
+    await settle(900);
+    assert.ok(handle.getCoverage(), "the rebuilt folder must still be picked up");
+  } finally {
+    await handle.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("coverage named without a run stays with the run that is loaded", () => {
+  const root = makeFixture();
+  return (async () => {
+    const handle = await createResultsServer({
+      port: 0, watch: false, projectRoot: join(root, "without"), gitExec: null,
+      resultsFile: join(root, "with", "run", "run.trx"),
+    });
+    try {
+      // Coverage on its own: it answers for the run on screen now, not for
+      // whichever run happens to be loaded next.
+      handle.loadInput({ coverageFile: join(root, "with", "run", "coverage.cobertura.xml") });
+      assert.ok(handle.getCoverage());
+
+      handle.loadInput({ resultsFile: join(root, "without", "run", "run.trx") });
+      assert.equal(handle.getCoverage(), null, "the other run has no coverage of its own");
+      assert.equal(handle.coveragePath(), null);
+    } finally {
+      await handle.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  })();
+});
+
+test("a report named through loadCoverage survives a reload of the same run", () => {
+  const root = makeFixture();
+  const first = join(root, "with", "run", "coverage.cobertura.xml");
+  const second = join(root, "second.cobertura.xml");
+  return (async () => {
+    writeFileSync(second, COBERTURA.replace("SRC", root));
+    const handle = await createResultsServer({
+      port: 0, watch: false, projectRoot: join(root, "without"), gitExec: null,
+      resultsFile: join(root, "with", "run", "run.trx"),
+      coverageFile: first,
+    });
+    try {
+      handle.loadCoverage(second);
+      assert.equal(handle.coveragePath(), second);
+
+      // Re-opening the same run must not undo the replacement.
+      handle.loadInput({ resultsFile: join(root, "with", "run", "run.trx") });
+      assert.equal(handle.coveragePath(), second, "the newer choice is the one remembered");
+    } finally {
+      await handle.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  })();
+});
+
+test("closing the server stops a coverage reload that was already queued", async () => {
+  const root = makeWatchFixture();
+  const report = join(root, "a-cov", "coverage.cobertura.xml");
+  const handle = await createResultsServer({
+    port: 0, watch: true, projectRoot: join(root, "b"), gitExec: null,
+    resultsFile: join(root, "a", "run", "run.trx"),
+    coverageFile: report,
+  });
+  let closed = false;
+  try {
+    assert.equal(handle.getCoverage()?.totals.coveredLines, 1);
+
+    // Arm the coverage debounce, then close inside its 400 ms window. A queued
+    // callback that still runs puts the watcher back up after teardown.
+    writeFileSync(report, COBERTURA.replace("SRC", root));
+    await settle(100);
+    await handle.close();
+    closed = true;
+    await settle(900);
+
+    writeFileSync(report, COBERTURA_FULL.replace("SRC", root));
+    await settle(900);
+    assert.equal(handle.getCoverage()?.totals.coveredLines, 1, "a closed server must not still be watching");
+  } finally {
+    if (!closed) await handle.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("closing the server stops a results reload that was already queued", async () => {
+  const root = makeWatchFixture();
+  const runDir = join(root, "a", "run");
+  const report = join(root, "a-cov", "coverage.cobertura.xml");
+  const handle = await createResultsServer({
+    port: 0, watch: true, projectRoot: join(root, "b"), gitExec: null,
+    resultsDir: runDir,
+    coverageFile: report,
+  });
+  let closed = false;
+  try {
+    assert.equal(handle.getCoverage()?.totals.coveredLines, 1);
+
+    // Arm the results debounce, then close well inside its 400 ms window. That
+    // queued callback re-derives coverage, so if it still runs after teardown
+    // it builds a fresh coverage watcher on a server that is already closed.
+    writeFileSync(join(runDir, "run.trx"), TRX);
+    await settle(100);
+    await handle.close();
+    closed = true;
+    await settle(900);
+
+    // Nothing should be watching any more, so a re-run's report goes unnoticed.
+    writeFileSync(report, COBERTURA_FULL.replace("SRC", root));
+    await settle(900);
+    assert.equal(handle.getCoverage()?.totals.coveredLines, 1, "a closed server must not still be watching");
+  } finally {
+    if (!closed) await handle.close();
     rmSync(root, { recursive: true, force: true });
   }
 });
