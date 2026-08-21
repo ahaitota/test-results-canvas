@@ -2,7 +2,7 @@
 // that lets expansion state follow a test rather than its position in the array.
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { TestResult } from "../types";
-import type { CoveragePayload, CoverageSuggestion } from "../coverage/payload";
+import type { CoveragePayload, CoverageSuggestion } from "../coverage/model/payload";
 import { reconcileRowKeys } from "../rowkey.js";
 
 // What the server pushes over SSE.

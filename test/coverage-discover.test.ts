@@ -8,11 +8,12 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from "node:
 import { tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 import { discoverCoverageFor, newestCoverageFileIn, pickBest } from "../src/coverage/discover.js";
-import { findProjectRoot, commonSuffixSegments, normalizeSlashes, resolveReportSources } from "../src/coverage/sources.js";
+import { findProjectRoot, resolveReportSources } from "../src/coverage/sources/resolve.js";
+import { commonSuffixSegments, normalizeSlashes } from "../src/coverage/sources/paths.js";
 import { loadCoverageFile } from "../src/coverage/load.js";
-import { readSourceView } from "../src/coverage/source.js";
+import { readSourceView } from "../src/coverage/sources/view.js";
 import { suggestCoverageCommand } from "../src/coverage/suggest.js";
-import { parseCobertura } from "../src/coverage/cobertura.js";
+import { parseCobertura } from "../src/coverage/formats/cobertura.js";
 
 let root: string;
 

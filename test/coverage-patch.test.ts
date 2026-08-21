@@ -5,13 +5,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { resolve as resolvePath } from "node:path";
-import { parseUnifiedDiff, changedLines } from "../src/coverage/gitdiff.js";
-import type { GitExec, FileChanges } from "../src/coverage/gitdiff.js";
-import { computePatchCoverage, matchCoverageFile, toRanges } from "../src/coverage/patch.js";
-import { rankUncovered } from "../src/coverage/rank.js";
-import { isProductionSource, isTestPath, isGeneratedPath } from "../src/coverage/classify.js";
-import { buildFiles, totalsOf } from "../src/coverage/types.js";
-import type { CoverageReport, LineHits } from "../src/coverage/types.js";
+import { parseUnifiedDiff, changedLines } from "../src/coverage/analysis/gitdiff.js";
+import type { GitExec, FileChanges } from "../src/coverage/analysis/gitdiff.js";
+import { computePatchCoverage, matchCoverageFile, toRanges } from "../src/coverage/analysis/patch.js";
+import { rankUncovered } from "../src/coverage/analysis/rank.js";
+import { isProductionSource, isTestPath, isGeneratedPath } from "../src/coverage/sources/classify.js";
+import { buildFiles, totalsOf } from "../src/coverage/model/totals.js";
+import type { CoverageReport, LineHits } from "../src/coverage/model/types.js";
 
 function report(entries: { path: string; lines: LineHits }[]): CoverageReport {
   const files = buildFiles(entries);

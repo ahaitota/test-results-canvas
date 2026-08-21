@@ -2,11 +2,11 @@
 // Run with: node --test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseCobertura } from "../src/coverage/cobertura.js";
-import { parseLcov } from "../src/coverage/lcov.js";
-import { parseJacoco } from "../src/coverage/jacoco.js";
-import { detectCoverageFormat, parseCoverage, looksLikeCoverage } from "../src/coverage/detect.js";
-import type { CoverageFile } from "../src/coverage/types.js";
+import { parseCobertura } from "../src/coverage/formats/cobertura.js";
+import { parseLcov } from "../src/coverage/formats/lcov.js";
+import { parseJacoco } from "../src/coverage/formats/jacoco.js";
+import { detectCoverageFormat, parseCoverage, looksLikeCoverage } from "../src/coverage/formats/detect.js";
+import type { CoverageFile } from "../src/coverage/model/types.js";
 
 const byPath = (files: CoverageFile[]) => Object.fromEntries(files.map((f) => [f.path, f]));
 

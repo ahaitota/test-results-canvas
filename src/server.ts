@@ -12,15 +12,16 @@ import { serializeTrx, parseTrx } from "./parsers/trx.js";
 import { parseJUnit } from "./parsers/junit.js";
 import { labelForPath } from "./labels.js";
 import { composeAskPrompt, composeCoveragePrompt, composePatchCoveragePrompt, composeEnableCoveragePrompt } from "./ask.js";
-import { loadCoverageFile } from "./coverage/load.js";
-import type { LoadedCoverage } from "./coverage/load.js";
-import { discoverCoverageFor, newestCoverageFileIn } from "./coverage/discover.js";
-import { findProjectRoot } from "./coverage/sources.js";
-import { suggestCoverageCommand } from "./coverage/suggest.js";
-import type { CoverageSuggestion } from "./coverage/suggest.js";
-import { readSourceView } from "./coverage/source.js";
-import { hasCoverageExt } from "./coverage/detect.js";
-import type { GitExec } from "./coverage/gitdiff.js";
+import {
+    loadCoverageFile,
+    discoverCoverageFor,
+    newestCoverageFileIn,
+    findProjectRoot,
+    suggestCoverageCommand,
+    readSourceView,
+    hasCoverageExt,
+} from "./coverage/index.js";
+import type { LoadedCoverage, CoverageSuggestion, GitExec } from "./coverage/index.js";
 import { randomBytes } from "node:crypto";
 import type { TestResult, TestStatus } from "./types.js";
 

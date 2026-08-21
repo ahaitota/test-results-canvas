@@ -1,22 +1,15 @@
 // The Coverage tab: one row per file, and every file exactly once.
 //
-// This used to be three lists -- "New code", "Worth covering" and "All files" --
-// ordered by how actionable each was. They did not partition the files, they
-// overlapped: a changed file containing a large untested block appeared in all
-// three, showing a third of its story in each, with nothing on screen saying
-// they were the same file. Reading it meant cross-referencing by name.
-//
-// Now each file states everything at once: its coverage, whether the change set
-// touched it, how its changed lines fared, and where its worst untested block
-// is. The prioritisation the sections used to express through their order
-// survives as the default sort (see rowTier), so the code that most needs a
-// test is still what you read first.
+// Each row states everything about its file at once: its coverage, whether the
+// change set touched it, how its changed lines fared, and where its worst
+// untested block is. Rows are sorted so the code that most needs a test is what
+// you read first (see rowTier).
 //
 // A project-wide percentage leads nowhere ("74%" tells nobody what to do), so
 // it stays a header stat rather than the headline.
 
 import { useState } from "preact/hooks";
-import type { CoveragePayload, CoverageSuggestion } from "../coverage/payload";
+import type { CoveragePayload, CoverageSuggestion } from "../coverage/model/payload";
 import type { CoverageRow, CoverageSort } from "./coverageDerive";
 import { bandOf, buildCoverageRows, headlinePercent, headlineTotals, patchHeadline, rowNote } from "./coverageDerive";
 import { CoverageEmpty } from "./CoverageEmpty";

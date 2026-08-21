@@ -13,9 +13,7 @@ import { dirname, join, resolve as resolvePath } from "node:path";
 import { watchFile, readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { joinSession, createCanvas } from "@github/copilot-sdk/extension";
 import { createResultsServer, looksLikeResults, RESULT_EXTS } from "./src/server.js";
-import { discoverCoverageFor } from "./src/coverage/discover.js";
-import { findProjectRoot } from "./src/coverage/sources.js";
-import { suggestCoverageCommand } from "./src/coverage/suggest.js";
+import { discoverCoverageFor, findProjectRoot, suggestCoverageCommand } from "./src/coverage/index.js";
 // Action/open input reaches handlers typed as `unknown`; narrow it here first.
 import { asResultInput, asOpenInput } from "./src/validate.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));

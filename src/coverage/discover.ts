@@ -1,29 +1,29 @@
 // Finds the coverage report that belongs with a results file.
 //
-// Coverage is written by the same run into a sibling or a well-known reporting
-// folder, so the report can be found without asking:
-// TestResults/<guid>/coverage.cobertura.xml for dotnet, coverage/lcov.info for
-// vitest/jest/c8, target/site/jacoco/jacoco.xml for maven, coverage.xml for
-// coverage.py. Bounded the same way the results scan is.
+// The same test run writes coverage into a sibling folder or a well-known
+// reporting folder, so we can find it without asking: TestResults/<guid>/
+// coverage.cobertura.xml for dotnet, coverage/lcov.info for vitest/jest/c8,
+// target/site/jacoco/jacoco.xml for maven, coverage.xml for coverage.py. The
+// search is bounded the same way the results scan is.
 
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import type { Dirent } from "node:fs";
 import { dirname, join, resolve as resolvePath } from "node:path";
-import { hasCoverageExt, looksLikeCoverage, nameScore } from "./detect.js";
+import { hasCoverageExt, looksLikeCoverage, nameScore } from "./formats/detect.js";
 
 const IGNORE_DIRS = new Set([
     "node_modules", ".git", ".hg", ".svn", ".vs", ".idea", ".venv", "venv",
     "packages", ".nuget", ".gradle", ".next", ".nuxt", "__pycache__",
 ]);
 
-// Folders that exist specifically to hold reports; worth descending into even
-// though sibling folders like bin/obj are skipped.
+// Folders that exist specifically to hold reports, so they are worth going into
+// even though siblings like bin/obj are skipped.
 const REPORT_DIRS = new Set(["coverage", "testresults", "test-results", "target", "build", "site", "jacoco", "reports", "out", "artifacts", "htmlcov", "test"]);
 
 const MAX_DEPTH = 5;
 const MAX_ENTRIES = 6000;
-// A coverage report for a big solution is large but not unbounded; anything past
-// this is not something the panel can usefully render.
+// A report for a big solution is large but not unbounded; past this it isn't
+// something the panel can usefully render.
 const MAX_REPORT_BYTES = 64 * 1024 * 1024;
 
 interface CoverageCandidate {
@@ -72,7 +72,8 @@ function findCoverageFiles(root: string, opts: { maxDepth?: number } = {}): Cove
                 const lower = ent.name.toLowerCase();
                 if (IGNORE_DIRS.has(lower)) continue;
                 // bin/obj hold build output, but `dotnet test` also drops
-                // TestResults under them; descend only via known report folders.
+                // TestResults under them, so only enter via a known report
+                // folder.
                 if ((lower === "bin" || lower === "obj" || lower === "dist") && !REPORT_DIRS.has(lower)) continue;
                 stack.push({ dir: abs, depth: depth + 1 });
                 continue;
@@ -88,7 +89,7 @@ function findCoverageFiles(root: string, opts: { maxDepth?: number } = {}): Cove
 }
 
 // Best candidate: newest wins, and a recognisable name breaks ties between
-// reports written in the same instant (a single run can emit several).
+// reports written in the same instant, since one run can emit several.
 export function pickBest(candidates: readonly CoverageCandidate[]): string | null {
     let best: CoverageCandidate | null = null;
     for (const c of candidates) {
@@ -119,13 +120,13 @@ export function newestCoverageFileIn(dir: string): string | null {
 
 // Locate the report that belongs with `resultsFile`.
 //
-// Searched nearest-first: proximity beats recency, since a stale report
-// elsewhere in the repo could easily be newer than the one just written.
+// Nearest first, because closeness beats recency: a stale report elsewhere in
+// the repo could easily be newer than the one just written.
 export function discoverCoverageFor(resultsFile: string, projectRoot?: string): string | null {
     const startDir = dirname(resolvePath(resultsFile));
 
-    // 1. Alongside the results file, then in its parent -- `dotnet test` writes
-    //    TestResults/<guid>/coverage.cobertura.xml next to TestResults/*.trx.
+    // 1. Next to the results file, then in its parent -- `dotnet test` writes
+    //    TestResults/<guid>/coverage.cobertura.xml beside TestResults/*.trx.
     const sibling = newestCoverageFileIn(startDir);
     if (sibling) return sibling;
 
@@ -138,8 +139,8 @@ export function discoverCoverageFor(resultsFile: string, projectRoot?: string): 
         if (fromParent) return fromParent;
     }
 
-    // 2. The conventional reporting folders, checked directly before paying for
-    //    a full walk.
+    // 2. The usual reporting folders, checked directly before paying for a
+    //    full walk.
     if (projectRoot && existsSync(projectRoot)) {
         const conventional = [
             join(projectRoot, "coverage"),

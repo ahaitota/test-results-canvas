@@ -1,28 +1,29 @@
-// Ties the coverage pieces together into the state the panel renders:
-// parse -> resolve real paths -> intersect with the git diff -> rank -> payload.
+// Runs the whole coverage pipeline and produces the state the panel renders:
+// parse -> find the real files -> cross with the git diff -> rank -> payload.
 //
 // Only summaries go over SSE. Per-line hit maps stay on the server and are sent
 // with the file's text when a row is expanded (see the /source route).
 import { readFileSync, statSync } from "node:fs";
 import { basename, dirname, resolve as resolvePath } from "node:path";
-import { parseCoverage } from "./detect.js";
-import { resolveReportSources, findProjectRoot, normalizeSlashes } from "./sources.js";
-import { changedLines } from "./gitdiff.js";
-import { computePatchCoverage } from "./patch.js";
-import { rankUncovered } from "./rank.js";
-import { isProductionSource, isTestPath } from "./classify.js";
-import { commentSyntaxFor, nonExecutableLines } from "./executable.js";
-import { percentOf, tallyLines, totalsOf } from "./types.js";
+import { parseCoverage } from "./formats/detect.js";
+import { resolveReportSources, findProjectRoot } from "./sources/resolve.js";
+import { normalizeSlashes } from "./sources/paths.js";
+import { changedLines } from "./analysis/gitdiff.js";
+import { computePatchCoverage } from "./analysis/patch.js";
+import { rankUncovered } from "./analysis/rank.js";
+import { isProductionSource, isTestPath } from "./sources/classify.js";
+import { commentSyntaxFor, nonExecutableLines } from "./sources/executable.js";
+import { percentOf, tallyLines, totalsOf } from "./model/totals.js";
 // A coverage report for a very large solution is still only tens of MB; past
-// this it is not something the panel can usefully render.
+// this it isn't something the panel can usefully render.
 const MAX_REPORT_BYTES = 64 * 1024 * 1024;
-// Ceilings for the pass that re-reads sources to discard comment lines, so the
+// Limits for the pass that re-reads sources to discard comment lines, so the
 // work stays bounded on a report naming thousands of files.
 const MAX_SOURCE_BYTES = 2 * 1024 * 1024;
 const MAX_SCAN_BYTES = 96 * 1024 * 1024;
-// Drop lines the report calls coverable but the source shows to be comment or
-// blank. Both numerator and denominator lose the line: a "covered" comment is
-// no more meaningful than an uncovered one.
+// Drop lines the report calls coverable but the source shows to be comments or
+// blanks. Both sides of the fraction lose the line, since a "covered" comment
+// is no more meaningful than an uncovered one.
 function dropNonExecutable(report) {
     let budget = MAX_SCAN_BYTES;
     let changed = false;
@@ -39,7 +40,7 @@ function dropNonExecutable(report) {
             text = readFileSync(f.absPath, "utf8");
         }
         catch {
-            // Unreadable source means no proof either way, so nothing is dropped.
+            // Unreadable source is no proof either way, so nothing is dropped.
             return f;
         }
         const inert = nonExecutableLines(text, syntax);
@@ -64,9 +65,13 @@ function dropNonExecutable(report) {
         return report;
     return { ...report, files, totals: totalsOf(files) };
 }
+// One row per file for the panel: its percentage, whether the diff touched it,
+// and whether it is itself a test.
 function summarize(files, changedPaths) {
     const changedKeys = changedPaths.map((p) => normalizeSlashes(p).toLowerCase());
     return files.map((f) => {
+        // git and the report may spell the same file differently, so match on
+        // either path, allowing one to be the tail of the other.
         const abs = f.absPath ? normalizeSlashes(f.absPath).toLowerCase() : "";
         const own = normalizeSlashes(f.path).toLowerCase();
         const changed = changedKeys.some((c) => c === abs || c === own || (abs && abs.endsWith(`/${c}`)) || own.endsWith(`/${c}`));
@@ -81,7 +86,7 @@ function summarize(files, changedPaths) {
         };
     });
 }
-// Coverage counting production code only.
+// Totals counting production code only.
 function productionOnly(files) {
     let coveredLines = 0;
     let totalLines = 0;
@@ -95,8 +100,8 @@ function productionOnly(files) {
     }
     return { coveredLines, totalLines, files: count };
 }
-// Read and fully derive one coverage report. Returns null when the file is
-// missing, too large, or not a coverage report at all.
+// Read one coverage report and derive everything from it. Returns null when the
+// file is missing, too large, or not a coverage report at all.
 export function loadCoverageFile(coverageFile, options = {}) {
     const abs = resolvePath(String(coverageFile || ""));
     let text;

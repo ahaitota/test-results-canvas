@@ -2,8 +2,8 @@
 // asks about a test. Pure and host-free so it can be unit-tested without the app
 // or a live session -- the SDK is never imported here.
 import type { TestResult } from "./types.js";
-import type { PatchCoverage } from "./coverage/patch.js";
-import { toRanges } from "./coverage/patch.js";
+import type { PatchCoverage } from "./coverage/index.js";
+import { toRanges } from "./coverage/index.js";
 
 // Failure output can be a full stack trace. Cap it so the injected message stays
 // readable in the conversation; the agent can always open the file for the rest.

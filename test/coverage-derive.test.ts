@@ -17,7 +17,7 @@ import {
   headlineTotals,
   patchHeadline,
 } from "../src/client/coverageDerive.js";
-import type { CoveragePayload, CoverageFileSummary, PatchCoverage, PatchFile, UncoveredRegion } from "../src/coverage/payload.js";
+import type { CoveragePayload, CoverageFileSummary, PatchCoverage, PatchFile, UncoveredRegion } from "../src/coverage/model/payload.js";
 
 function file(path: string, coveredLines: number, totalLines: number, rest: Partial<CoverageFileSummary> = {}): CoverageFileSummary {
   return {

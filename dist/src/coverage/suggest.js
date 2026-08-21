@@ -1,9 +1,8 @@
-// What to tell a user (or the agent) when a test run produced no coverage.
+// What to tell the user (or the agent) when a test run produced no coverage.
 //
-// This is the most common state by far: almost no runner collects coverage
-// unless asked. Rather than showing an empty panel, the canvas names the exact
-// command for the project in front of it -- which is the difference between the
-// feature being useful and being ignored.
+// This is by far the most common state, since almost no runner collects
+// coverage unless asked. Rather than show an empty panel, the canvas names the
+// exact command for the project in front of it.
 //
 // Detection is by marker file, so it works without running anything.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
@@ -18,6 +17,7 @@ const FALLBACK = {
     command: "re-run the tests with coverage enabled",
     outputHint: "a Cobertura, LCOV or JaCoCo report",
 };
+// Does any file in this folder match?
 function hasFileMatching(dir, re) {
     try {
         return readdirSync(dir).some((n) => re.test(n));
@@ -28,16 +28,16 @@ function hasFileMatching(dir, re) {
 }
 function readPackageJson(root) {
     try {
-        // Only the dependency names matter, and reading it as text avoids
-        // caring whether the file is valid JSON.
+        // Only the dependency names matter, and reading it as text saves caring
+        // whether the file is valid JSON.
         return readFileSync(join(root, "package.json"), "utf8");
     }
     catch {
         return "";
     }
 }
-// Pick the suggestion for a project, using the results file as a tie-breaker:
-// a .trx can only have come from the .NET toolchain.
+// Pick the command for a project. The results file is a tie-breaker: a .trx can
+// only have come from the .NET toolchain.
 export function suggestCoverageCommand(projectRoot, resultsFile) {
     if (resultsFile && resultsFile.toLowerCase().endsWith(".trx"))
         return DOTNET;

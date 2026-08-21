@@ -2,7 +2,7 @@
 // grouping and bucketing rules can be tested on their own, as derive.ts does
 // for the results list.
 
-import type { CoveragePayload, UncoveredRegion } from "../coverage/payload.js";
+import type { CoveragePayload, UncoveredRegion } from "../coverage/model/payload.js";
 
 // Coverage bands. The thresholds are the ones most CI gates use, so the colour
 // a user sees here matches the verdict their pipeline gives.
@@ -70,7 +70,7 @@ function pathKey(path: string): string {
 }
 
 // Rank order for "most actionable": new code first, then the biggest gaps, then
-// everything else -- the old section order, without repeating files.
+// everything else.
 function rowTier(r: CoverageRow): number {
   if (r.isTest) return 5;
   // Changed code nothing observed: the report cannot even say it is untested.
@@ -180,8 +180,8 @@ export function buildCoverageRows(
   return list;
 }
 
-// What the row says about itself beyond its percentage: the part the old "New
-// code" and "Worth covering" sections carried.
+// A short sentence about the row beyond its percentage: how its changed lines
+// fared, and its worst untested block.
 export function rowNote(r: CoverageRow): string {
   if (r.changed && !r.measured) {
     return r.changedLines > 0

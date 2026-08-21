@@ -1,0 +1,13 @@
+export { loadCoverageFile } from "./load.js";
+export type { LoadedCoverage, LoadOptions } from "./load.js";
+export { discoverCoverageFor, newestCoverageFileIn } from "./discover.js";
+export { readSourceView } from "./sources/view.js";
+export type { SourceError } from "./sources/view.js";
+export { suggestCoverageCommand } from "./suggest.js";
+export { hasCoverageExt } from "./formats/detect.js";
+export { findProjectRoot } from "./sources/resolve.js";
+export { toRanges } from "./analysis/patch.js";
+export type { GitExec } from "./analysis/gitdiff.js";
+export type { CoveragePayload, CoverageFileSummary, CoverageSuggestion, PatchCoverage, PatchFile, SourceFileView, SourceLine, UncoveredRegion, } from "./model/payload.js";
+export type { BranchTotals, CoverageFile, CoverageFormat, CoverageReport, CoverageTotals, LineHits, } from "./model/types.js";
+export { percentOf } from "./model/totals.js";

@@ -6,7 +6,7 @@
 // Run with: node --test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { commentSyntaxFor, nonExecutableLines } from "../src/coverage/executable.js";
+import { commentSyntaxFor, nonExecutableLines } from "../src/coverage/sources/executable.js";
 
 const inertC = (src: string) => [...nonExecutableLines(src, "c")].sort((a, b) => a - b);
 const inertHash = (src: string) => [...nonExecutableLines(src, "hash")].sort((a, b) => a - b);

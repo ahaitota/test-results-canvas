@@ -6,7 +6,7 @@
 // have the agent do it, is what turns the tab into something worth opening.
 
 import { useState } from "preact/hooks";
-import type { CoverageSuggestion } from "../coverage/payload";
+import type { CoverageSuggestion } from "../coverage/model/payload";
 import { askAgentCoverage } from "./askAgent";
 
 export function CoverageEmpty({ hint }: { hint: CoverageSuggestion | null }) {

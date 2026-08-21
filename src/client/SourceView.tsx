@@ -10,7 +10,7 @@
 // hostile file paths are escaped rather than parsed.
 
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { SourceFileView } from "../coverage/payload";
+import type { SourceFileView } from "../coverage/model/payload";
 import { askAgentCoverage } from "./askAgent";
 
 type Load = { state: "loading" } | { state: "error"; message: string } | { state: "ok"; view: SourceFileView };

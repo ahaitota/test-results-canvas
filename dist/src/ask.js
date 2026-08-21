@@ -1,4 +1,4 @@
-import { toRanges } from "./coverage/patch.js";
+import { toRanges } from "./coverage/index.js";
 // Failure output can be a full stack trace. Cap it so the injected message stays
 // readable in the conversation; the agent can always open the file for the rest.
 const MAX_MESSAGE_CHARS = 1500;
