@@ -383,6 +383,40 @@ test.describe("asking the agent about coverage", () => {
     expect(asks).toHaveLength(0);
     expect(errors).toEqual([]);
   });
+
+  // The button reports on one report. Left alone it kept reporting on that one
+  // after the next run replaced it, so the new numbers arrived under a disabled
+  // button claiming they had already been asked about.
+  test("a new report puts the buttons back where they can be used again", async ({ page, makeServer }) => {
+    const s = await makeServer(withPatch(() => {}));
+    await openCanvas(page, s);
+    await page.getByTestId("tab-coverage").click();
+    await page.getByTestId("coverage-files").locator(`[data-path="${CALC}"]`).click();
+
+    const patchButton = page.getByTestId("patch-ask");
+    const fileButton = page.getByTestId("source-view").first().getByTestId("source-ask");
+    await patchButton.click();
+    await fileButton.click();
+    await expect(patchButton).toHaveText("Asked the agent");
+    await expect(fileButton).toHaveText("Asked the agent");
+
+    const dir = mkdtempSync(join(tmpdir(), "cov-asked-"));
+    try {
+      // The same report from a new path: enough for the panel to say a fresh
+      // one arrived, while leaving the verdict alone so the buttons are still
+      // offered rather than passing the test by disappearing.
+      const next = join(dir, "coverage.cobertura.xml");
+      copyFileSync(cobertura(), next);
+      s.loadCoverage(next);
+
+      await expect(patchButton).toHaveText("Ask agent to cover the new code");
+      await expect(patchButton).toBeEnabled();
+      await expect(fileButton).toHaveText("Ask agent to add tests");
+      await expect(fileButton).toBeEnabled();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 test.describe("other report formats", () => {

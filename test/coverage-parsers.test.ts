@@ -107,6 +107,31 @@ test("parseLcov tolerates a final record with no end_of_record", () => {
   assert.equal(report.files[0].totalLines, 2);
 });
 
+test("parseLcov merges the two separator spellings of one path", () => {
+  // A Windows runner can write either slash, sometimes both in one report.
+  // Merging on the raw spelling left one file as two entries: its lines were
+  // counted twice in the totals, and patch matching saw two candidates for
+  // every changed line and could only call them ambiguous.
+  const report = parseLcov("SF:src\\calc.ts\nDA:1,1\nDA:2,0\nend_of_record\nSF:src/calc.ts\nDA:2,4\nend_of_record\n");
+  assert.ok(report);
+  assert.equal(report.files.length, 1);
+  assert.equal(report.files[0].path, "src/calc.ts");
+  assert.deepEqual(report.files[0].lines, { 1: 1, 2: 4 });
+  assert.equal(report.totals.files, 1);
+  assert.equal(report.totals.totalLines, 2, "totals follow the merged files, not the raw records");
+  assert.equal(report.totals.coveredLines, 2);
+});
+
+test("parseCobertura decodes an escaped source root", () => {
+  // Left encoded, a real directory is unopenable, so every file in the report
+  // fails to resolve and the panel can show numbers but never source.
+  const report = parseCobertura(`<coverage><sources><source>C:/R&amp;D/src</source></sources>`
+    + `<packages><package><classes><class filename="a.cs"><lines><line number="1" hits="1"/></lines></class>`
+    + `</classes></package></packages></coverage>`);
+  assert.ok(report);
+  assert.deepEqual(report.sourceRoots, ["C:/R&D/src"]);
+});
+
 const JACOCO = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE report PUBLIC "-//JACOCO//DTD Report 1.1//EN" "report.dtd">
 <report name="demo">

@@ -11,7 +11,7 @@ import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import type { Dirent } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve as resolvePath, sep } from "node:path";
 import type { CoverageFile, CoverageReport } from "../model/types.js";
-import { commonSuffixSegments, normalizeSlashes } from "./paths.js";
+import { commonSuffixSegments } from "./paths.js";
 
 // Files that mark the top of a project.
 const ROOT_MARKERS = [".git", "package.json", "pom.xml", "build.gradle", "build.gradle.kts", "go.mod", "Cargo.toml", "pyproject.toml", "setup.py"];
@@ -249,9 +249,6 @@ export function resolveReportSources(report: CoverageReport, options: ResolverOp
 
     const files: CoverageFile[] = resolved.map(({ file, hit }) => ({
         ...file,
-        // A Windows LCOV writes "src\ask.ts" where git says "src/ask.ts", and
-        // left alone the same file appears twice in patch coverage.
-        path: normalizeSlashes(file.path),
         absPath: hit.absPath && hit.viaIndex && guessed.get(hit.absPath)! > 1 ? undefined : hit.absPath,
     }));
     return { ...report, files };

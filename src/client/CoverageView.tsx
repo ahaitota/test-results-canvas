@@ -6,7 +6,7 @@
 // you read first (see rowTier). A project-wide percentage leads nowhere, so it
 // stays a header stat rather than the headline.
 
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import type { CoveragePayload, CoverageSuggestion, CoverageLoadFailure } from "../coverage/model/payload";
 import type { CoverageRow, CoverageSort } from "./coverageDerive";
 import { bandOf, buildCoverageRows, headlinePercent, headlineTotals, patchHeadline, rowNote } from "./coverageDerive";
@@ -107,6 +107,13 @@ function FileRow({ row, expanded, revision, onToggle }: {
 function PatchBanner({ coverage }: { coverage: CoveragePayload }) {
   const [asked, setAsked] = useState<"idle" | "sent" | "error">("idle");
   const patch = coverage.patch;
+
+  // A new report is a new question. Without this the button stays "Asked the
+  // agent", disabled, over numbers it was never asked about.
+  useEffect(() => {
+    setAsked("idle");
+  }, [coverage.revision, patch?.against, patch?.total, patch?.covered]);
+
   if (!patch) {
     return (
       <div class="cov-patch" data-testid="coverage-patch">

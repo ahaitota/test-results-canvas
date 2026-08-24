@@ -826,6 +826,52 @@ test("a debounced watcher callback cannot resurrect the report of a retired run"
   }
 });
 
+test("the run's project decides the root, not where the coverage report sits", async () => {
+  // A monorepo where the agent names a report from one package for a run in
+  // another. Inferring the root from the report pointed source resolution and
+  // the changed-lines diff at the package that was never tested.
+  const root = mkdtempSync(join(tmpdir(), "cov-roots-"));
+  const app = join(root, "app");
+  const lib = join(root, "lib");
+  try {
+    for (const pkg of [app, lib]) {
+      mkdirSync(join(pkg, "run"), { recursive: true });
+      mkdirSync(join(pkg, ".git"), { recursive: true });
+    }
+    writeFileSync(join(app, "run", "run.trx"), TRX);
+    writeFileSync(join(lib, "run", "coverage.cobertura.xml"), COBERTURA.replace("SRC", lib));
+
+    const handle = await createResultsServer({
+      port: 0, watch: false, gitExec: null,
+      resultsFile: join(app, "run", "run.trx"),
+      coverageFile: join(lib, "run", "coverage.cobertura.xml"),
+    });
+    try {
+      assert.equal(handle.projectRoot(), app);
+    } finally {
+      await handle.close();
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a caller-named root still outranks the run's own project", async () => {
+  const root = makeFixture();
+  const handle = await createResultsServer({
+    port: 0, watch: false, gitExec: null,
+    projectRoot: join(root, "without"),
+    resultsFile: join(root, "with", "run", "run.trx"),
+    coverageFile: join(root, "with", "run", "coverage.cobertura.xml"),
+  });
+  try {
+    assert.equal(handle.projectRoot(), join(root, "without"));
+  } finally {
+    await handle.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a new project root re-resolves the report on screen and tells clients", async () => {
   // The report loads either way; what the root decides is whether its files can
   // be found on disk. Updating the root without reading the report again leaves

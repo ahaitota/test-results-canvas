@@ -15,6 +15,7 @@ import { readSourceView } from "../src/coverage/sources/view.js";
 import type { SourceFileView } from "../src/coverage/model/payload.js";
 import { suggestCoverageCommand } from "../src/coverage/suggest.js";
 import { parseCobertura } from "../src/coverage/formats/cobertura.js";
+import { parseLcov } from "../src/coverage/formats/lcov.js";
 
 let root: string;
 
@@ -157,6 +158,19 @@ test("report paths resolve to real files, and unknown ones are left unresolved",
   assert.equal(resolved.files.find((f) => f.path === "src/ghost.ts")!.absPath, undefined);
 });
 
+test("a file spelled with both separators resolves once, not ambiguously", () => {
+  // The resolver reads either separator, so both spellings land on the same
+  // file on disk. While they stayed two entries, that made the absolute path
+  // look like a name two different files had guessed at, and it was dropped
+  // from both -- the file kept its numbers but could never open its source.
+  const parsed = parseLcov("SF:src\\calc.ts\nDA:1,1\nend_of_record\nSF:src/calc.ts\nDA:2,0\nend_of_record\n");
+  assert.ok(parsed);
+
+  const resolved = resolveReportSources(parsed, { projectRoot: root });
+  assert.equal(resolved.files.length, 1);
+  assert.equal(resolved.files[0].absPath, resolvePath(root, "src", "calc.ts"));
+});
+
 // A report with no <sources> root, so only the project root and the filename
 // index can locate its files.
 function rootlessCobertura(paths: readonly string[]): string {
@@ -254,9 +268,9 @@ test("report paths are normalised to forward slashes so git and the UI agree", (
   // A Windows LCOV writes "src\calc.ts" while git always says "src/calc.ts".
   // Left as-is the same file appears under two spellings in patch coverage,
   // and the folder tree -- which splits on "/" -- refuses to nest.
-  const parsed = parseCobertura(coberturaFor("src/calc.ts", [[2, 1]]));
+  const parsed = parseCobertura(coberturaFor("src\\calc.ts", [[2, 1]]));
   assert.ok(parsed);
-  parsed.files[0].path = "src\\calc.ts";
+  assert.equal(parsed.files[0].path, "src/calc.ts", "normalised as the report is read");
 
   const resolved = resolveReportSources(parsed, { projectRoot: root });
   assert.equal(resolved.files[0].path, "src/calc.ts");

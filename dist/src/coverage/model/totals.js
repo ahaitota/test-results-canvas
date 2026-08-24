@@ -3,6 +3,7 @@
 //
 // Every percentage in the product comes from percentOf, so the file list, the
 // header, patch coverage and the client all round the same way.
+import { normalizeSlashes } from "../sources/paths.js";
 // Rounded percentage, or null when there is nothing to cover. Null rather than
 // 0 because "no executable lines" and "nothing ran" mean opposite things, and
 // the UI colours them differently.
@@ -46,16 +47,23 @@ export function totalsOf(files) {
         branches: anyBranches ? { covered: branchCovered, total: branchTotal } : undefined,
     };
 }
-// Some reports list the same file more than once — LCOV appends a record per
+// Some reports list the same file more than once -- LCOV appends a record per
 // test file, Cobertura lists a partial class once per part. Sum the hits per
 // line so each file appears once, in the order it was first seen.
+//
+// Separators are normalized here rather than downstream because this is where
+// identity is decided: a Windows runner can write both "src\calc.ts" and
+// "src/calc.ts" for one file, and merging on the raw spelling would leave it as
+// two entries whose lines are counted twice and which patch matching can only
+// call ambiguous.
 export function buildFiles(raw) {
     const merged = new Map();
     for (const entry of raw) {
-        const existing = merged.get(entry.path);
+        const path = normalizeSlashes(entry.path);
+        const existing = merged.get(path);
         if (!existing) {
-            merged.set(entry.path, {
-                path: entry.path,
+            merged.set(path, {
+                path,
                 lines: { ...entry.lines },
                 branches: entry.branches ? { ...entry.branches } : undefined,
             });

@@ -21,6 +21,9 @@ export function SourceView({ path, revision }: { path: string; revision?: number
   useEffect(() => {
     let cancelled = false;
     setLoad({ state: "loading" });
+    // The file on screen is about to be replaced, so the answer to the last ask
+    // no longer applies to it.
+    setAsked("idle");
     fetch("/source?file=" + encodeURIComponent(path))
       .then(async (r) => {
         const body = await r.json().catch(() => ({}));

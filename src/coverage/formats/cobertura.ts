@@ -10,7 +10,7 @@
 // One source file can show up as several <class> elements -- partial classes, or
 // more than one type in a file -- so entries are merged by filename.
 
-import { scanTags, attr, numAttr } from "../../xml.js";
+import { scanTags, attr, numAttr, xmlUnescape } from "../../xml.js";
 import { buildFiles, totalsOf } from "../model/totals.js";
 import type { BranchTotals, CoverageReport, LineHits } from "../model/types.js";
 
@@ -37,9 +37,11 @@ export function parseCobertura(xml: string): CoverageReport {
         const name = tag.name.toLowerCase();
 
         if (name === "source" && !tag.closing && !tag.selfClosing) {
-            // <source> holds text, not attributes: read up to its close tag.
+            // <source> holds text, not attributes: read up to its close tag, and
+            // decode it as attr() already does for filename -- "C:/R&amp;D/src"
+            // is a real root that never resolves while it is spelled that way.
             const close = text.indexOf("<", tag.end);
-            const value = text.slice(tag.end, close < 0 ? text.length : close).trim();
+            const value = xmlUnescape(text.slice(tag.end, close < 0 ? text.length : close).trim());
             if (value) sourceRoots.push(value);
             continue;
         }

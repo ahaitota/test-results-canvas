@@ -117,9 +117,15 @@ function surfaceIfResults(input) {
             return undefined; // already told the agent
         lastSurfaced.set(root, key);
         console.error(`[example-canvas] hook surfacing results: ${abs}${coverage ? ` (+ coverage ${coverage})` : ""}`);
-        const openInput = coverage
-            ? `{ "resultsFile": ${JSON.stringify(abs)}, "coverageFile": ${JSON.stringify(coverage)} }`
-            : `{ "resultsFile": ${JSON.stringify(abs)} }`;
+        // projectRoot is passed on rather than left to be inferred: the panel
+        // would otherwise guess it from the coverage report, which in a monorepo
+        // can name a different package than the run.
+        const open = { resultsFile: abs };
+        if (coverage)
+            open.coverageFile = coverage;
+        if (projectRoot)
+            open.projectRoot = projectRoot;
+        const openInput = JSON.stringify(open);
         // With no coverage report, name the command that would produce one --
         // most runners collect nothing unless asked, and the panel is far more
         // useful once it can show which code the run actually exercised.

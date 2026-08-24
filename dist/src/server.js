@@ -559,6 +559,11 @@ export async function createResultsServer(options = {}) {
             // for whichever run is loaded next.
             explicitCoverageFor = resultsTarget;
         }
+        // The run is what the panel is about, so its package decides the root.
+        // Inferring from the report instead points source resolution and the
+        // diff at the wrong package whenever the two live apart.
+        if (!projectRoot && resultsAbsPath)
+            projectRoot = findProjectRoot(dirname(resultsAbsPath));
         if (input.coverageFile) {
             const p = resolvePath(String(input.coverageFile));
             if (!projectRoot)
