@@ -146,7 +146,7 @@ export function loadCoverageFile(coverageFile, options = {}) {
     const hotspots = rankUncovered(report, { changedPaths });
     const changedByPath = new Map();
     for (const f of diff?.files ?? [])
-        changedByPath.set(normalizeSlashes(f.absPath).toLowerCase(), f);
+        changedByPath.set(normalizeSlashes(f.absPath), f);
     const production = productionOnly(report.files);
     return {
         ok: true,

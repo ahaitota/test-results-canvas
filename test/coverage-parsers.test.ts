@@ -137,6 +137,30 @@ test("parseJacoco builds package-qualified paths and maps mi/ci to hits", () => 
   assert.equal(report.totals.totalLines, 3);
 });
 
+test("parseJacoco keeps two modules' identical packages apart", () => {
+  // An aggregate report nests packages under <group> per module, and two
+  // modules routinely hold the same package and file name. Without the group
+  // in the path both entries carry the same path and get merged into one file
+  // with summed hits, so a line covered in one module reads as covered in both.
+  const aggregate = `<?xml version="1.0" encoding="UTF-8"?>
+<report name="all">
+  <group name="api">
+    <package name="com/example"><sourcefile name="Util.java">
+      <line nr="7" mi="0" ci="2"/>
+    </sourcefile></package>
+  </group>
+  <group name="worker">
+    <package name="com/example"><sourcefile name="Util.java">
+      <line nr="7" mi="3" ci="0"/>
+    </sourcefile></package>
+  </group>
+</report>`;
+  const files = byPath(parseJacoco(aggregate).files);
+  assert.deepEqual(Object.keys(files).sort(), ["api/com/example/Util.java", "worker/com/example/Util.java"]);
+  assert.deepEqual(files["api/com/example/Util.java"].lines, { 7: 1 });
+  assert.deepEqual(files["worker/com/example/Util.java"].lines, { 7: 0 }, "the covered module must not cover the other");
+});
+
 test("detectCoverageFormat picks the dialect from content, not the filename", () => {
   assert.equal(detectCoverageFormat(COBERTURA), "cobertura");
   assert.equal(detectCoverageFormat(JACOCO), "jacoco");

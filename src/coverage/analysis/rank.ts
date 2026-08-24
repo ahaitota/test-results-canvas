@@ -8,7 +8,7 @@
 
 import { toRanges } from "./patch.js";
 import { isProductionSource } from "../sources/classify.js";
-import { commonSuffixSegments, normalizeSlashes } from "../sources/paths.js";
+import { isSamePathOrSuffix } from "../sources/paths.js";
 import type { CoverageFile, CoverageReport } from "../model/types.js";
 import type { UncoveredRegion } from "../model/payload.js";
 
@@ -23,14 +23,13 @@ const WHOLE_FILE_WEIGHT = 1.6;
 
 const DEFAULT_LIMIT = 25;
 
-// Whether this file is one of the ones the diff touched.
+// Whether this file is one of the ones the diff touched. One spelling has to
+// contain the whole of the other: sibling packages share their trailing folders
+// without being the same file.
 function isChanged(file: CoverageFile, changedPaths: readonly string[]): boolean {
-    if (!changedPaths.length) return false;
-    const abs = file.absPath ? normalizeSlashes(file.absPath).toLowerCase() : "";
     for (const changed of changedPaths) {
-        const lower = normalizeSlashes(changed).toLowerCase();
-        if (abs && (lower === abs || abs.endsWith(`/${lower}`))) return true;
-        if (commonSuffixSegments(file.path, changed) > 1) return true;
+        if (file.absPath && isSamePathOrSuffix(file.absPath, changed)) return true;
+        if (isSamePathOrSuffix(file.path, changed)) return true;
     }
     return false;
 }

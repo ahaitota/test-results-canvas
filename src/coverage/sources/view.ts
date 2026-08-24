@@ -8,7 +8,7 @@
 // possible in the first place rather than being filtered out.
 
 import { readFileSync, statSync } from "node:fs";
-import { normalizeSlashes } from "./paths.js";
+import { findByPath, normalizeSlashes } from "./paths.js";
 import { percentOf } from "../model/totals.js";
 import type { SourceLine, SourceFileView } from "../model/payload.js";
 import type { LoadedCoverage } from "../load.js";
@@ -50,7 +50,7 @@ export function readSourceView(loaded: LoadedCoverage, path: string): SourceFile
         return "unreadable";
     }
 
-    const changes = loaded.changedByPath.get(normalizeSlashes(entry.absPath).toLowerCase());
+    const changes = findByPath(loaded.changedByPath, entry.absPath);
     const raw = text.split(/\r?\n/);
     const truncated = raw.length > MAX_LINES;
     const shown = truncated ? raw.slice(0, MAX_LINES) : raw;

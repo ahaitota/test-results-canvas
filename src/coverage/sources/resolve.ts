@@ -10,7 +10,7 @@
 //
 // Everything here reads the disk. The plain string helpers are in paths.ts.
 
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import type { Dirent } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve as resolvePath, sep } from "node:path";
 import type { CoverageFile, CoverageReport } from "../model/types.js";
@@ -109,6 +109,37 @@ function existsFile(p: string): boolean {
     }
 }
 
+// A report is untrusted input -- it can name any path on this machine, and
+// whatever is resolved here is what the /source route reads. Candidates are
+// therefore kept inside the project the report belongs to, tested after
+// symlinks are followed so neither an absolute path, a "..", nor a link can
+// point outside it. Without a project root nothing can be trusted, so nothing
+// resolves.
+//
+// The candidate itself is returned rather than its canonical form: they name
+// the same file, and the spelling the rest of the pipeline uses stays put.
+function createContainment(projectRoot: string | undefined): (candidate: string) => string | undefined {
+    let trusted: string | undefined;
+    if (projectRoot) {
+        try {
+            trusted = realpathSync.native(resolvePath(projectRoot));
+        } catch {
+            trusted = resolvePath(projectRoot);
+        }
+    }
+    return (candidate: string) => {
+        if (!trusted) return candidate;
+        let real: string;
+        try {
+            real = realpathSync.native(candidate);
+        } catch {
+            return undefined;
+        }
+        if (real !== trusted && !real.startsWith(trusted + sep)) return undefined;
+        return candidate;
+    };
+}
+
 interface ResolverOptions {
     sourceRoots?: readonly string[];
     projectRoot?: string;
@@ -131,6 +162,7 @@ function createSourceResolver(options: ResolverOptions = {}): SourceResolver {
         .filter((r) => existsSync(r));
     const index = projectRoot && existsSync(projectRoot) ? new SourceIndex(projectRoot) : null;
     const cache = new Map<string, string | undefined>();
+    const inProject = createContainment(projectRoot);
 
     function attempt(reportPath: string): string | undefined {
         const raw = String(reportPath || "").trim();
@@ -139,15 +171,25 @@ function createSourceResolver(options: ResolverOptions = {}): SourceResolver {
         // one, and join()/statSync() want ours.
         const native = raw.split(/[\\/]/).join(sep);
 
-        if (isAbsolute(native) && existsFile(native)) return resolvePath(native);
+        // A candidate landing outside the project falls through to the next way
+        // of finding the file rather than ending the search.
+        if (isAbsolute(native) && existsFile(native)) {
+            const hit = inProject(resolvePath(native));
+            if (hit) return hit;
+        }
 
         for (const root of roots) {
             const candidate = resolvePath(root, native);
-            if (existsFile(candidate)) return candidate;
+            if (!existsFile(candidate)) continue;
+            const hit = inProject(candidate);
+            if (hit) return hit;
         }
         if (projectRoot) {
             const candidate = resolvePath(projectRoot, native);
-            if (existsFile(candidate)) return candidate;
+            if (existsFile(candidate)) {
+                const hit = inProject(candidate);
+                if (hit) return hit;
+            }
         }
 
         // Last resort: match on filename, keeping whichever candidate shares
@@ -165,7 +207,7 @@ function createSourceResolver(options: ResolverOptions = {}): SourceResolver {
             }
             // One shared segment is only the filename, too weak to act on
             // unless nothing else in the project has that name.
-            if (best && (bestScore > 1 || index.lookup(basename(native)).length === 1)) return best;
+            if (best && (bestScore > 1 || index.lookup(basename(native)).length === 1)) return inProject(best);
         }
         return undefined;
     }

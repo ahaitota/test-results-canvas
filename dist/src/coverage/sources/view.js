@@ -7,7 +7,7 @@
 // we then read is always one the report produced, so directory traversal isn't
 // possible in the first place rather than being filtered out.
 import { readFileSync, statSync } from "node:fs";
-import { normalizeSlashes } from "./paths.js";
+import { findByPath, normalizeSlashes } from "./paths.js";
 import { percentOf } from "../model/totals.js";
 // Nobody reads a file bigger than this in a side panel, and the response has to
 // stay small enough to render.
@@ -43,7 +43,7 @@ export function readSourceView(loaded, path) {
     catch {
         return "unreadable";
     }
-    const changes = loaded.changedByPath.get(normalizeSlashes(entry.absPath).toLowerCase());
+    const changes = findByPath(loaded.changedByPath, entry.absPath);
     const raw = text.split(/\r?\n/);
     const truncated = raw.length > MAX_LINES;
     const shown = truncated ? raw.slice(0, MAX_LINES) : raw;

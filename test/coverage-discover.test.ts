@@ -9,9 +9,10 @@ import { tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 import { discoverCoverageFor, newestCoverageFileIn, pickBest } from "../src/coverage/discover.js";
 import { findProjectRoot, resolveReportSources } from "../src/coverage/sources/resolve.js";
-import { commonSuffixSegments, normalizeSlashes } from "../src/coverage/sources/paths.js";
+import { commonSuffixSegments, findByPath, normalizeSlashes } from "../src/coverage/sources/paths.js";
 import { loadCoverageFile } from "../src/coverage/load.js";
 import { readSourceView } from "../src/coverage/sources/view.js";
+import type { SourceFileView } from "../src/coverage/model/payload.js";
 import { suggestCoverageCommand } from "../src/coverage/suggest.js";
 import { parseCobertura } from "../src/coverage/formats/cobertura.js";
 
@@ -318,6 +319,79 @@ test("a lone entry is still found when the case does not match", () => {
 
   const view = readSourceView(loaded, "SRC/Calc.TS");
   assert.equal(typeof view === "string" ? view : view.lines[0].text, "only");
+
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("a report path pointing outside the project resolves to nothing", () => {
+  // The report is untrusted input and whatever it resolves to is what /source
+  // reads back, so a path that escapes the project must not resolve at all --
+  // as an absolute path, and as a "..". The file is named so nothing inside the
+  // project shares it, or the filename index would find a legitimate match.
+  const outside = mkdtempSync(join(tmpdir(), "cov-outside-"));
+  writeFileSync(join(outside, "outside-secret.ts"), "SECRET\n");
+  const abs = join(outside, "outside-secret.ts");
+  const escape = normalizeSlashes(`../${join(outside, "outside-secret.ts").split(/[\\/]/).pop()}`);
+
+  for (const hostile of [abs, `${normalizeSlashes(outside)}/outside-secret.ts`, escape]) {
+    const parsed = parseCobertura(coberturaFor(hostile, [[1, 1]]))!;
+    const resolved = resolveReportSources(parsed, { projectRoot: root });
+    assert.equal(resolved.files[0].absPath, undefined, `must not resolve ${hostile}`);
+    const loaded = { path: "x", mtimeMs: 0, report: resolved, payload: null as never, changedByPath: new Map() };
+    assert.equal(readSourceView(loaded, resolved.files[0].path), "no-source");
+  }
+
+  // The same report, with the project root moved to where the file really is,
+  // still resolves -- containment is the only reason the paths above failed.
+  const inside = resolveReportSources(parseCobertura(coberturaFor(abs, [[1, 1]]))!, { projectRoot: outside });
+  assert.ok(inside.files[0].absPath, "a contained path is unaffected");
+
+  rmSync(outside, { recursive: true, force: true });
+});
+
+test("findByPath ignores case only when one entry can be meant", () => {
+  const both = new Map([
+    ["/repo/Foo.ts", "upper"],
+    ["/repo/foo.ts", "lower"],
+  ]);
+  assert.equal(findByPath(both, "/repo/Foo.ts"), "upper");
+  assert.equal(findByPath(both, "/repo/foo.ts"), "lower");
+  assert.equal(findByPath(both, "/repo/FOO.ts"), undefined, "ambiguous, so no guess");
+  assert.equal(findByPath(new Map([["/repo/calc.ts", "only"]]), "/repo/Calc.ts"), "only");
+  assert.equal(findByPath(both, "/repo\\Foo.ts"), "upper", "separators still don't matter");
+});
+
+test("changed lines follow the file whose case they belong to", () => {
+  // The changed-line map is keyed by absolute path. Lowercasing that key merged
+  // two files on a case-sensitive checkout, so one file's new lines were marked
+  // on the other -- and looking a key up in lowercase found neither.
+  const dir = mkdtempSync(join(tmpdir(), "cov-changed-"));
+  writeFileSync(join(dir, "upper.ts"), "a\nb\n");
+  writeFileSync(join(dir, "lower.ts"), "a\nb\n");
+  const upperAbs = join(dir, "upper.ts");
+  const lowerAbs = join(dir, "lower.ts");
+  const entry = (path: string, absPath: string) => ({ path, absPath, lines: { 1: 1, 2: 1 }, coveredLines: 2, totalLines: 2 });
+  const loaded = {
+    path: "x",
+    mtimeMs: 0,
+    report: {
+      format: "cobertura",
+      sourceRoots: [],
+      totals: { files: 2, coveredLines: 4, totalLines: 4, percent: 100 },
+      files: [entry("src/Foo.ts", upperAbs), entry("src/foo.ts", lowerAbs)],
+    },
+    payload: null as never,
+    changedByPath: new Map([
+      [normalizeSlashes(upperAbs), { path: "src/Foo.ts", absPath: upperAbs, lines: new Set([1]), all: false }],
+      [normalizeSlashes(lowerAbs), { path: "src/foo.ts", absPath: lowerAbs, lines: new Set([2]), all: false }],
+    ]),
+  } as never;
+
+  const upper = readSourceView(loaded, "src/Foo.ts");
+  const lower = readSourceView(loaded, "src/foo.ts");
+  assert.ok(typeof upper !== "string" && typeof lower !== "string");
+  assert.deepEqual((upper as SourceFileView).lines.map((l) => l.changed), [true, false, false]);
+  assert.deepEqual((lower as SourceFileView).lines.map((l) => l.changed), [false, true, false]);
 
   rmSync(dir, { recursive: true, force: true });
 });

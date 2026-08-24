@@ -7,7 +7,7 @@ const SOURCE_EXTS = [
     ".cs", ".fs", ".vb",
     ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts",
     ".java", ".kt", ".kts", ".scala", ".groovy",
-    ".py", ".rb", ".php", ".go", ".rs", ".swift", ".m", ".mm",
+    ".py", ".rb", ".php", ".go", ".rs", ".swift", ".m", ".mm", ".dart",
     ".c", ".cc", ".cpp", ".cxx", ".h", ".hpp",
 ];
 

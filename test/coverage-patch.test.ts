@@ -336,6 +336,19 @@ test("matchCoverageFile refuses a match on filename alone", () => {
   assert.equal(matchCoverageFile(change("src/calc.ts", [1]), files), undefined);
 });
 
+test("matchCoverageFile refuses a sibling package that merely shares trailing folders", () => {
+  // packages/a/src/index.ts and packages/b/src/index.ts share three trailing
+  // segments, so any "enough segments in common" rule pairs them and reports
+  // package b's coverage as package a's.
+  const files = report([{ path: "packages/b/src/index.ts", lines: { 1: 1, 2: 1 } }]).files;
+  const patch = computePatchCoverage(report([{ path: "packages/b/src/index.ts", lines: { 1: 1, 2: 1 } }]), {
+    against: "HEAD",
+    files: [change("packages/a/src/index.ts", [1, 2])],
+  });
+  assert.equal(matchCoverageFile(change("packages/a/src/index.ts", [1, 2]), files), undefined);
+  assert.deepEqual(patch?.files.map((f) => [f.path, f.unmeasured]), [["packages/a/src/index.ts", true]]);
+});
+
 test("toRanges collapses runs and bridges a single-line gap", () => {
   // The gap tolerance keeps a closing brace between two uncovered statements
   // from splitting one region into two.
@@ -382,6 +395,9 @@ test("classify treats committed build output as generated, but not source that m
   assert.equal(isGeneratedPath("src/build/pipeline.ts"), false);
   assert.equal(isGeneratedPath("src/distance.ts"), false);
   assert.equal(isProductionSource("src/coverage/rank.ts"), true);
+  // Dart is a JaCoCo/LCOV-emitting ecosystem, so its source has to count.
+  assert.equal(isProductionSource("lib/main.dart"), true);
+  assert.equal(isProductionSource("lib/model.freezed.dart"), false);
 });
 
 test("rankUncovered puts a changed file ahead of a bigger untouched gap", () => {
@@ -392,6 +408,20 @@ test("rankUncovered puts a changed file ahead of a bigger untouched gap", () => 
   const ranked = rankUncovered(rep, { changedPaths: ["src/edited.ts"] });
   assert.equal(ranked[0].path, "src/edited.ts", "recency of change outranks raw size");
   assert.equal(ranked[0].changed, true);
+});
+
+test("rankUncovered does not treat a sibling package's file as changed", () => {
+  // Same trap as matchCoverageFile: packages/b/src/index.ts shares its trailing
+  // folders with the changed packages/a/src/index.ts without being it, and a
+  // false "changed" carries a 4x weight straight to the top of the list.
+  const rep = report([
+    { path: "packages/b/src/index.ts", lines: { 1: 0, 2: 0 } },
+    { path: "packages/a/src/index.ts", lines: { 9: 0 } },
+  ]);
+  const ranked = rankUncovered(rep, { changedPaths: ["packages/a/src/index.ts"] });
+  const changed = Object.fromEntries(ranked.map((r) => [r.path, r.changed]));
+  assert.equal(changed["packages/a/src/index.ts"], true);
+  assert.equal(changed["packages/b/src/index.ts"], false);
 });
 
 test("rankUncovered ignores tests and generated files", () => {

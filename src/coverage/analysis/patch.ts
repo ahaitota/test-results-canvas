@@ -8,7 +8,7 @@ import { percentOf } from "../model/totals.js";
 import type { CoverageFile, CoverageReport } from "../model/types.js";
 import type { PatchFile, PatchCoverage } from "../model/payload.js";
 import type { FileChanges } from "./gitdiff.js";
-import { commonSuffixSegments, normalizeSlashes } from "../sources/paths.js";
+import { isSamePathOrSuffix, normalizeSlashes } from "../sources/paths.js";
 import { isProductionSource } from "../sources/classify.js";
 
 export type { PatchFile, PatchCoverage } from "../model/payload.js";
@@ -20,23 +20,24 @@ function key(p: string): string {
 }
 
 // Find the report entry for a changed file. An absolute-path match is exact;
-// otherwise the entry sharing the most trailing folders wins, which is what
+// otherwise one spelling has to contain the whole of the other, which is what
 // lines git's `src/app/calc.ts` up with LCOV's
-// `/home/runner/work/repo/src/app/calc.ts`.
+// `/home/runner/work/repo/src/app/calc.ts`. The most specific spelling wins.
 export function matchCoverageFile(change: FileChanges, files: readonly CoverageFile[]): CoverageFile | undefined {
     const wantedAbs = key(change.absPath);
     for (const f of files) {
         if (f.absPath && key(f.absPath) === wantedAbs) return f;
     }
     let best: CoverageFile | undefined;
-    let bestScore = 1; // a shared filename alone is too weak
+    let bestLength = 0;
     for (const f of files) {
-        const score = Math.max(
-            commonSuffixSegments(change.path, f.path),
-            f.absPath ? commonSuffixSegments(change.absPath, f.absPath) : 0,
+        const matches = [change.path, change.absPath].some((c) =>
+            [f.path, f.absPath].some((t) => t && isSamePathOrSuffix(c, t)),
         );
-        if (score > bestScore) {
-            bestScore = score;
+        if (!matches) continue;
+        const length = normalizeSlashes(f.path).length;
+        if (length > bestLength) {
+            bestLength = length;
             best = f;
         }
     }

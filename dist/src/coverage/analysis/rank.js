@@ -7,7 +7,7 @@
 // Pure and host-free, so it also runs in the browser bundle.
 import { toRanges } from "./patch.js";
 import { isProductionSource } from "../sources/classify.js";
-import { commonSuffixSegments, normalizeSlashes } from "../sources/paths.js";
+import { isSamePathOrSuffix } from "../sources/paths.js";
 // A single uncovered line is usually a guard clause or a `throw` — worth
 // showing, but not ahead of a twenty-line untested function.
 const SINGLE_LINE_WEIGHT = 0.4;
@@ -15,16 +15,14 @@ const SINGLE_LINE_WEIGHT = 0.4;
 const CHANGED_WEIGHT = 4;
 const WHOLE_FILE_WEIGHT = 1.6;
 const DEFAULT_LIMIT = 25;
-// Whether this file is one of the ones the diff touched.
+// Whether this file is one of the ones the diff touched. One spelling has to
+// contain the whole of the other: sibling packages share their trailing folders
+// without being the same file.
 function isChanged(file, changedPaths) {
-    if (!changedPaths.length)
-        return false;
-    const abs = file.absPath ? normalizeSlashes(file.absPath).toLowerCase() : "";
     for (const changed of changedPaths) {
-        const lower = normalizeSlashes(changed).toLowerCase();
-        if (abs && (lower === abs || abs.endsWith(`/${lower}`)))
+        if (file.absPath && isSamePathOrSuffix(file.absPath, changed))
             return true;
-        if (commonSuffixSegments(file.path, changed) > 1)
+        if (isSamePathOrSuffix(file.path, changed))
             return true;
     }
     return false;

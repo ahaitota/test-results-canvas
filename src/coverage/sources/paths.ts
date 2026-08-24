@@ -19,3 +19,30 @@ export function commonSuffixSegments(a: string, b: string): number {
     while (n < left.length && n < right.length && left[left.length - 1 - n] === right[right.length - 1 - n]) n++;
     return n;
 }
+
+// True when two spellings can only be the same file: equal, or one ending with
+// the whole of the other at a folder boundary. Sharing some trailing folders is
+// not enough -- packages/a/src/index.ts and packages/b/src/index.ts share two.
+export function isSamePathOrSuffix(a: string, b: string): boolean {
+    const x = normalizeSlashes(a).toLowerCase();
+    const y = normalizeSlashes(b).toLowerCase();
+    if (!x || !y) return false;
+    return x === y || x.endsWith(`/${y}`) || y.endsWith(`/${x}`);
+}
+
+// Look a path up in a map keyed by its exact spelling. Case is only ignored as
+// a fallback, and only when one entry can be meant by it: two keys differing in
+// case are two files where the filesystem says so.
+export function findByPath<T>(entries: ReadonlyMap<string, T>, path: string): T | undefined {
+    const wanted = normalizeSlashes(path);
+    const exact = entries.get(wanted);
+    if (exact !== undefined) return exact;
+    const lower = wanted.toLowerCase();
+    let found: T | undefined;
+    for (const [key, value] of entries) {
+        if (key.toLowerCase() !== lower) continue;
+        if (found !== undefined) return undefined;
+        found = value;
+    }
+    return found;
+}

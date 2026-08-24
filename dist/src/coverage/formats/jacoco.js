@@ -4,14 +4,22 @@
 //   <report><package name="com/example/app">
 //     <sourcefile name="Calculator.java"><line nr="5" mi="0" ci="3"/>
 //
+// An aggregate report nests those in <group> per module, and two modules may
+// hold the same package and file name, so the group names are kept in front of
+// the path to tell them apart.
+//
 // The attributes count instructions and branches (mi/ci = missed/covered
 // instructions) rather than executions, so a covered line is stored as 1 hit.
 import { scanTags, attr, numAttr } from "../../xml.js";
 import { buildFiles, totalsOf } from "../model/totals.js";
+// Names are slash-separated ("com/example/app") and joined into a
+// repo-relative-looking path.
+function cleanName(raw) {
+    return raw.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+}
 export function parseJacoco(xml) {
     const entries = [];
-    // Package names are slash-separated ("com/example/app") and go in front of
-    // the sourcefile name to make a repo-relative-looking path.
+    const groups = [];
     let pkg = "";
     let current = null;
     // Finish the file being read, if any.
@@ -27,6 +35,15 @@ export function parseJacoco(xml) {
     };
     for (const tag of scanTags(xml)) {
         const name = tag.name.toLowerCase();
+        if (name === "group") {
+            flush();
+            pkg = "";
+            if (tag.closing)
+                groups.pop();
+            else if (!tag.selfClosing)
+                groups.push(cleanName(attr(tag.attrs, "name") || ""));
+            continue;
+        }
         if (name === "package") {
             if (tag.closing) {
                 flush();
@@ -34,7 +51,7 @@ export function parseJacoco(xml) {
                 continue;
             }
             flush();
-            pkg = (attr(tag.attrs, "name") || "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+            pkg = cleanName(attr(tag.attrs, "name") || "");
             continue;
         }
         if (name === "sourcefile") {
@@ -46,7 +63,7 @@ export function parseJacoco(xml) {
             const file = attr(tag.attrs, "name");
             if (!file)
                 continue;
-            current = { path: pkg ? `${pkg}/${file}` : file, lines: {}, branchCovered: 0, branchTotal: 0 };
+            current = { path: [...groups, pkg, file].filter(Boolean).join("/"), lines: {}, branchCovered: 0, branchTotal: 0 };
             if (tag.selfClosing)
                 flush();
             continue;
