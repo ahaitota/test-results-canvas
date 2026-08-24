@@ -65,8 +65,8 @@ export interface FileChanges {
     // A new or untracked file, where every executable line counts as new. Saves
     // reading the file just to list its lines.
     all: boolean;
-    // How long the file is, filled in only for untracked files. They have no
-    // diff to count, so without this they would look like zero-line changes.
+    // How long the file is, filled in only for untracked files: they have no
+    // diff to count.
     lineCount?: number;
 }
 

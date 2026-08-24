@@ -6,7 +6,7 @@
 // live `git diff` would make the "New code" section depend on whatever the
 // working tree happens to contain that minute.
 import type { Page } from "@playwright/test";
-import { mkdirSync, mkdtempSync, copyFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, copyFileSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -134,6 +134,26 @@ test.describe("the coverage tab", () => {
     // as a failure.
     await expect(view.locator('[data-line="1"]')).toHaveAttribute("data-cov", "neutral");
     await expect(view.getByTestId("source-ask")).toBeVisible();
+  });
+
+  test("re-reading the report refreshes the gutters of a file already open", async ({ page, makeServer }) => {
+    const s = await makeServer(withCoverage(cobertura()));
+    await openCanvas(page, s);
+    await page.getByTestId("tab-coverage").click();
+    await page.getByTestId("coverage-files").locator(`[data-path="${CALC}"]`).click();
+
+    const view = page.getByTestId("source-view").first();
+    await expect(view.locator('[data-line="26"]')).toHaveAttribute("data-cov", "miss");
+
+    const dir = mkdtempSync(join(tmpdir(), "cov-rerun-"));
+    try {
+      const next = join(dir, "coverage.cobertura.xml");
+      writeFileSync(next, readFileSync(cobertura(), "utf8").replace('number="26" hits="0"', 'number="26" hits="7"'));
+      s.loadCoverage(next);
+      await expect(view.locator('[data-line="26"]')).toHaveAttribute("data-cov", "hit");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("ranked untested blocks are named on the file's own row", async ({ page, makeServer }) => {

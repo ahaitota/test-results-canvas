@@ -4,7 +4,7 @@
 // Run with: node --test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createResultsServer } from "../src/server.js";
@@ -514,6 +514,61 @@ test("a re-run writing its report under a new name is picked up", async () => {
 const COBERTURA_FULL = COBERTURA
   .replace('line-rate="0.5"', 'line-rate="1"')
   .replace('<line number="2" hits="0" />', '<line number="2" hits="4" />');
+
+test("a re-run in a watched results folder keeps the coverage folder it was given", async () => {
+  const root = makeWatchFixture();
+  // Outside the results tree entirely, so nothing here can be found by
+  // discovery: only the folder the caller named can answer.
+  const covRoot = realpathSync.native(mkdtempSync(join(tmpdir(), "cov-away-")));
+  writeFileSync(join(covRoot, "coverage.cobertura.xml"), COBERTURA.replace("SRC", root));
+  const handle = await createResultsServer({
+    port: 0, watch: true, projectRoot: join(root, "b"), gitExec: null,
+    resultsDir: join(root, "a", "run"),
+    coverageDir: covRoot,
+  });
+  try {
+    assert.equal(handle.getCoverage()?.totals.coveredLines, 1);
+
+    // A second run writes a differently named results file into the folder the
+    // panel follows. That is the same run stream, so the coverage folder still
+    // answers for it.
+    writeFileSync(join(root, "a", "run", "run-2.trx"), TRX);
+    await settle(1400);
+    assert.equal(handle.getCoverage()?.totals.coveredLines, 1, "a re-run must not drop the named coverage folder");
+
+    writeFileSync(join(covRoot, "coverage.cobertura.xml"), COBERTURA_FULL.replace("SRC", root));
+    await settle(1400);
+    assert.equal(handle.getCoverage()?.totals.coveredLines, 2, "and the folder must still be followed");
+  } finally {
+    await handle.close();
+    rmSync(root, { recursive: true, force: true });
+    rmSync(covRoot, { recursive: true, force: true });
+  }
+});
+
+test("a watched coverage folder replaced at the same path is picked up", async () => {
+  const root = makeWatchFixture();
+  const covDir = join(root, "a-cov");
+  const handle = await createResultsServer({
+    port: 0, watch: true, projectRoot: join(root, "b"), gitExec: null,
+    resultsFile: join(root, "a", "run", "run.trx"),
+    coverageDir: covDir,
+  });
+  try {
+    assert.equal(handle.getCoverage()?.totals.coveredLines, 1);
+
+    // A runner that builds its output elsewhere and swaps it into place. The
+    // watcher follows the folder that was moved away and hears nothing.
+    renameSync(covDir, join(root, "a-cov-old"));
+    mkdirSync(covDir);
+    writeFileSync(join(covDir, "coverage.cobertura.xml"), COBERTURA_FULL.replace("SRC", root));
+    await settle(1400);
+    assert.equal(handle.getCoverage()?.totals.coveredLines, 2, "a folder swapped in at the same path must be read");
+  } finally {
+    await handle.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("a re-run overwriting the report in place reaches the panel", async () => {
   const root = makeWatchFixture();

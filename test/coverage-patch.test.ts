@@ -325,6 +325,12 @@ test("classify separates production code from tests and generated output", () =>
   assert.equal(isProductionSource("README.md"), false);
   assert.equal(isTestPath("test/calc.test.ts"), true);
   assert.equal(isTestPath("src/App.Tests/CalcTests.cs"), true);
+  // A conventional .NET test project: the folder is what marks it, since not
+  // every file inside is named like a test.
+  assert.equal(isProductionSource("src/MyApp.Tests/Usings.cs"), false);
+  assert.equal(isProductionSource("src/MyApp.Spec/Fixtures.cs"), false);
+  // A folder that merely contains the word is still production code.
+  assert.equal(isProductionSource("src/Contest/Entry.cs"), true);
   assert.equal(isProductionSource("test/calc.test.ts"), false);
   assert.equal(isGeneratedPath("obj/Form1.Designer.cs"), true);
   assert.equal(isGeneratedPath("dist/app.min.js"), true);

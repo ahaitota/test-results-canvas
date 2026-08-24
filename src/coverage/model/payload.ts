@@ -73,6 +73,9 @@ export interface CoveragePayload {
     productionTotals: { coveredLines: number; totalLines: number; files: number };
     patch: PatchCoverage | null;
     hotspots: UncoveredRegion[];
+    // Changes on every read of the report, so views built from it can tell one
+    // read from the next.
+    revision?: number;
 }
 
 export interface SourceLine {

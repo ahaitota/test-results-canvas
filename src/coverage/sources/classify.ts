@@ -11,7 +11,7 @@ const SOURCE_EXTS = [
     ".c", ".cc", ".cpp", ".cxx", ".h", ".hpp",
 ];
 
-const TEST_DIR_RE = /(^|\/)(tests?|specs?|__tests__|__specs__|e2e|integration-tests?)(\/|$)/i;
+const TEST_DIR_RE = /(^|\/)([^/]*\.)?(tests?|specs?|__tests__|__specs__|e2e|integration-tests?)(\/|$)/i;
 const TEST_FILE_RE = /(^|\/)(test_[^/]*|[^/]*_test|[^/]*[.-](test|spec)s?)\.[a-z0-9]+$/i;
 const TEST_SUFFIX_RE = /(tests?|spec|specs|testcase|testfixture)\.[a-z0-9]+$/i;
 

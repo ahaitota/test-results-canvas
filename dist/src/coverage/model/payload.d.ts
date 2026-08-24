@@ -48,6 +48,7 @@ export interface CoveragePayload {
     };
     patch: PatchCoverage | null;
     hotspots: UncoveredRegion[];
+    revision?: number;
 }
 export interface SourceLine {
     n: number;

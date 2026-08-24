@@ -6,8 +6,9 @@
 // rather than a cross-reference.
 //
 // Fetched on demand from /source, which only serves files present in the loaded
-// report, and rendered as Preact text nodes so hostile source content and
-// hostile file paths are escaped rather than parsed.
+// report, and re-fetched when the report is read again. Rendered as Preact text
+// nodes so hostile source content and hostile file paths are escaped rather
+// than parsed.
 
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { SourceFileView } from "../coverage/model/payload";
@@ -15,7 +16,7 @@ import { askAgentCoverage } from "./askAgent";
 
 type Load = { state: "loading" } | { state: "error"; message: string } | { state: "ok"; view: SourceFileView };
 
-export function SourceView({ path }: { path: string }) {
+export function SourceView({ path, revision }: { path: string; revision?: number }) {
   const [load, setLoad] = useState<Load>({ state: "loading" });
   const [asked, setAsked] = useState<"idle" | "sent" | "error">("idle");
   const firstUncoveredRef = useRef<HTMLDivElement | null>(null);
@@ -36,7 +37,7 @@ export function SourceView({ path }: { path: string }) {
     return () => {
       cancelled = true;
     };
-  }, [path]);
+  }, [path, revision]);
 
   // Land the reader on the first gap rather than at the top of a 600-line file.
   useEffect(() => {

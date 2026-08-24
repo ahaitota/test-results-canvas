@@ -116,9 +116,12 @@ function existsFile(p) {
 // what it found.
 function createSourceResolver(options = {}) {
     const { projectRoot } = options;
-    // Only roots that exist here are worth trying; a CI report's roots usually
-    // don't.
-    const roots = (options.sourceRoots ?? []).map((r) => resolvePath(String(r))).filter((r) => existsSync(r));
+    // A root is relative to the project the report describes, not to wherever
+    // this process happens to be running. Only roots that exist here are worth
+    // trying; a CI report's roots usually don't.
+    const roots = (options.sourceRoots ?? [])
+        .map((r) => (projectRoot ? resolvePath(projectRoot, String(r)) : resolvePath(String(r))))
+        .filter((r) => existsSync(r));
     const index = projectRoot && existsSync(projectRoot) ? new SourceIndex(projectRoot) : null;
     const cache = new Map();
     function attempt(reportPath) {

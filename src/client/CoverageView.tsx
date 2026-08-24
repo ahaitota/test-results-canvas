@@ -31,9 +31,10 @@ function Pct({ percent }: { percent: number | null }) {
 }
 
 // One file: its numbers, its tags, its note, and its source when opened.
-function FileRow({ row, expanded, onToggle }: {
+function FileRow({ row, expanded, revision, onToggle }: {
   row: CoverageRow;
   expanded: boolean;
+  revision?: number;
   onToggle: () => void;
 }) {
   const note = rowNote(row);
@@ -86,7 +87,7 @@ function FileRow({ row, expanded, onToggle }: {
       </div>
       {note && <p class="cov-row-note" data-testid="coverage-row-note">{note}</p>}
       {expanded && (openable
-        ? <SourceView path={row.path} />
+        ? <SourceView path={row.path} revision={revision} />
         : (
           <div class="cov-source-msg">
             {row.measured
@@ -164,9 +165,7 @@ export function CoverageView({ coverage, hint, error }: { coverage: CoveragePayl
 
   if (!coverage) return <CoverageEmpty hint={hint} error={error} />;
 
-  // Keyed by path, which is now enough: one row per file means a path
-  // identifies a row again. It did not when the same file appeared in three
-  // lists, and a shared key made every copy open and close together.
+  // Keyed by path: one row per file, so a path identifies a row.
   const toggleRow = (path: string) => setExpanded((prev) => {
     const next = new Set(prev);
     if (next.has(path)) next.delete(path);
@@ -226,6 +225,7 @@ export function CoverageView({ coverage, hint, error }: { coverage: CoveragePayl
               key={r.path}
               row={r}
               expanded={expanded.has(r.path)}
+              revision={coverage.revision}
               onToggle={() => toggleRow(r.path)}
             />
           ))}

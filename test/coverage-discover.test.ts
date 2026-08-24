@@ -139,6 +139,27 @@ test("report paths resolve to real files, and unknown ones are left unresolved",
   assert.equal(resolved.files.find((f) => f.path === "src/ghost.ts")!.absPath, undefined);
 });
 
+test("a relative source root is read against the project, not the running process", () => {
+  // A second file of the same name, so the filename fallback cannot rescue the
+  // lookup: only the declared root can resolve this path.
+  const other = join(root, "lib");
+  mkdirSync(other, { recursive: true });
+  writeFileSync(join(other, "calc.ts"), CALC_SOURCE);
+  try {
+    const parsed = parseCobertura(
+      `<?xml version="1.0"?><coverage><sources><source>src</source></sources>`
+      + `<packages><package><classes><class name="Calc" filename="calc.ts">`
+      + `<lines><line number="2" hits="1" /></lines></class></classes></package></packages></coverage>`,
+    );
+    assert.ok(parsed);
+
+    const resolved = resolveReportSources(parsed, { projectRoot: root });
+    assert.equal(resolved.files[0].absPath, resolvePath(root, "src", "calc.ts"));
+  } finally {
+    rmSync(other, { recursive: true, force: true });
+  }
+});
+
 test("report paths are normalised to forward slashes so git and the UI agree", () => {
   // A Windows LCOV writes "src\calc.ts" while git always says "src/calc.ts".
   // Left as-is the same file appears under two spellings in patch coverage,
