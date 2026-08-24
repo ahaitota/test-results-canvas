@@ -119,32 +119,34 @@ export function composePatchCoveragePrompt(patch: PatchCoverage): string {
 
   const lines = gaps.slice(0, MAX_RANGES).map((f) => {
     const path = label(f.path) || "(unknown file)";
-    if (f.unmeasured) return `- ${path}: changed, but no test touches this file at all`;
+    if (f.unmeasured) return `- ${path}: changed, but the report holds no data for it`;
     if (!f.uncoveredLines.length) return `- ${path}: ${f.unknownLines} changed line${f.unknownLines === 1 ? "" : "s"} the report does not mention`;
     return `- ${path}: uncovered lines ${rangeList(f.uncoveredLines)}`;
   });
   if (gaps.length > MAX_RANGES) lines.push(`- and ${gaps.length - MAX_RANGES} more files`);
 
-  // The report measured none of the changed lines yet mentions some of them: it
-  // predates the edits, so the ask is a fresh run rather than new tests written
-  // against a figure describing the code as it used to be.
-  if (patch.total === 0 && unknown > 0) {
+  // The report measured none of the changed lines: it predates the edits or was
+  // configured to skip these files, so the ask is a fresh run rather than tests
+  // written against silence. Unmeasured is not the same as untested.
+  if (patch.total === 0) {
+    const detail = unknown > 0
+      ? `all ${unknown} changed line${unknown === 1 ? " is" : "s are"} absent from it`
+      : "it holds no data for the changed files";
     const parts = [
-      `The coverage report says nothing about the changed code in the ${label(patch.against)}: all ${unknown} changed `
-      + `line${unknown === 1 ? " is" : "s are"} absent from it, which is what a report taken before these edits looks like. `
+      `The coverage report says nothing about the changed code in the ${label(patch.against)}: ${detail}, `
+      + "which is what a stale or partly configured report looks like. "
       + "Re-run the tests with coverage first and let this panel reload, then judge from the fresh report whether tests are missing.",
     ];
     if (lines.length) parts.push(lines.join("\n"));
     return parts.join("\n\n");
   }
 
-  const headline = patch.percent == null
-    ? `None of the changed code in the ${label(patch.against)} is covered by tests.`
-    : patch.covered === patch.total
-      // Every line the report measured is covered, so the gap is what it did
-      // not measure. "Only 100% is covered" would be a contradiction.
-      ? `The coverage report accounts for only part of the changed code in the ${label(patch.against)}.`
-      : `Only ${patch.percent}% of the changed code in the ${label(patch.against)} is covered by tests (${patch.covered} of ${patch.total} lines).`;
+  // Past the guard above, the report measured something, so it has a percentage.
+  const headline = patch.covered === patch.total
+    // Every line the report measured is covered, so the gap is what it did
+    // not measure. "Only 100% is covered" would be a contradiction.
+    ? `The coverage report accounts for only part of the changed code in the ${label(patch.against)}.`
+    : `Only ${patch.percent}% of the changed code in the ${label(patch.against)} is covered by tests (${patch.covered} of ${patch.total} lines).`;
 
   const parts = [`${headline} Add tests for the untested changes.`];
 
@@ -155,6 +157,15 @@ export function composePatchCoveragePrompt(patch: PatchCoverage): string {
       `${unknown} changed line${unknown === 1 ? " is" : "s are"} absent from the report altogether, so that figure covers only the `
       + `${patch.total} it does measure. Some will be blank lines or braces; the rest mean the report predates these edits, so re-run the `
       + "tests with coverage before trusting it.",
+    );
+  }
+
+  const blind = patch.unmeasuredFiles;
+  if (blind > 0) {
+    const one = blind === 1;
+    parts.push(
+      `${blind} changed file${one ? " has" : "s have"} no entry in the report, so ${one ? "it was" : "they were"} not measured `
+      + `rather than shown to be untested. Re-run the tests with coverage before writing tests for ${one ? "it" : "them"}.`,
     );
   }
 

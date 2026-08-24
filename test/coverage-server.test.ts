@@ -856,6 +856,41 @@ test("the run's project decides the root, not where the coverage report sits", a
   }
 });
 
+test("reopening for another project re-derives the root instead of keeping the first", async () => {
+  // The canvas is reused: the same server is pointed at project B's run and
+  // report. Inferring only while the root was empty left B resolving its
+  // sources and diff against A's package.
+  const root = mkdtempSync(join(tmpdir(), "cov-reopen-"));
+  const app = join(root, "app");
+  const lib = join(root, "lib");
+  try {
+    for (const pkg of [app, lib]) {
+      mkdirSync(join(pkg, "run"), { recursive: true });
+      mkdirSync(join(pkg, ".git"), { recursive: true });
+      writeFileSync(join(pkg, "run", "run.trx"), TRX);
+      writeFileSync(join(pkg, "run", "coverage.cobertura.xml"), COBERTURA.replace("SRC", pkg));
+    }
+
+    const handle = await createResultsServer({
+      port: 0, watch: false, gitExec: null,
+      resultsFile: join(app, "run", "run.trx"),
+      coverageFile: join(app, "run", "coverage.cobertura.xml"),
+    });
+    try {
+      assert.equal(handle.projectRoot(), app);
+      handle.loadInput({
+        resultsFile: join(lib, "run", "run.trx"),
+        coverageFile: join(lib, "run", "coverage.cobertura.xml"),
+      });
+      assert.equal(handle.projectRoot(), lib, "the second run's package decides the root");
+    } finally {
+      await handle.close();
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a caller-named root still outranks the run's own project", async () => {
   const root = makeFixture();
   const handle = await createResultsServer({
@@ -865,6 +900,9 @@ test("a caller-named root still outranks the run's own project", async () => {
     coverageFile: join(root, "with", "run", "coverage.cobertura.xml"),
   });
   try {
+    assert.equal(handle.projectRoot(), join(root, "without"));
+    // Re-deriving on every seed must not walk over a root the caller chose.
+    handle.loadInput({ resultsFile: join(root, "with", "run", "run.trx") });
     assert.equal(handle.projectRoot(), join(root, "without"));
   } finally {
     await handle.close();

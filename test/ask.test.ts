@@ -349,7 +349,11 @@ test("the patch prompt names each untested file and the lines to look at", () =>
   }));
   assert.match(prompt, /Only 60% of the changed code/);
   assert.match(prompt, /- src\/a\.ts: uncovered lines 4-6/);
-  assert.match(prompt, /- src\/new\.ts: changed, but no test touches this file at all/);
+  assert.match(prompt, /- src\/new\.ts: changed, but the report holds no data for it/);
+  // Unmeasured is not evidence of being untested, and the prompt must not let
+  // the agent read it that way before writing tests against a blind report.
+  assert.match(prompt, /1 changed file has no entry in the report/);
+  assert.match(prompt, /not measured rather than shown to be untested/);
 });
 
 test("the patch prompt does not tell the agent that 100% is not enough", () => {
@@ -388,4 +392,20 @@ test("the patch prompt asks for a fresh run when the report measured none of the
   assert.doesNotMatch(prompt, /Add tests for the untested changes/);
   assert.match(prompt, /Re-run the tests with coverage first/);
   assert.match(prompt, /- src\/a\.ts: 2 changed lines the report does not mention/);
+});
+
+test("a wholly unmeasured patch asks for coverage rather than claiming nothing is covered", () => {
+  // A report with no entry for any changed file has observed nothing, so it
+  // cannot say the code is untested. The old wording read "None of the changed
+  // code is covered by tests", which sends the agent to write tests whenever
+  // coverage is stale or configured to skip these files.
+  const prompt = composePatchCoveragePrompt(patchOf({
+    unmeasuredFiles: 1,
+    files: [{ path: "src/new.ts", coveredLines: [], uncoveredLines: [], unknownLines: 0, percent: null, unmeasured: true, changedLines: 30 }],
+  }));
+  assert.doesNotMatch(prompt, /None of the changed code/);
+  assert.doesNotMatch(prompt, /Add tests for the untested changes/);
+  assert.match(prompt, /says nothing about the changed code/);
+  assert.match(prompt, /holds no data for the changed files/);
+  assert.match(prompt, /Re-run the tests with coverage first/);
 });

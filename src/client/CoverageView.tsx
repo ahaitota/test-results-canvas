@@ -173,12 +173,14 @@ const SORTS: { key: CoverageSort; label: string; hint: string }[] = [
   { key: "name", label: "Name", hint: "alphabetical by path" },
 ];
 
-export function CoverageView({ coverage, hint, error }: { coverage: CoveragePayload | null; hint: CoverageSuggestion | null; error: CoverageLoadFailure | null }) {
+export function CoverageView({ coverage, hint, error, run }: { coverage: CoveragePayload | null; hint: CoverageSuggestion | null; error: CoverageLoadFailure | null; run?: string }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<CoverageSort>("actionable");
 
-  if (!coverage) return <CoverageEmpty hint={hint} error={error} />;
+  // Keyed by the run, so switching to another one that also lacks coverage
+  // starts from a fresh button rather than the last run's "Asked the agent".
+  if (!coverage) return <CoverageEmpty key={run ?? ""} hint={hint} error={error} />;
 
   // Keyed by path: one row per file, so a path identifies a row.
   const toggleRow = (path: string) => setExpanded((prev) => {

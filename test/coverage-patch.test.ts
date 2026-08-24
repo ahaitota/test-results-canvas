@@ -87,6 +87,66 @@ test("parseUnifiedDiff unescapes a quote in a path without dropping it", () => {
   assert.deepEqual([...parseUnifiedDiff(diff).keys()], ['src/a".ts']);
 });
 
+// An added line reading `++ value;` is rendered `+++ value;`, which is exactly
+// the shape of a file header. Counting the body out of the hunk header is what
+// tells them apart, so the lines after it stay with the file they belong to.
+test("parseUnifiedDiff keeps an added line that looks like a file header inside its hunk", () => {
+  const diff = [
+    "diff --git a/src/calc.ts b/src/calc.ts",
+    "--- a/src/calc.ts",
+    "+++ b/src/calc.ts",
+    "@@ -0,0 +1,2 @@",
+    "+++ value;",
+    "+run();",
+    "@@ -10,0 +20 @@",
+    "+later();",
+  ].join("\n");
+  const map = parseUnifiedDiff(diff);
+  assert.deepEqual([...map.keys()], ["src/calc.ts"], "the added line must not become a file of its own");
+  assert.deepEqual([...map.get("src/calc.ts")!].sort((a, b) => a - b), [1, 2, 20]);
+});
+
+test("parseUnifiedDiff recovers at the next file when a hunk body is short", () => {
+  // The body count is exact for real --unified=0 output, but a truncated diff
+  // must not swallow the files that follow it.
+  const diff = [
+    "diff --git a/src/a.ts b/src/a.ts",
+    "--- a/src/a.ts",
+    "+++ b/src/a.ts",
+    "@@ -0,0 +1,5 @@",
+    "+one",
+    "diff --git a/src/b.ts b/src/b.ts",
+    "--- a/src/b.ts",
+    "+++ b/src/b.ts",
+    "@@ -0,0 +1 @@",
+    "+two",
+  ].join("\n");
+  assert.deepEqual([...parseUnifiedDiff(diff).keys()].sort(), ["src/a.ts", "src/b.ts"]);
+});
+
+test('changedLines pins the diff prefixes so a configured "after/" cannot reach the parser', () => {
+  // diff.mnemonicPrefix and diff.srcPrefix/dstPrefix rewrite the header, and a
+  // path spelled after/src/a.ts matches nothing in the coverage report.
+  const diffArgs: string[][] = [];
+  const git: GitExec = (args) => {
+    if (args[0] === "rev-parse" && args[1] === "--is-inside-work-tree") return "true\n";
+    if (args[0] === "rev-parse") return "/repo\n";
+    if (args[0] === "ls-files") return "";
+    if (args[0] === "diff") {
+      diffArgs.push(args);
+      return "--- a/src/x.ts\n+++ b/src/x.ts\n@@ -0,0 +1 @@\n+n\n";
+    }
+    return "";
+  };
+  const result = changedLines("/repo", { exec: git });
+  assert.deepEqual(result?.files.map((f) => f.path), ["src/x.ts"]);
+  assert.ok(diffArgs.length > 0, "a diff was asked for");
+  for (const args of diffArgs) {
+    assert.ok(args.includes("--src-prefix=a/"), `source prefix pinned in ${args.join(" ")}`);
+    assert.ok(args.includes("--dst-prefix=b/"), `destination prefix pinned in ${args.join(" ")}`);
+  }
+});
+
 test("changedLines prefers uncommitted work and marks untracked files as wholly new", () => {
   const calls: string[][] = [];
   const git: GitExec = (args) => {
@@ -605,4 +665,18 @@ test("rankUncovered returns nothing when everything is covered", () => {
 test("rankUncovered caps its output so the panel stays readable", () => {
   const entries = Array.from({ length: 80 }, (_, i) => ({ path: `src/f${i}.ts`, lines: { 1: 0 } }));
   assert.ok(rankUncovered(report(entries), { changedPaths: [] }).length <= 25);
+});
+
+// Counting each range by filtering the file's whole uncovered list is quadratic,
+// and a file fragmented into tens of thousands of gaps -- every other line
+// uncovered -- froze the panel for seconds while producing the same 25 rows.
+test("rankUncovered stays quick on a file fragmented into thousands of gaps", () => {
+  const lines: Record<number, number> = {};
+  for (let i = 1; i <= 240_000; i++) lines[i] = i % 4 === 1 ? 0 : 1;
+  const started = Date.now();
+  const ranked = rankUncovered(report([{ path: "src/big.ts", lines }]), { changedPaths: [] });
+  const elapsed = Date.now() - started;
+  assert.equal(ranked.length, 25);
+  assert.equal(ranked[0]!.lines, 1, "each gap is a single line, so each region counts one");
+  assert.ok(elapsed < 2000, `ranking took ${elapsed}ms`);
 });

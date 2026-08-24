@@ -45,20 +45,42 @@ export function rankUncovered(report: CoverageReport | null, options: RankOption
     const changedPaths = options.changedPaths ?? [];
     const limit = options.limit ?? DEFAULT_LIMIT;
     const changed = changedFiles(report.files, changedPaths);
-    const regions: UncoveredRegion[] = [];
+    let regions: UncoveredRegion[] = [];
+
+    // Changed code is its own group, not just a bigger score. A multiplier
+    // cannot express "always look at what you just touched first" -- a
+    // four-times bonus still loses to an untouched block four times longer.
+    const worstFirst = (a: UncoveredRegion, b: UncoveredRegion) => {
+        if (a.changed !== b.changed) return a.changed ? -1 : 1;
+        return b.score - a.score || a.path.localeCompare(b.path) || a.start - b.start;
+    };
+    // Only the leaders survive, so a file fragmented into tens of thousands of
+    // gaps costs its own scan and no more.
+    const trim = () => {
+        regions.sort(worstFirst);
+        if (regions.length > limit) regions = regions.slice(0, limit);
+    };
 
     for (const file of report.files) {
         if (!isProductionSource(file.path)) continue;
         const uncovered = Object.entries(file.lines)
             .filter(([, hits]) => hits === 0)
-            .map(([line]) => Number(line));
+            .map(([line]) => Number(line))
+            .sort((a, b) => a - b);
         if (!uncovered.length) continue;
 
         const isChanged = changed.has(file);
         const wholeFileUncovered = file.coveredLines === 0 && file.totalLines > 0;
 
+        // Ranges arrive in order and partition the lines, so one walk counts
+        // them all: re-filtering per range is quadratic in a fragmented file.
+        let cursor = 0;
         for (const range of toRanges(uncovered)) {
-            const count = uncovered.filter((l) => l >= range.start && l <= range.end).length;
+            let count = 0;
+            while (cursor < uncovered.length && uncovered[cursor]! <= range.end) {
+                cursor++;
+                count++;
+            }
             let score = count === 1 ? SINGLE_LINE_WEIGHT : count;
             if (isChanged) score *= CHANGED_WEIGHT;
             if (wholeFileUncovered) score *= WHOLE_FILE_WEIGHT;
@@ -72,15 +94,10 @@ export function rankUncovered(report: CoverageReport | null, options: RankOption
                 wholeFileUncovered,
                 score: Math.round(score * 100) / 100,
             });
+            if (regions.length >= limit * 4) trim();
         }
     }
 
-    // Changed code is its own group, not just a bigger score. A multiplier
-    // cannot express "always look at what you just touched first" -- a
-    // four-times bonus still loses to an untouched block four times longer.
-    regions.sort((a, b) => {
-        if (a.changed !== b.changed) return a.changed ? -1 : 1;
-        return b.score - a.score || a.path.localeCompare(b.path) || a.start - b.start;
-    });
-    return regions.slice(0, limit);
+    trim();
+    return regions;
 }

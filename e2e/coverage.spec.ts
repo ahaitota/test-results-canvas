@@ -468,6 +468,7 @@ test.describe("no coverage", () => {
   // checkout can be discovered as its coverage report.
   let dir: string;
   let lonelyResults: string;
+  let otherResults: string;
 
   test.beforeAll(() => {
     dir = mkdtempSync(join(tmpdir(), "canvas-nocov-"));
@@ -476,6 +477,8 @@ test.describe("no coverage", () => {
     mkdirSync(join(dir, "run"), { recursive: true });
     lonelyResults = join(dir, "run", "mixed.trx");
     copyFileSync(get_fixture_path("mixed.trx"), lonelyResults);
+    otherResults = join(dir, "run", "other.trx");
+    copyFileSync(get_fixture_path("mixed.trx"), otherResults);
   });
 
   test.afterAll(() => {
@@ -522,6 +525,28 @@ test.describe("no coverage", () => {
     expect(asks[0].coverage?.scope).toBe("enable");
     // The prompt is the command the empty state was already showing.
     expect(asks[0].prompt).toContain("XPlat Code Coverage");
+  });
+
+  // The button is disabled once asked, so a stuck "Asked the agent" leaves the
+  // next run with no way to ask at all -- and this state has only the one button.
+  test("switching to another run without coverage offers the button again", async ({ page, makeServer }) => {
+    const s = await makeServer({
+      resultsFile: lonelyResults,
+      coverage: true,
+      gitExec: null,
+      onAsk: () => {},
+    });
+    await openCanvas(page, s);
+    await page.getByTestId("tab-coverage").click();
+
+    const button = page.getByTestId("coverage-ask-enable");
+    await button.click();
+    await expect(button).toHaveText("Asked the agent");
+
+    s.loadInput({ resultsFile: otherResults });
+
+    await expect(button).toHaveText("Ask agent to re-run with coverage");
+    await expect(button).toBeEnabled();
   });
 });
 

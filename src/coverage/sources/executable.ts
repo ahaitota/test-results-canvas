@@ -45,6 +45,10 @@ type ScanState = {
 // in the middle of a template literal belongs to a statement that runs.
 function scanLine(line: string, syntax: CommentSyntax, state: ScanState): boolean {
     let code = false;
+    // A regex literal cannot span lines, so this resets with every call. An odd
+    // count means an unclosed `/` is open, and anything after it may be regex
+    // body rather than source.
+    let slashes = 0;
     for (let i = 0; i < line.length; i++) {
         const ch = line[i]!;
         const next = line[i + 1];
@@ -70,13 +74,18 @@ function scanLine(line: string, syntax: CommentSyntax, state: ScanState): boolea
         if (ch === " " || ch === "\t" || ch === "\r") continue;
 
         if (syntax === "c") {
-            // The rest of the line is a comment; state is unchanged.
+            // The rest of the line is a comment; state is unchanged. `//` and
+            // `/*` are safe to read first: neither can open a regex literal.
             if (ch === "/" && next === "/") return code;
-            if (ch === "/" && next === "*") {
+            // Inside a regex a `/*` is body, not a comment (`/[/*]/`), and
+            // believing it would silence the rest of the file. Ambiguity keeps
+            // the line instead, the one-sided rule this module is built on.
+            if (ch === "/" && next === "*" && slashes % 2 === 0) {
                 state.block = true;
                 i++;
                 continue;
             }
+            if (ch === "/") slashes++;
         }
         if (syntax === "hash" && ch === "#") return code;
 

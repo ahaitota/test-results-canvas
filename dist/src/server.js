@@ -560,9 +560,9 @@ export async function createResultsServer(options = {}) {
             explicitCoverageFor = resultsTarget;
         }
         // The run is what the panel is about, so its package decides the root.
-        // Inferring from the report instead points source resolution and the
-        // diff at the wrong package whenever the two live apart.
-        if (!projectRoot && resultsAbsPath)
+        // Re-derived on every seed: a canvas reopened for another project would
+        // otherwise resolve sources and the diff against the previous one.
+        if (!explicitProjectRoot && resultsAbsPath)
             projectRoot = findProjectRoot(dirname(resultsAbsPath));
         if (input.coverageFile) {
             const p = resolvePath(String(input.coverageFile));

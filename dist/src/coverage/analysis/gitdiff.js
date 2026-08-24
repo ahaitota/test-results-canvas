@@ -92,11 +92,31 @@ function unquotePath(raw) {
 }
 // Turn `git diff --unified=0` output into the added line numbers per file. With
 // no context lines the hunk header says everything: `@@ -a,b +c,d @@` means d
-// lines were added starting at line c (d omitted means 1, d = 0 is a deletion).
+// lines were added starting at line c (d omitted means 1, d = 0 is a deletion),
+// and the hunk body is exactly the b + d lines that follow.
+//
+// Counting the body out is what separates headers from content: an added line
+// reading `++ x` is rendered `+++ x`, indistinguishable from a file header on
+// its own. Callers must pass git's default `a/`/`b/` prefixes.
 export function parseUnifiedDiff(diff) {
     const byPath = new Map();
     let currentPath = null;
+    let bodyLeft = 0;
     for (const line of String(diff || "").split(/\r?\n/)) {
+        // Checked ahead of the body count so a miscounted hunk cannot swallow
+        // the files after it: at --unified=0 every body line carries a + or -.
+        if (line.startsWith("diff --git ")) {
+            currentPath = null;
+            bodyLeft = 0;
+            continue;
+        }
+        if (bodyLeft > 0) {
+            // "\ No newline at end of file" annotates the line before it rather
+            // than being one of the lines the header counted.
+            if (!line.startsWith("\\"))
+                bodyLeft--;
+            continue;
+        }
         if (line.startsWith("+++ ")) {
             const target = line.slice(4).trim();
             if (target === "/dev/null") {
@@ -112,12 +132,16 @@ export function parseUnifiedDiff(diff) {
         }
         if (!currentPath || !line.startsWith("@@"))
             continue;
-        const m = /^@@+ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
+        const m = /^@@+ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
         if (!m)
             continue;
-        const start = Number(m[1]);
-        const count = m[2] == null ? 1 : Number(m[2]);
-        if (!Number.isFinite(start) || !Number.isFinite(count) || count <= 0)
+        const removed = m[1] == null ? 1 : Number(m[1]);
+        const start = Number(m[2]);
+        const count = m[3] == null ? 1 : Number(m[3]);
+        if (!Number.isFinite(removed) || !Number.isFinite(start) || !Number.isFinite(count))
+            continue;
+        bodyLeft = removed + count;
+        if (count <= 0)
             continue;
         const set = byPath.get(currentPath);
         for (let i = 0; i < count; i++)
@@ -149,6 +173,10 @@ function toFileChanges(root, byPath, all) {
         all,
     }));
 }
+// Prefixes are pinned rather than taken as read: diff.mnemonicPrefix and
+// diff.srcPrefix/dstPrefix rewrite them per repository, and a header reading
+// `+++ after/src/a.ts` would leave the path unable to match coverage.
+const DIFF_ARGS = ["diff", "--unified=0", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/"];
 // Changed lines for the project at `root`, or null when this is not a git
 // repository, git is unavailable, or nothing has changed.
 export function changedLines(root, options = {}) {
@@ -175,7 +203,7 @@ export function changedLines(root, options = {}) {
         files.push({ path, absPath, lines: new Set(), all: true, lineCount });
     }
     // Uncommitted edits (staged and unstaged) against HEAD.
-    const working = git(["diff", "--unified=0", "--no-color", "--no-ext-diff", "HEAD"]);
+    const working = git(DIFF_ARGS.concat("HEAD"));
     const workingChanges = parseUnifiedDiff(working ?? "");
     const workingFiles = [...files, ...toFileChanges(base, workingChanges, false)];
     // Only let the working tree win when it actually contains code, so editing
@@ -191,7 +219,7 @@ export function changedLines(root, options = {}) {
     const point = String(mergeBase || "").trim();
     if (!point)
         return null;
-    const branchDiff = git(["diff", "--unified=0", "--no-color", "--no-ext-diff", `${point}..HEAD`]);
+    const branchDiff = git(DIFF_ARGS.concat(`${point}..HEAD`));
     const branchChanges = parseUnifiedDiff(branchDiff ?? "");
     if (!branchChanges.size)
         return null;
