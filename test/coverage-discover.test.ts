@@ -140,6 +140,78 @@ test("report paths resolve to real files, and unknown ones are left unresolved",
   assert.equal(resolved.files.find((f) => f.path === "src/ghost.ts")!.absPath, undefined);
 });
 
+// A report with no <sources> root, so only the project root and the filename
+// index can locate its files.
+function rootlessCobertura(paths: readonly string[]): string {
+  const classes = paths
+    .map((p, i) => `<class name="C${i}" filename="${p}"><lines><line number="1" hits="1" /></lines></class>`)
+    .join("");
+  return `<?xml version="1.0"?><coverage><packages><package><classes>${classes}</classes></package></packages></coverage>`;
+}
+
+test("folders are excluded by where they are, not by name alone", () => {
+  // "coverage" at the top of a project is report output, but src/coverage/ is
+  // this extension's own source -- excluding the name everywhere hid the files
+  // the report was measuring. "packages" is a monorepo's entire source tree.
+  const dir = mkdtempSync(join(tmpdir(), "cov-dirs-"));
+  try {
+    writeFileSync(join(dir, "package.json"), "{}");
+    mkdirSync(join(dir, "src", "coverage"), { recursive: true });
+    mkdirSync(join(dir, "packages", "app", "src"), { recursive: true });
+    mkdirSync(join(dir, "coverage"), { recursive: true });
+    writeFileSync(join(dir, "src", "coverage", "rank.ts"), "export const a = 1;\n");
+    writeFileSync(join(dir, "packages", "app", "src", "widget.ts"), "export const b = 2;\n");
+    // Report output that happens to end in .ts. Were the root folder indexed
+    // too, two files would answer to "rank.ts" and neither would resolve.
+    writeFileSync(join(dir, "coverage", "rank.ts"), "generated\n");
+
+    const resolved = resolveReportSources(parseCobertura(rootlessCobertura(["rank.ts", "widget.ts"]))!, { projectRoot: dir });
+    assert.equal(resolved.files[0].absPath, resolvePath(dir, "src", "coverage", "rank.ts"));
+    assert.equal(resolved.files[1].absPath, resolvePath(dir, "packages", "app", "src", "widget.ts"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a filename guess that two report entries share belongs to neither", () => {
+  // An aggregate JaCoCo report over two modules. Only one Util.java is checked
+  // out here, so the index answers both with it -- and one of the two would
+  // then open a source view of a different module's file.
+  const dir = mkdtempSync(join(tmpdir(), "cov-shared-"));
+  try {
+    writeFileSync(join(dir, "package.json"), "{}");
+    mkdirSync(join(dir, "src"), { recursive: true });
+    writeFileSync(join(dir, "src", "Util.java"), "class Util {}\n");
+
+    const parsed = parseCobertura(rootlessCobertura([
+      "api/src/main/java/com/example/Util.java",
+      "worker/src/main/java/com/example/Util.java",
+    ]))!;
+    const resolved = resolveReportSources(parsed, { projectRoot: dir });
+    assert.deepEqual(resolved.files.map((f) => f.absPath), [undefined, undefined]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("two files answering a report path equally well resolve to neither", () => {
+  // Both share "com/Thing.java" with the report path, so the suffix score
+  // cannot separate them and picking the first is a coin toss.
+  const dir = mkdtempSync(join(tmpdir(), "cov-tied-"));
+  try {
+    writeFileSync(join(dir, "package.json"), "{}");
+    mkdirSync(join(dir, "a", "com"), { recursive: true });
+    mkdirSync(join(dir, "b", "com"), { recursive: true });
+    writeFileSync(join(dir, "a", "com", "Thing.java"), "class Thing {}\n");
+    writeFileSync(join(dir, "b", "com", "Thing.java"), "class Thing {}\n");
+
+    const resolved = resolveReportSources(parseCobertura(rootlessCobertura(["x/com/Thing.java"]))!, { projectRoot: dir });
+    assert.equal(resolved.files[0].absPath, undefined);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("a relative source root is read against the project, not the running process", () => {
   // A second file of the same name, so the filename fallback cannot rescue the
   // lookup: only the declared root can resolve this path.

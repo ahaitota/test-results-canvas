@@ -27,8 +27,12 @@ export interface PatchFile {
     absPath?: string;
     coveredLines: number[];
     uncoveredLines: number[];
+    // Changed lines the report has no entry for at all. Blank lines and braces
+    // land here, but so does every line of a report taken before the edit, so a
+    // percentage over the measured lines alone can be an overstatement.
+    unknownLines: number;
     percent: number | null;
-    // A changed file with no coverage data at all.
+    // A changed file the report has no entry for at all.
     unmeasured: boolean;
     // How many lines git says changed. For an unmeasured file this is the only
     // sense of size we have, so a 200-line new module doesn't read like a
@@ -45,6 +49,9 @@ export interface PatchCoverage {
     total: number;
     percent: number | null;
     unmeasuredFiles: number;
+    // Changed lines in measured files that the report never mentions, so the
+    // percentage above is not read as the whole story.
+    unknownLines: number;
 }
 
 // A run of uncovered lines, scored by how much it looks worth testing.

@@ -7,7 +7,7 @@
 // Pure and host-free, so it also runs in the browser bundle.
 import { toRanges } from "./patch.js";
 import { isProductionSource } from "../sources/classify.js";
-import { isSamePathOrSuffix } from "../sources/paths.js";
+import { matchPath } from "../sources/paths.js";
 // A single uncovered line is usually a guard clause or a `throw` — worth
 // showing, but not ahead of a twenty-line untested function.
 const SINGLE_LINE_WEIGHT = 0.4;
@@ -15,17 +15,18 @@ const SINGLE_LINE_WEIGHT = 0.4;
 const CHANGED_WEIGHT = 4;
 const WHOLE_FILE_WEIGHT = 1.6;
 const DEFAULT_LIMIT = 25;
-// Whether this file is one of the ones the diff touched. One spelling has to
-// contain the whole of the other: sibling packages share their trailing folders
-// without being the same file.
-function isChanged(file, changedPaths) {
-    for (const changed of changedPaths) {
-        if (file.absPath && isSamePathOrSuffix(file.absPath, changed))
-            return true;
-        if (isSamePathOrSuffix(file.path, changed))
-            return true;
+// Which report entries the diff touched. Resolved from the changed path
+// outwards, the same direction patch.ts uses: asking each entry "did anything
+// change that looks like me?" answers yes for both src/Calc.ts and src/calc.ts,
+// since neither call can see the other candidate.
+function changedFiles(files, changedPaths) {
+    const found = new Set();
+    for (const path of changedPaths) {
+        const match = matchPath([path], files, (f) => [f.absPath, f.path]);
+        if (match)
+            found.add(match);
     }
-    return false;
+    return found;
 }
 // The uncovered runs most worth testing, best first.
 export function rankUncovered(report, options = {}) {
@@ -33,6 +34,7 @@ export function rankUncovered(report, options = {}) {
         return [];
     const changedPaths = options.changedPaths ?? [];
     const limit = options.limit ?? DEFAULT_LIMIT;
+    const changed = changedFiles(report.files, changedPaths);
     const regions = [];
     for (const file of report.files) {
         if (!isProductionSource(file.path))
@@ -42,12 +44,12 @@ export function rankUncovered(report, options = {}) {
             .map(([line]) => Number(line));
         if (!uncovered.length)
             continue;
-        const changed = isChanged(file, changedPaths);
+        const isChanged = changed.has(file);
         const wholeFileUncovered = file.coveredLines === 0 && file.totalLines > 0;
         for (const range of toRanges(uncovered)) {
             const count = uncovered.filter((l) => l >= range.start && l <= range.end).length;
             let score = count === 1 ? SINGLE_LINE_WEIGHT : count;
-            if (changed)
+            if (isChanged)
                 score *= CHANGED_WEIGHT;
             if (wholeFileUncovered)
                 score *= WHOLE_FILE_WEIGHT;
@@ -57,7 +59,7 @@ export function rankUncovered(report, options = {}) {
                 start: range.start,
                 end: range.end,
                 lines: count,
-                changed,
+                changed: isChanged,
                 wholeFileUncovered,
                 score: Math.round(score * 100) / 100,
             });

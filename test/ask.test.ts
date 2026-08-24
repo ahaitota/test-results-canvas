@@ -5,8 +5,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import net from "node:net";
 import { createResultsServer } from "../src/server.js";
-import { composeAskPrompt, testPath } from "../src/ask.js";
+import { composeAskPrompt, composePatchCoveragePrompt, testPath } from "../src/ask.js";
 import type { AskRequest } from "../src/server.js";
+import type { PatchCoverage } from "../src/coverage/model/payload.js";
 import type { TestResult } from "../src/types.js";
 
 // A raw socket, because fetch() refuses to let a caller forge `Host`. Returns the
@@ -327,4 +328,50 @@ test("invisible and direction-flipping characters are stripped from labels", () 
   const prompt = composeAskPrompt({ name: "safe\u202Elive\u200Bname", status: "fail" });
   assert.ok(!/[\u202E\u200B]/.test(prompt), "no format characters may survive");
   assert.equal(prompt, 'Investigate the "safe live name" test failure.');
+});
+
+// --- the "add tests for the changed code" prompt -----------------------------
+
+function patchOf(over: Partial<PatchCoverage>): PatchCoverage {
+  return { against: "HEAD", files: [], covered: 0, total: 0, percent: null, unmeasuredFiles: 0, unknownLines: 0, ...over };
+}
+
+test("the patch prompt names each untested file and the lines to look at", () => {
+  const prompt = composePatchCoveragePrompt(patchOf({
+    covered: 6,
+    total: 10,
+    percent: 60,
+    unmeasuredFiles: 1,
+    files: [
+      { path: "src/a.ts", coveredLines: [1], uncoveredLines: [4, 5, 6], unknownLines: 0, percent: 25, unmeasured: false, changedLines: 4 },
+      { path: "src/new.ts", coveredLines: [], uncoveredLines: [], unknownLines: 0, percent: null, unmeasured: true, changedLines: 30 },
+    ],
+  }));
+  assert.match(prompt, /Only 60% of the changed code/);
+  assert.match(prompt, /- src\/a\.ts: uncovered lines 4-6/);
+  assert.match(prompt, /- src\/new\.ts: changed, but no test touches this file at all/);
+});
+
+test("the patch prompt does not tell the agent that 100% is not enough", () => {
+  // Reachable whenever the only gap is what the report failed to measure. The
+  // old wording read "Only 100% of the changed code is covered by tests".
+  const prompt = composePatchCoveragePrompt(patchOf({ covered: 10, total: 10, percent: 100, unmeasuredFiles: 1 }));
+  assert.doesNotMatch(prompt, /Only 100%/);
+  assert.match(prompt, /accounts for only part of the changed code/);
+});
+
+test("the patch prompt explains a report that predates the edit", () => {
+  // The panel offers this button when changed lines are missing from the
+  // report, so the prompt has to give the agent something to act on -- listing
+  // no files under "add tests for the untested changes" is not that.
+  const prompt = composePatchCoveragePrompt(patchOf({
+    covered: 1,
+    total: 1,
+    percent: 100,
+    unknownLines: 2,
+    files: [{ path: "src/a.ts", coveredLines: [1], uncoveredLines: [], unknownLines: 2, percent: 100, unmeasured: false, changedLines: 3 }],
+  }));
+  assert.match(prompt, /2 changed lines are absent from the report altogether/);
+  assert.match(prompt, /re-run the tests with coverage before trusting it/);
+  assert.match(prompt, /- src\/a\.ts: 2 changed lines the report does not mention/);
 });

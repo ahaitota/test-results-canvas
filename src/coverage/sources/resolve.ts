@@ -20,11 +20,19 @@ import { commonSuffixSegments, normalizeSlashes } from "./paths.js";
 const ROOT_MARKERS = [".git", "package.json", "pom.xml", "build.gradle", "build.gradle.kts", "go.mod", "Cargo.toml", "pyproject.toml", "setup.py"];
 const ROOT_GLOB_MARKERS = [/\.sln$/i, /\.csproj$/i, /\.fsproj$/i];
 
+// Skipped wherever they turn up: none of these ever holds hand-written source.
+// "build" stays here despite being a plausible source folder name, because
+// Gradle writes one per module and its generated/ subtree does hold .java.
 const IGNORE_DIRS = new Set([
     "node_modules", ".git", ".hg", ".svn", ".vs", ".idea", ".venv", "venv",
-    "bin", "obj", "dist", "out", "build", "target", "coverage", "__pycache__",
-    ".next", ".nuxt", ".gradle", "packages",
+    "bin", "obj", "dist", "out", "build", "target", "__pycache__",
+    ".next", ".nuxt", ".gradle",
 ]);
+
+// Skipped only at the top of the project, where it is report output. Deeper
+// down it is ordinary source -- this extension's own src/coverage/ is the
+// example, and excluding it by name hid the very files it measures.
+const IGNORE_ROOT_DIRS = new Set(["coverage"]);
 
 const MAX_INDEX_ENTRIES = 40000;
 const MAX_INDEX_DEPTH = 12;
@@ -86,7 +94,9 @@ class SourceIndex {
             for (const ent of entries) {
                 if (--budget < 0) return map;
                 if (ent.isDirectory()) {
-                    if (depth >= MAX_INDEX_DEPTH || IGNORE_DIRS.has(ent.name.toLowerCase())) continue;
+                    const name = ent.name.toLowerCase();
+                    if (depth >= MAX_INDEX_DEPTH || IGNORE_DIRS.has(name)) continue;
+                    if (depth === 0 && IGNORE_ROOT_DIRS.has(name)) continue;
                     stack.push({ dir: join(dir, ent.name), depth: depth + 1 });
                     continue;
                 }
@@ -147,7 +157,15 @@ interface ResolverOptions {
 
 interface SourceResolver {
     projectRoot?: string;
-    resolve(reportPath: string): string | undefined;
+    resolve(reportPath: string): Resolution;
+}
+
+interface Resolution {
+    absPath?: string;
+    // The filename index found it. That is a guess from the name alone rather
+    // than a location the report gave us, so guesses are checked for collisions
+    // across the whole report before being kept.
+    viaIndex: boolean;
 }
 
 // Tries each way of locating one report path, cheapest first, and remembers
@@ -161,12 +179,12 @@ function createSourceResolver(options: ResolverOptions = {}): SourceResolver {
         .map((r) => (projectRoot ? resolvePath(projectRoot, String(r)) : resolvePath(String(r))))
         .filter((r) => existsSync(r));
     const index = projectRoot && existsSync(projectRoot) ? new SourceIndex(projectRoot) : null;
-    const cache = new Map<string, string | undefined>();
+    const cache = new Map<string, Resolution>();
     const inProject = createContainment(projectRoot);
 
-    function attempt(reportPath: string): string | undefined {
+    function attempt(reportPath: string): Resolution {
         const raw = String(reportPath || "").trim();
-        if (!raw) return undefined;
+        if (!raw) return { viaIndex: false };
         // A path in this platform's own separator: the report may use the other
         // one, and join()/statSync() want ours.
         const native = raw.split(/[\\/]/).join(sep);
@@ -175,47 +193,54 @@ function createSourceResolver(options: ResolverOptions = {}): SourceResolver {
         // of finding the file rather than ending the search.
         if (isAbsolute(native) && existsFile(native)) {
             const hit = inProject(resolvePath(native));
-            if (hit) return hit;
+            if (hit) return { absPath: hit, viaIndex: false };
         }
 
         for (const root of roots) {
             const candidate = resolvePath(root, native);
             if (!existsFile(candidate)) continue;
             const hit = inProject(candidate);
-            if (hit) return hit;
+            if (hit) return { absPath: hit, viaIndex: false };
         }
         if (projectRoot) {
             const candidate = resolvePath(projectRoot, native);
             if (existsFile(candidate)) {
                 const hit = inProject(candidate);
-                if (hit) return hit;
+                if (hit) return { absPath: hit, viaIndex: false };
             }
         }
 
-        // Last resort: match on filename, keeping whichever candidate shares
-        // the most trailing folders. That is what separates src/app/Calc.cs
-        // from vendor/Calc.cs.
+        // Last resort: match on filename, keeping whichever candidate shares the
+        // most trailing folders. That is what separates src/app/Calc.cs from
+        // vendor/Calc.cs. Two candidates sharing the best score name the file
+        // equally well, and choosing between them would be a coin toss.
         if (index) {
+            const candidates = index.lookup(basename(native));
             let best: string | undefined;
             let bestScore = 0;
-            for (const candidate of index.lookup(basename(native))) {
+            let tied = 0;
+            for (const candidate of candidates) {
                 const score = commonSuffixSegments(raw, candidate);
                 if (score > bestScore) {
                     bestScore = score;
                     best = candidate;
-                }
+                    tied = 1;
+                } else if (score === bestScore) tied++;
             }
             // One shared segment is only the filename, too weak to act on
             // unless nothing else in the project has that name.
-            if (best && (bestScore > 1 || index.lookup(basename(native)).length === 1)) return inProject(best);
+            if (best && tied === 1 && (bestScore > 1 || candidates.length === 1)) {
+                return { absPath: inProject(best), viaIndex: true };
+            }
         }
-        return undefined;
+        return { viaIndex: false };
     }
 
     return {
         projectRoot,
-        resolve(reportPath: string): string | undefined {
-            if (cache.has(reportPath)) return cache.get(reportPath);
+        resolve(reportPath: string): Resolution {
+            const cached = cache.get(reportPath);
+            if (cached) return cached;
             const resolved = attempt(reportPath);
             cache.set(reportPath, resolved);
             return resolved;
@@ -230,10 +255,21 @@ export function resolveReportSources(report: CoverageReport, options: ResolverOp
     // Normalise slashes once here rather than in each parser. A Windows LCOV
     // writes "src\ask.ts" while git always says "src/ask.ts", and left alone
     // the same file would appear twice in patch coverage.
-    const files: CoverageFile[] = report.files.map((f) => ({
-        ...f,
-        path: normalizeSlashes(f.path),
-        absPath: resolver.resolve(f.path),
+    const resolved = report.files.map((f) => ({ file: f, hit: resolver.resolve(f.path) }));
+
+    // Entries are distinct files, so a guessed name that several of them landed
+    // on identifies none of them. An aggregate JaCoCo report is the case that
+    // matters: api/…/Util.java and worker/…/Util.java are two modules, and a
+    // project holding one Util.java would otherwise show its source for both.
+    const guessed = new Map<string, number>();
+    for (const { hit } of resolved) {
+        if (hit.viaIndex && hit.absPath) guessed.set(hit.absPath, (guessed.get(hit.absPath) ?? 0) + 1);
+    }
+
+    const files: CoverageFile[] = resolved.map(({ file, hit }) => ({
+        ...file,
+        path: normalizeSlashes(file.path),
+        absPath: hit.absPath && hit.viaIndex && guessed.get(hit.absPath)! > 1 ? undefined : hit.absPath,
     }));
     return { ...report, files };
 }

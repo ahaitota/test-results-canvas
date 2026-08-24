@@ -5,6 +5,7 @@ export type { PatchFile, PatchCoverage } from "../model/payload.js";
 export declare function matchCoverageFile(change: FileChanges, files: readonly CoverageFile[]): CoverageFile | undefined;
 export interface PatchOptions {
     includeUnmeasured?: boolean;
+    inertLines?: ReadonlyMap<string, ReadonlySet<number>>;
 }
 export declare function computePatchCoverage(report: CoverageReport | null, changes: {
     against: string;

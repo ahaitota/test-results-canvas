@@ -4,36 +4,26 @@
 //
 // Pure: git access lives in gitdiff.ts and file loading in the server.
 import { percentOf } from "../model/totals.js";
-import { isSamePathOrSuffix, normalizeSlashes } from "../sources/paths.js";
+import { matchPath } from "../sources/paths.js";
 import { isProductionSource } from "../sources/classify.js";
-// Paths are compared case-insensitively: Windows and macOS filesystems are, and
-// the tool that wrote the report can disagree with git about capitalisation.
-function key(p) {
-    return normalizeSlashes(p).toLowerCase();
-}
-// Find the report entry for a changed file. An absolute-path match is exact;
-// otherwise one spelling has to contain the whole of the other, which is what
-// lines git's `src/app/calc.ts` up with LCOV's
-// `/home/runner/work/repo/src/app/calc.ts`. The most specific spelling wins.
+// Find the report entry for a changed file. Both sides offer every spelling they
+// have, and an entry is only taken when no other entry could be meant.
 export function matchCoverageFile(change, files) {
-    const wantedAbs = key(change.absPath);
-    for (const f of files) {
-        if (f.absPath && key(f.absPath) === wantedAbs)
-            return f;
-    }
-    let best;
-    let bestLength = 0;
-    for (const f of files) {
-        const matches = [change.path, change.absPath].some((c) => [f.path, f.absPath].some((t) => t && isSamePathOrSuffix(c, t)));
-        if (!matches)
+    return matchPath([change.absPath, change.path], files, (f) => [f.absPath, f.path]);
+}
+// Changed lines the report has no entry for. Blank lines and braces belong here
+// and are dropped when the source proves them inert; what remains is real code
+// the report skipped, which is what a report taken before the edit looks like.
+function countUnknown(changed, lines, inert) {
+    let n = 0;
+    for (const line of changed) {
+        if (Object.prototype.hasOwnProperty.call(lines, line))
             continue;
-        const length = normalizeSlashes(f.path).length;
-        if (length > bestLength) {
-            bestLength = length;
-            best = f;
-        }
+        if (inert?.has(line))
+            continue;
+        n++;
     }
-    return best;
+    return n;
 }
 // Cross the changed lines with the coverage report, per file and overall.
 export function computePatchCoverage(report, changes, options = {}) {
@@ -44,13 +34,26 @@ export function computePatchCoverage(report, changes, options = {}) {
     const files = [];
     let covered = 0;
     let total = 0;
+    let unknown = 0;
     let unmeasuredFiles = 0;
-    for (const change of changes.files) {
-        // Only production code: a changed README or a new test file says
-        // nothing useful about coverage.
-        if (!isProductionSource(change.path))
-            continue;
-        const match = matchCoverageFile(change, reportFiles);
+    // Only production code: a changed README or a new test file says nothing
+    // useful about coverage.
+    const production = changes.files.filter((c) => isProductionSource(c.path));
+    // Matched up front, because an entry is only that file's when no other
+    // change can claim it too: a report path shortened to src/index.ts ends both
+    // packages/a/src/index.ts and packages/b/src/index.ts, and would otherwise
+    // be reported once for each.
+    const matched = new Map();
+    const claims = new Map();
+    for (const change of production) {
+        const found = matchCoverageFile(change, reportFiles);
+        matched.set(change, found);
+        if (found)
+            claims.set(found, (claims.get(found) ?? 0) + 1);
+    }
+    for (const change of production) {
+        const found = matched.get(change);
+        const match = found && claims.get(found) === 1 ? found : undefined;
         if (!match) {
             unmeasuredFiles++;
             if (includeUnmeasured) {
@@ -59,6 +62,10 @@ export function computePatchCoverage(report, changes, options = {}) {
                     absPath: change.absPath,
                     coveredLines: [],
                     uncoveredLines: [],
+                    // Nothing here is "unmentioned" in the sense the aggregate
+                    // counts: the report has no entry for the file at all, which
+                    // unmeasured and changedLines already say.
+                    unknownLines: 0,
                     percent: null,
                     unmeasured: true,
                     // Untracked files carry their length instead of a diff.
@@ -79,20 +86,28 @@ export function computePatchCoverage(report, changes, options = {}) {
             else
                 uncoveredLines.push(line);
         }
-        // A changed file whose changed lines are all non-executable — a comment
-        // or a reformat — has nothing to report.
-        if (!coveredLines.length && !uncoveredLines.length)
+        // `all` has no line set to compare against: the changed set is the whole
+        // file, and every line the report left out of it really is blank.
+        const unknownLines = change.all
+            ? 0
+            : countUnknown(change.lines, match.lines, match.absPath ? options.inertLines?.get(match.absPath) : undefined);
+        // Nothing here the report can speak to either way.
+        if (!coveredLines.length && !uncoveredLines.length && !unknownLines)
             continue;
         coveredLines.sort((a, b) => a - b);
         uncoveredLines.sort((a, b) => a - b);
         covered += coveredLines.length;
         total += coveredLines.length + uncoveredLines.length;
+        unknown += unknownLines;
         files.push({
             path: match.path,
             absPath: match.absPath,
             coveredLines,
             uncoveredLines,
+            unknownLines,
             percent: percentOf(coveredLines.length, coveredLines.length + uncoveredLines.length),
+            // The report does measure this file, even where it says nothing
+            // about the lines that changed.
             unmeasured: false,
             changedLines: change.lineCount ?? change.lines.size,
         });
@@ -110,7 +125,7 @@ export function computePatchCoverage(report, changes, options = {}) {
             return b.uncoveredLines.length - a.uncoveredLines.length;
         return a.path.localeCompare(b.path);
     });
-    return { against: changes.against, files, covered, total, percent: percentOf(covered, total), unmeasuredFiles };
+    return { against: changes.against, files, covered, total, percent: percentOf(covered, total), unmeasuredFiles, unknownLines: unknown };
 }
 // Group line numbers into runs, so the UI can say "lines 40-58" instead of
 // listing nineteen numbers.

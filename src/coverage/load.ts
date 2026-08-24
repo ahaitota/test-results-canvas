@@ -8,7 +8,7 @@ import { readFileSync, statSync } from "node:fs";
 import { basename, dirname, resolve as resolvePath } from "node:path";
 import { parseCoverage } from "./formats/detect.js";
 import { resolveReportSources, findProjectRoot } from "./sources/resolve.js";
-import { normalizeSlashes } from "./sources/paths.js";
+import { matchPath, normalizeSlashes } from "./sources/paths.js";
 import { changedLines } from "./analysis/gitdiff.js";
 import type { DiffOptions, DiffResult, FileChanges } from "./analysis/gitdiff.js";
 import { computePatchCoverage } from "./analysis/patch.js";
@@ -32,10 +32,13 @@ const MAX_SCAN_BYTES = 96 * 1024 * 1024;
 
 // Drop lines the report calls coverable but the source shows to be comments or
 // blanks. Both sides of the fraction lose the line, since a "covered" comment
-// is no more meaningful than an uncovered one.
-function dropNonExecutable(report: CoverageReport): CoverageReport {
+// is no more meaningful than an uncovered one. The inert sets are returned as
+// well, because patch coverage needs them to tell a changed comment from a
+// changed statement the report failed to mention.
+function dropNonExecutable(report: CoverageReport): { report: CoverageReport; inert: Map<string, Set<number>> } {
     let budget = MAX_SCAN_BYTES;
     let changed = false;
+    const inertByPath = new Map<string, Set<number>>();
     const files = report.files.map((f) => {
         if (!f.absPath || budget <= 0) return f;
         const syntax = commentSyntaxFor(f.path);
@@ -51,6 +54,7 @@ function dropNonExecutable(report: CoverageReport): CoverageReport {
         }
         const inert = nonExecutableLines(text, syntax);
         if (inert.size === 0) return f;
+        inertByPath.set(f.absPath, inert);
         const lines: Record<number, number> = {};
         let dropped = 0;
         for (const [key, hits] of Object.entries(f.lines)) {
@@ -65,8 +69,8 @@ function dropNonExecutable(report: CoverageReport): CoverageReport {
         changed = true;
         return { ...f, lines, ...tallyLines(lines) };
     });
-    if (!changed) return report;
-    return { ...report, files, totals: totalsOf(files) };
+    if (!changed) return { report, inert: inertByPath };
+    return { report: { ...report, files, totals: totalsOf(files) }, inert: inertByPath };
 }
 
 export interface LoadedCoverage {
@@ -90,23 +94,23 @@ export type CoverageLoadResult =
 // One row per file for the panel: its percentage, whether the diff touched it,
 // and whether it is itself a test.
 function summarize(files: readonly CoverageFile[], changedPaths: readonly string[]): CoverageFileSummary[] {
-    const changedKeys = changedPaths.map((p) => normalizeSlashes(p).toLowerCase());
-    return files.map((f) => {
-        // git and the report may spell the same file differently, so match on
-        // either path, allowing one to be the tail of the other.
-        const abs = f.absPath ? normalizeSlashes(f.absPath).toLowerCase() : "";
-        const own = normalizeSlashes(f.path).toLowerCase();
-        const changed = changedKeys.some((c) => c === abs || c === own || (abs && abs.endsWith(`/${c}`)) || own.endsWith(`/${c}`));
-        return {
-            path: f.path,
-            coveredLines: f.coveredLines,
-            totalLines: f.totalLines,
-            percent: percentOf(f.coveredLines, f.totalLines),
-            hasSource: Boolean(f.absPath),
-            changed,
-            isTest: isTestPath(f.path),
-        };
-    });
+    // Resolved from the changed path outwards, so the two candidates of a
+    // case-only difference are weighed against each other rather than each
+    // being asked on its own whether it looks like the change.
+    const changed = new Set<CoverageFile>();
+    for (const path of changedPaths) {
+        const match = matchPath([path], files, (f) => [f.absPath, f.path]);
+        if (match) changed.add(match);
+    }
+    return files.map((f) => ({
+        path: f.path,
+        coveredLines: f.coveredLines,
+        totalLines: f.totalLines,
+        percent: percentOf(f.coveredLines, f.totalLines),
+        hasSource: Boolean(f.absPath),
+        changed: changed.has(f),
+        isTest: isTestPath(f.path),
+    }));
 }
 
 // Totals counting production code only.
@@ -166,7 +170,8 @@ export function loadCoverageFile(coverageFile: string, options: LoadOptions = {}
 
     const projectRoot = options.projectRoot ?? findProjectRoot(dirname(abs));
     const resolved = resolveReportSources(parsed, { projectRoot });
-    const report = options.keepNonExecutable ? resolved : dropNonExecutable(resolved);
+    const executable = options.keepNonExecutable ? null : dropNonExecutable(resolved);
+    const report = executable?.report ?? resolved;
 
     let diff: DiffResult | null = null;
     if (!options.skipGit && projectRoot) {
@@ -178,7 +183,7 @@ export function loadCoverageFile(coverageFile: string, options: LoadOptions = {}
     }
 
     const changedPaths = diff ? diff.files.map((f) => f.path) : [];
-    const patch = computePatchCoverage(report, diff);
+    const patch = computePatchCoverage(report, diff, { inertLines: executable?.inert });
     const hotspots = rankUncovered(report, { changedPaths });
 
     const changedByPath = new Map<string, FileChanges>();

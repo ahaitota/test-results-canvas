@@ -13,6 +13,7 @@ export interface PatchFile {
     absPath?: string;
     coveredLines: number[];
     uncoveredLines: number[];
+    unknownLines: number;
     percent: number | null;
     unmeasured: boolean;
     changedLines: number;
@@ -24,6 +25,7 @@ export interface PatchCoverage {
     total: number;
     percent: number | null;
     unmeasuredFiles: number;
+    unknownLines: number;
 }
 export interface UncoveredRegion {
     path: string;

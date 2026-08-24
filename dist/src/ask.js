@@ -93,16 +93,33 @@ export function composeCoveragePrompt(file) {
 }
 // "The code that just changed isn't covered -- write tests for it."
 export function composePatchCoveragePrompt(patch) {
-    const gaps = patch.files.filter((f) => f.unmeasured || f.uncoveredLines.length > 0);
+    const unknown = patch.unknownLines ?? 0;
+    // A file the report never mentions is a gap, and so is one whose changed
+    // lines it has no entry for -- the second is what a report taken before the
+    // edit looks like, and it is invisible in the percentage.
+    const gaps = patch.files.filter((f) => f.unmeasured || f.uncoveredLines.length > 0 || (f.unknownLines ?? 0) > 0);
     const headline = patch.percent == null
         ? `None of the changed code in the ${label(patch.against)} is covered by tests.`
-        : `Only ${patch.percent}% of the changed code in the ${label(patch.against)} is covered by tests (${patch.covered} of ${patch.total} lines).`;
+        : patch.covered === patch.total
+            // Every line the report measured is covered, so the gap is what it did
+            // not measure. "Only 100% is covered" would be a contradiction.
+            ? `The coverage report accounts for only part of the changed code in the ${label(patch.against)}.`
+            : `Only ${patch.percent}% of the changed code in the ${label(patch.against)} is covered by tests (${patch.covered} of ${patch.total} lines).`;
     const parts = [`${headline} Add tests for the untested changes.`];
+    // Said before the file list, because it changes how the percentage above
+    // should be read rather than adding to it.
+    if (unknown > 0) {
+        parts.push(`${unknown} changed line${unknown === 1 ? " is" : "s are"} absent from the report altogether, so that figure does not describe `
+            + "them either way. Some will be blank lines or braces; the rest mean the report predates these edits, so re-run the tests with "
+            + "coverage before trusting it.");
+    }
     const lines = gaps.slice(0, MAX_RANGES).map((f) => {
         const path = label(f.path) || "(unknown file)";
-        return f.unmeasured
-            ? `- ${path}: changed, but no test touches this file at all`
-            : `- ${path}: uncovered lines ${rangeList(f.uncoveredLines)}`;
+        if (f.unmeasured)
+            return `- ${path}: changed, but no test touches this file at all`;
+        if (!f.uncoveredLines.length)
+            return `- ${path}: ${f.unknownLines} changed line${f.unknownLines === 1 ? "" : "s"} the report does not mention`;
+        return `- ${path}: uncovered lines ${rangeList(f.uncoveredLines)}`;
     });
     if (gaps.length > MAX_RANGES)
         lines.push(`- and ${gaps.length - MAX_RANGES} more files`);

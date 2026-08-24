@@ -306,14 +306,93 @@ test("changed docs and test files do not distort patch coverage", () => {
   assert.equal(patch.files[0].path, "src/calc.ts");
 });
 
-test("comment-only edits produce no patch entry", () => {
-  // Line 99 is not in the hit map, so it is not executable; a reformat should
-  // not be reported as untested code.
+test("matchCoverageFile keeps two files whose paths differ only in case apart", () => {
+  // A case-insensitive comparison hands src/foo.ts the coverage of src/Foo.ts.
+  // The filesystem here says they are two files, so the spelling is the answer.
+  const files = report([
+    { path: "src/Foo.ts", lines: { 1: 0 } },
+    { path: "src/foo.ts", lines: { 1: 1 } },
+  ]).files;
+  assert.equal(matchCoverageFile(change("src/foo.ts", [1]), files)?.lines[1], 1);
+  assert.equal(matchCoverageFile(change("src/Foo.ts", [1]), files)?.lines[1], 0);
+});
+
+test("matchCoverageFile still ignores case when only one file can be meant", () => {
+  // Windows and macOS reports routinely disagree with git about case, and with
+  // a single candidate there is nothing to confuse it with.
+  const files = report([{ path: "src/Calc.ts", lines: { 1: 1 } }]).files;
+  assert.equal(matchCoverageFile(change("src/calc.ts", [1]), files)?.path, "src/Calc.ts");
+});
+
+test("one report entry claimed by two changed files measures neither", () => {
+  // A report that shortened its paths to src/index.ts ends both of these. Taken
+  // per change it is a clean match each time, so the same coverage would be
+  // reported twice -- once truthfully and once not, with no way to tell which.
+  const patch = computePatchCoverage(report([{ path: "src/index.ts", lines: { 1: 1, 2: 1 } }]), {
+    against: "HEAD",
+    files: [change("packages/a/src/index.ts", [1, 2]), change("packages/b/src/index.ts", [1, 2])],
+  });
+  assert.ok(patch);
+  assert.equal(patch.unmeasuredFiles, 2);
+  assert.equal(patch.total, 0);
+  assert.deepEqual(patch.files.map((f) => f.unmeasured), [true, true]);
+});
+
+test("a changed line the report never mentions is counted apart, not dropped", () => {
   const patch = computePatchCoverage(report([{ path: "src/calc.ts", lines: { 1: 1 } }]), {
     against: "uncommitted changes",
     files: [change("src/calc.ts", [99])],
   });
-  assert.equal(patch, null);
+  assert.ok(patch);
+  assert.equal(patch.unknownLines, 1);
+  assert.equal(patch.files.length, 1);
+  assert.equal(patch.files[0].unknownLines, 1);
+  assert.equal(patch.files[0].unmeasured, false);
+  assert.deepEqual(patch.files[0].uncoveredLines, []);
+  assert.deepEqual(patch.files[0].coveredLines, []);
+});
+
+test("a stale report cannot report 100% on lines it has never seen", () => {
+  // The report predates the edit: it knows line 1 and nothing about line 2.
+  // Counting only what it knows reads as a clean sweep of the change.
+  const patch = computePatchCoverage(report([{ path: "src/calc.ts", lines: { 1: 1 } }]), {
+    against: "HEAD",
+    files: [change("src/calc.ts", [1, 2])],
+  });
+  assert.ok(patch);
+  assert.equal(patch.covered, 1);
+  assert.equal(patch.total, 1);
+  assert.equal(patch.unknownLines, 1);
+});
+
+test("a changed comment is not a line the report failed to measure", () => {
+  // Reports call comments coverable, and the source is consulted to drop them.
+  // Counting them here would put a reformatted comment block back in front of
+  // the reader under a heading about untested code.
+  const rep = report([{ path: "src/calc.ts", lines: { 1: 1 } }]);
+  rep.files[0].absPath = "/repo/src/calc.ts";
+  const patch = computePatchCoverage(
+    rep,
+    { against: "HEAD", files: [change("src/calc.ts", [1, 8, 9])] },
+    { inertLines: new Map([["/repo/src/calc.ts", new Set([8])]]) },
+  );
+  assert.ok(patch);
+  // Line 8 is a comment; line 9 is real code the report says nothing about.
+  assert.equal(patch.unknownLines, 1);
+  assert.equal(patch.files[0].unknownLines, 1);
+});
+
+test("a brand-new file counts no unknown lines", () => {
+  // `all` means the changed set is the whole file, so every line the report
+  // left out really is blank or a brace.
+  const patch = computePatchCoverage(report([{ path: "src/new.ts", lines: { 2: 1, 4: 0 } }]), {
+    against: "HEAD",
+    files: [change("src/new.ts", [], true)],
+  });
+  assert.ok(patch);
+  assert.equal(patch.unknownLines, 0);
+  assert.deepEqual(patch.files[0].coveredLines, [2]);
+  assert.deepEqual(patch.files[0].uncoveredLines, [4]);
 });
 
 test("computePatchCoverage returns null when there is no diff at all", () => {
@@ -422,6 +501,26 @@ test("rankUncovered does not treat a sibling package's file as changed", () => {
   const changed = Object.fromEntries(ranked.map((r) => [r.path, r.changed]));
   assert.equal(changed["packages/a/src/index.ts"], true);
   assert.equal(changed["packages/b/src/index.ts"], false);
+});
+
+test("rankUncovered still counts a shortened report path as changed", () => {
+  // src/index.ts is one of the two changed files -- we just cannot say which.
+  // Unlike patch coverage, which would attribute the wrong line numbers, the
+  // question here is only "did this change?", and the answer is yes.
+  const rep = report([{ path: "src/index.ts", lines: { 1: 0, 2: 0 } }]);
+  const ranked = rankUncovered(rep, { changedPaths: ["packages/a/src/index.ts", "packages/b/src/index.ts"] });
+  assert.equal(ranked[0].changed, true);
+});
+
+test("rankUncovered keeps case-distinct files apart", () => {
+  const rep = report([
+    { path: "src/Calc.ts", lines: { 1: 0, 2: 0 } },
+    { path: "src/calc.ts", lines: { 1: 0, 2: 0 } },
+  ]);
+  const ranked = rankUncovered(rep, { changedPaths: ["src/calc.ts"] });
+  const changed = Object.fromEntries(ranked.map((r) => [r.path, r.changed]));
+  assert.equal(changed["src/calc.ts"], true);
+  assert.equal(changed["src/Calc.ts"], false);
 });
 
 test("rankUncovered ignores tests and generated files", () => {

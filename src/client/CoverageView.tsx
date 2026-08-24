@@ -117,8 +117,12 @@ function PatchBanner({ coverage }: { coverage: CoveragePayload }) {
   }
 
   // Unmeasured files are not "clean": nothing observed them, so a pass here
-  // would be claiming a result the report cannot support.
-  const clean = patch.total > 0 && patch.covered === patch.total && patch.unmeasuredFiles === 0;
+  // would be claiming a result the report cannot support. Nor are changed lines
+  // the report has no entry for, which is what a stale report looks like.
+  const clean = patch.total > 0
+    && patch.covered === patch.total
+    && patch.unmeasuredFiles === 0
+    && (patch.unknownLines ?? 0) === 0;
   const onAsk = async () => {
     const ok = await askAgentCoverage("patch");
     setAsked(ok ? "sent" : "error");

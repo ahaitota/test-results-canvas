@@ -32,11 +32,12 @@ function file(path: string, coveredLines: number, totalLines: number, rest: Part
   };
 }
 
-function patchFile(path: string, covered: number[], uncovered: number[], unmeasured = false, changedLines?: number): PatchFile {
+function patchFile(path: string, covered: number[], uncovered: number[], unmeasured = false, changedLines?: number, unknownLines = 0): PatchFile {
   return {
     path,
     coveredLines: covered,
     uncoveredLines: uncovered,
+    unknownLines,
     percent: covered.length + uncovered.length ? Math.round((covered.length / (covered.length + uncovered.length)) * 100) : null,
     unmeasured,
     changedLines: changedLines ?? covered.length + uncovered.length,
@@ -45,7 +46,7 @@ function patchFile(path: string, covered: number[], uncovered: number[], unmeasu
 
 function payload(patch: Partial<PatchCoverage> | null, rest: Partial<CoveragePayload> = {}): CoveragePayload {
   const full = patch
-    ? { against: "origin/main", files: [], covered: 0, total: 0, percent: null, unmeasuredFiles: 0, ...patch }
+    ? { against: "origin/main", files: [], covered: 0, total: 0, percent: null, unmeasuredFiles: 0, unknownLines: 0, ...patch }
     : null;
   return { patch: full, ...rest } as unknown as CoveragePayload;
 }
@@ -239,6 +240,29 @@ test("rowNote says a file was never measured, and how much of it that hides", ()
   assert.equal(rowNote(buildCoverageRows(unsized, "", "actionable")[0]!), "changed, but the report never measured it");
 });
 
+test("rowNote will not call a change fully covered when lines went unmentioned", () => {
+  // A report taken before the edit: line 1 is measured and covered, line 2 is
+  // simply absent. "all 1 changed line covered" would be true and misleading.
+  const cov = payload(
+    { files: [patchFile("src/a.ts", [1], [], false, 2, 1)], unknownLines: 1 },
+    { files: [file("src/a.ts", 10, 10, { changed: true })], hotspots: [] },
+  );
+  assert.equal(
+    rowNote(buildCoverageRows(cov, "", "actionable")[0]!),
+    "all 1 changed line covered \u00B7 1 changed line the report does not mention",
+  );
+});
+
+test("rowNote stays quiet about unmentioned lines once it already names untested ones", () => {
+  // Blank lines and closing braces are absent from every format, so saying so
+  // on a row that is already flagged is noise.
+  const cov = payload(
+    { files: [patchFile("src/a.ts", [1], [2], false, 6, 3)], unknownLines: 3 },
+    { files: [file("src/a.ts", 10, 10, { changed: true })], hotspots: [] },
+  );
+  assert.equal(rowNote(buildCoverageRows(cov, "", "actionable")[0]!), "1 of 2 changed lines untested: 2");
+});
+
 test("buildCoverageRows ranks blind spots by size, the only measure they have", () => {
   const cov = payload(
     {
@@ -332,6 +356,23 @@ test("patchHeadline does not claim a clean sweep while files are unmeasured", ()
 
 test("patchHeadline reports unmeasured files alone when nothing was measured", () => {
   assert.equal(patchHeadline(payload({ covered: 0, total: 0, unmeasuredFiles: 3 })), "3 changed files with no coverage data");
+});
+
+test("patchHeadline will not report a clean sweep of lines the report never saw", () => {
+  assert.equal(
+    patchHeadline(payload({ covered: 10, total: 10, unknownLines: 4 })),
+    "All 10 changed lines are covered, plus 4 changed lines the report does not mention",
+  );
+  // Already flagged: the unmentioned lines are mostly blanks and braces, and
+  // repeating them behind a real number is noise.
+  assert.equal(patchHeadline(payload({ covered: 8, total: 10, unknownLines: 4 })), "2 of 10 changed lines not covered");
+});
+
+test("patchHeadline joins three clauses without repeating 'plus'", () => {
+  assert.equal(
+    patchHeadline(payload({ covered: 10, total: 10, unmeasuredFiles: 2, unknownLines: 4 })),
+    "All 10 changed lines are covered, plus 2 changed files with no coverage data and 4 changed lines the report does not mention",
+  );
 });
 
 test("patchHeadline is empty without a patch comparison", () => {

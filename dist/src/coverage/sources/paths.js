@@ -18,15 +18,48 @@ export function commonSuffixSegments(a, b) {
         n++;
     return n;
 }
-// True when two spellings can only be the same file: equal, or one ending with
-// the whole of the other at a folder boundary. Sharing some trailing folders is
-// not enough -- packages/a/src/index.ts and packages/b/src/index.ts share two.
-export function isSamePathOrSuffix(a, b) {
-    const x = normalizeSlashes(a).toLowerCase();
-    const y = normalizeSlashes(b).toLowerCase();
-    if (!x || !y)
-        return false;
-    return x === y || x.endsWith(`/${y}`) || y.endsWith(`/${x}`);
+// True when one spelling contains the whole of the other at a folder boundary.
+// Sharing some trailing folders is not enough -- packages/a/src/index.ts and
+// packages/b/src/index.ts share two.
+function containsWhole(a, b) {
+    return a.endsWith(`/${b}`) || b.endsWith(`/${a}`);
+}
+// Which candidate a path refers to, or undefined when more than one could.
+//
+// Tried in rounds: an identical spelling, then one spelling containing the whole
+// of the other, then both of those again ignoring case. A later round is only
+// reached when the earlier ones matched nothing, and a round matching several
+// candidates is ambiguous -- choosing one of them would attribute a file's
+// coverage to a different file. Either side may be spelled several ways, since
+// git, the report and the filesystem each name the same file their own way.
+export function matchPath(wanted, candidates, spellingsOf) {
+    const mine = wanted.filter((s) => Boolean(s)).map(normalizeSlashes);
+    if (!mine.length)
+        return undefined;
+    const rounds = [
+        (a, b) => a === b,
+        containsWhole,
+        (a, b) => {
+            const x = a.toLowerCase();
+            const y = b.toLowerCase();
+            return x === y || containsWhole(x, y);
+        },
+    ];
+    for (const test of rounds) {
+        let found;
+        let count = 0;
+        for (const candidate of candidates) {
+            const theirs = spellingsOf(candidate);
+            if (!mine.some((a) => theirs.some((b) => b && test(a, normalizeSlashes(b)))))
+                continue;
+            if (++count > 1)
+                return undefined;
+            found = candidate;
+        }
+        if (count === 1)
+            return found;
+    }
+    return undefined;
 }
 // Look a path up in a map keyed by its exact spelling. Case is only ignored as
 // a fallback, and only when one entry can be meant by it: two keys differing in

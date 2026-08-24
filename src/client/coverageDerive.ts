@@ -53,6 +53,9 @@ export interface CoverageRow {
   newCovered: number;
   newTotal: number;
   newUncovered: number[];
+  // Changed lines the report has no entry for. Not the same as uncovered: the
+  // report was never asked about them.
+  newUnknown: number;
   // What git says changed, regardless of coverage. For an unmeasured file this
   // is the only size it has.
   changedLines: number;
@@ -140,6 +143,7 @@ export function buildCoverageRows(
       newCovered: 0,
       newTotal: 0,
       newUncovered: [],
+      newUnknown: 0,
       changedLines: 0,
       regions: [],
       tier: 4,
@@ -166,6 +170,7 @@ export function buildCoverageRows(
         newCovered: 0,
         newTotal: 0,
         newUncovered: [],
+        newUnknown: 0,
         changedLines: 0,
         regions: [],
         tier: 0,
@@ -177,6 +182,7 @@ export function buildCoverageRows(
     row.newCovered = pf.coveredLines.length;
     row.newTotal = pf.coveredLines.length + pf.uncoveredLines.length;
     row.newUncovered = pf.uncoveredLines;
+    row.newUnknown = pf.unknownLines ?? 0;
     row.changedLines = pf.changedLines ?? 0;
   }
 
@@ -210,6 +216,11 @@ export function rowNote(r: CoverageRow): string {
     bits.push(r.newUncovered.length === 0
       ? `all ${r.newTotal} changed line${r.newTotal === 1 ? "" : "s"} covered`
       : `${r.newUncovered.length} of ${r.newTotal} changed line${r.newTotal === 1 ? "" : "s"} untested: ${fmtRanges(r.newUncovered, 4)}`);
+  }
+  // Only worth saying where the row would otherwise read as fully covered. Once
+  // it already names untested lines, the reader is looking at the file anyway.
+  if (r.newUnknown > 0 && r.newUncovered.length === 0) {
+    bits.push(`${r.newUnknown} changed line${r.newUnknown === 1 ? "" : "s"} the report does not mention`);
   }
   const top = r.regions[0];
   if (top) {
@@ -265,12 +276,24 @@ export function patchHeadline(coverage: CoveragePayload | null): string {
   const patch = coverage?.patch;
   if (!patch) return "";
   const uncovered = patch.total - patch.covered;
-  const blind = patch.unmeasuredFiles > 0
-    ? `${patch.unmeasuredFiles} changed file${patch.unmeasuredFiles === 1 ? "" : "s"} with no coverage data`
-    : "";
-  if (patch.total === 0 && patch.unmeasuredFiles > 0) return blind;
-  const measured = uncovered === 0
-    ? `All ${patch.total} changed line${patch.total === 1 ? " is" : "s are"} covered`
-    : `${uncovered} of ${patch.total} changed line${patch.total === 1 ? "" : "s"} not covered`;
-  return blind ? `${measured}, plus ${blind}` : measured;
+  const unknown = patch.unknownLines ?? 0;
+
+  const parts: string[] = [];
+  if (patch.total > 0) {
+    parts.push(uncovered === 0
+      ? `All ${patch.total} changed line${patch.total === 1 ? " is" : "s are"} covered`
+      : `${uncovered} of ${patch.total} changed line${patch.total === 1 ? "" : "s"} not covered`);
+  }
+  if (patch.unmeasuredFiles > 0) {
+    parts.push(`${patch.unmeasuredFiles} changed file${patch.unmeasuredFiles === 1 ? "" : "s"} with no coverage data`);
+  }
+  // Lines the report has no entry for sit outside the percentage entirely. Named
+  // only where the rest reads as a clean sweep, which is the one place the
+  // omission would change the conclusion.
+  if (unknown > 0 && uncovered === 0) {
+    parts.push(`${unknown} changed line${unknown === 1 ? "" : "s"} the report does not mention`);
+  }
+
+  if (!parts.length) return "";
+  return parts.length === 1 ? parts[0] : `${parts[0]}, plus ${parts.slice(1).join(" and ")}`;
 }
