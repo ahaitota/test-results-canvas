@@ -1,14 +1,12 @@
-// Reads JaCoCo XML, the Java standard — the natural partner to the
+// Reads JaCoCo XML, the Java standard -- the natural partner to the
 // Surefire/Gradle JUnit reports this canvas already renders.
 //
 //   <report><package name="com/example/app">
 //     <sourcefile name="Calculator.java"><line nr="5" mi="0" ci="3"/>
 //
 // An aggregate report nests those in <group> per module, and two modules may
-// hold the same package and file name, so the group names are kept in front of
-// the path to tell them apart.
-//
-// The attributes count instructions and branches (mi/ci = missed/covered
+// hold the same package and file name, so group names are kept in front of the
+// path. The attributes count instructions and branches (mi/ci = missed/covered
 // instructions) rather than executions, so a covered line is stored as 1 hit.
 import { scanTags, attr, numAttr } from "../../xml.js";
 import { buildFiles, totalsOf } from "../model/totals.js";

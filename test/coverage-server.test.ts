@@ -825,3 +825,34 @@ test("a debounced watcher callback cannot resurrect the report of a retired run"
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("a new project root re-resolves the report on screen and tells clients", async () => {
+  // The report loads either way; what the root decides is whether its files can
+  // be found on disk. Updating the root without reading the report again leaves
+  // the panel saying it has no source for files it can now open.
+  const root = makeFixture();
+  const handle = await createResultsServer({
+    port: 0, watch: false, projectRoot: join(root, "without"), gitExec: null,
+    resultsFile: join(root, "without", "run", "run.trx"),
+    coverageFile: join(root, "with", "run", "coverage.cobertura.xml"),
+  });
+  const abort = new AbortController();
+  const events = coverageEvents(handle.url, abort.signal);
+  try {
+    await settle(150);
+    assert.equal(handle.getCoverage()?.files[0].hasSource, false, "src/calc.ts sits outside the old root");
+
+    handle.loadInput({ projectRoot: root });
+    assert.equal(handle.getCoverage()?.files[0].hasSource, true, "the wider root can reach the file");
+    assert.equal(handle.projectRoot(), root);
+
+    await settle(150);
+    abort.abort();
+    const seen = await events;
+    assert.ok(seen.length >= 2, "clients must be told, saw: " + seen.join(" -> "));
+  } finally {
+    abort.abort();
+    await handle.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});

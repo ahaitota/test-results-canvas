@@ -7,9 +7,8 @@
 //       <class filename="MyApp/Calculator.cs">
 //         <lines><line number="5" hits="3" branch="False"/></lines>
 //
-// One source file can show up as several <class> elements — partial classes, or
-// just more than one type in a file — so entries are collected per class and
-// merged by filename in buildFiles().
+// One source file can show up as several <class> elements -- partial classes, or
+// more than one type in a file -- so entries are merged by filename.
 
 import { scanTags, attr, numAttr } from "../../xml.js";
 import { buildFiles, totalsOf } from "../model/totals.js";

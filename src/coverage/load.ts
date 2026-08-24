@@ -8,7 +8,7 @@ import { readFileSync, statSync } from "node:fs";
 import { basename, dirname, resolve as resolvePath } from "node:path";
 import { parseCoverage } from "./formats/detect.js";
 import { resolveReportSources, findProjectRoot } from "./sources/resolve.js";
-import { matchPath, normalizeSlashes } from "./sources/paths.js";
+import { matchPath, normalizeSlashes, type PathIdentity } from "./sources/paths.js";
 import { changedLines } from "./analysis/gitdiff.js";
 import type { DiffOptions, DiffResult, FileChanges } from "./analysis/gitdiff.js";
 import { computePatchCoverage } from "./analysis/patch.js";
@@ -21,20 +21,18 @@ import { percentOf, tallyLines, totalsOf } from "./model/totals.js";
 
 export type { CoverageFileSummary, CoveragePayload, CoverageLoadFailure } from "./model/payload.js";
 
-// A coverage report for a very large solution is still only tens of MB; past
-// this it isn't something the panel can usefully render.
+// A coverage report for a very large solution is still only tens of MB.
 const MAX_REPORT_BYTES = 64 * 1024 * 1024;
 
-// Limits for the pass that re-reads sources to discard comment lines, so the
-// work stays bounded on a report naming thousands of files.
+// Bounds the pass that re-reads sources on a report naming thousands of files.
 const MAX_SOURCE_BYTES = 2 * 1024 * 1024;
 const MAX_SCAN_BYTES = 96 * 1024 * 1024;
 
 // Drop lines the report calls coverable but the source shows to be comments or
 // blanks. Both sides of the fraction lose the line, since a "covered" comment
-// is no more meaningful than an uncovered one. The inert sets are returned as
-// well, because patch coverage needs them to tell a changed comment from a
-// changed statement the report failed to mention.
+// is no more meaningful than an uncovered one. The inert sets are returned too,
+// because patch coverage needs them to tell a changed comment from a changed
+// statement the report failed to mention.
 function dropNonExecutable(report: CoverageReport): { report: CoverageReport; inert: Map<string, Set<number>> } {
     let budget = MAX_SCAN_BYTES;
     let changed = false;
@@ -74,7 +72,6 @@ function dropNonExecutable(report: CoverageReport): { report: CoverageReport; in
 }
 
 export interface LoadedCoverage {
-    // Absolute path of the report that was read.
     path: string;
     mtimeMs: number;
     report: CoverageReport;
@@ -85,21 +82,18 @@ export interface LoadedCoverage {
     changedByPath: Map<string, FileChanges>;
 }
 
-// Why a report could not be loaded. Declared with the wire contract, since the
-// panel is shown the reason too.
 export type CoverageLoadResult =
     | { ok: true; coverage: LoadedCoverage }
     | { ok: false; reason: CoverageLoadFailure };
 
-// One row per file for the panel: its percentage, whether the diff touched it,
-// and whether it is itself a test.
-function summarize(files: readonly CoverageFile[], changedPaths: readonly string[]): CoverageFileSummary[] {
-    // Resolved from the changed path outwards, so the two candidates of a
+// One row per file for the panel.
+function summarize(files: readonly CoverageFile[], changedPaths: readonly PathIdentity[]): CoverageFileSummary[] {
+    // Resolved from the changed file outwards, so the two candidates of a
     // case-only difference are weighed against each other rather than each
     // being asked on its own whether it looks like the change.
     const changed = new Set<CoverageFile>();
-    for (const path of changedPaths) {
-        const match = matchPath([path], files, (f) => [f.absPath, f.path]);
+    for (const one of changedPaths) {
+        const match = matchPath(one, files, (f) => f);
         if (match) changed.add(match);
     }
     return files.map((f) => ({
@@ -128,8 +122,8 @@ function productionOnly(files: readonly CoverageFile[]): { coveredLines: number;
 }
 
 export interface LoadOptions {
-    // Used to resolve report-relative paths and to run git. Worked out from the
-    // report's own location when not given.
+    // Resolves report-relative paths and runs git. Worked out from the report's
+    // own location when not given.
     projectRoot?: string;
     // Override for tests.
     diff?: DiffOptions;
@@ -141,9 +135,8 @@ export interface LoadOptions {
     keepNonExecutable?: boolean;
 }
 
-// Read one coverage report and derive everything from it. Failure is reported
-// with a reason rather than a bare null, so the caller can tell "there is no
-// report" from "the report was too big to read".
+// Failure carries a reason rather than a bare null, so the caller can tell
+// "there is no report" from "the report was too big to read".
 export function loadCoverageFile(coverageFile: string, options: LoadOptions = {}): CoverageLoadResult {
     const abs = resolvePath(String(coverageFile || ""));
     let mtimeMs: number;
@@ -182,7 +175,7 @@ export function loadCoverageFile(coverageFile: string, options: LoadOptions = {}
         }
     }
 
-    const changedPaths = diff ? diff.files.map((f) => f.path) : [];
+    const changedPaths: readonly PathIdentity[] = diff ? diff.files : [];
     const patch = computePatchCoverage(report, diff, { inertLines: executable?.inert });
     const hotspots = rankUncovered(report, { changedPaths });
 

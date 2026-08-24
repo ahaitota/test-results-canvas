@@ -2,14 +2,13 @@
 //
 // Coverage tools disagree about this. coverlet and JaCoCo list only executable
 // lines, while Node's --experimental-test-coverage lists nearly every line,
-// comments included — which made about a third of this repo's "uncovered"
+// comments included -- which made about a third of this repo's "uncovered"
 // lines prose.
 //
 // The rule is deliberately one-sided: a line is only dropped when the text
-// proves nothing on it could run. Counting too many lines shows something as
-// untested that never needed a test; counting too few hides real untested code,
-// and only that second mistake is dangerous. Braces are kept for the same
-// reason — a lone `}` really is an execution point in several languages.
+// proves nothing on it could run. Counting too many shows something as untested
+// that never needed a test; counting too few hides real untested code, and only
+// that second mistake is dangerous. Braces are kept for the same reason.
 // Languages whose whole-line comments start with // or are wrapped in /* */.
 const C_LIKE = new Set([
     "ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs",
@@ -34,9 +33,8 @@ export function commentSyntaxFor(path) {
     return "none";
 }
 // Walk one line and say whether anything on it could run, carrying string and
-// block-comment state across calls. Text inside a string counts as code: it is
-// part of an expression, and a line in the middle of a template literal belongs
-// to a statement that runs.
+// block-comment state across calls. Text inside a string counts as code: a line
+// in the middle of a template literal belongs to a statement that runs.
 function scanLine(line, syntax, state) {
     let code = false;
     for (let i = 0; i < line.length; i++) {

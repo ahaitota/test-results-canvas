@@ -232,6 +232,9 @@ test.describe("new code", () => {
     await expect(page.getByTestId("patch-headline")).toContainText("1 of 3 changed lines not covered");
     await expect(page.getByTestId("coverage-row-note").first()).toContainText("26");
     await expect(page.getByTestId("patch-ask")).toBeVisible();
+    // Three of the six changed lines are absent from the report, so the
+    // percentage describes the other three and has to say which it is.
+    await expect(page.getByTestId("patch-pct-note")).toHaveText("of measured");
   });
 
   test("a fully covered change set says so instead of nagging", async ({ page, makeServer }) => {
@@ -242,6 +245,9 @@ test.describe("new code", () => {
 
     await expect(page.getByTestId("patch-headline")).toContainText("All 1 changed line");
     await expect(page.getByTestId("patch-ask")).toHaveCount(0);
+    // The report measured the whole change here, so the percentage stands
+    // unqualified.
+    await expect(page.getByTestId("patch-pct-note")).toHaveCount(0);
   });
 
   // A new file that no test imports produces no uncovered lines *because*

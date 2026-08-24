@@ -8,7 +8,7 @@
 //
 // The LF/LH/FN summary records are ignored; DA and BRDA are the truth. Runners
 // append a fresh record per test file, so the same SF: often appears many
-// times — buildFiles() adds those hits together.
+// times, and buildFiles() adds those hits together.
 import { buildFiles, totalsOf } from "../model/totals.js";
 // Close off the file being read and add it to the list.
 function finish(entry, out) {

@@ -1,26 +1,24 @@
-// Finds the coverage report that belongs with a results file.
-//
-// The same test run writes coverage into a sibling folder or a well-known
-// reporting folder, so we can find it without asking: TestResults/<guid>/
-// coverage.cobertura.xml for dotnet, coverage/lcov.info for vitest/jest/c8,
-// target/site/jacoco/jacoco.xml for maven, coverage.xml for coverage.py. The
-// search is bounded the same way the results scan is.
+// Finds the coverage report that belongs with a results file. The same test run
+// writes coverage into a sibling or a well-known reporting folder, so we can
+// find it without asking: TestResults/<guid>/coverage.cobertura.xml for dotnet,
+// coverage/lcov.info for vitest/jest/c8, target/site/jacoco/jacoco.xml for
+// maven, coverage.xml for coverage.py. Bounded like the results scan.
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { hasCoverageExt, looksLikeCoverage, nameScore } from "./formats/detect.js";
+// Only package-manager caches and tool metadata. A workspace's own packages/
+// folder is real source and holds the report in a monorepo, so it is walked;
+// the depth and entry budgets below are what bound the scan.
 const IGNORE_DIRS = new Set([
     "node_modules", ".git", ".hg", ".svn", ".vs", ".idea", ".venv", "venv",
-    "packages", ".nuget", ".gradle", ".next", ".nuxt", "__pycache__",
+    ".nuget", ".gradle", ".next", ".nuxt", "__pycache__",
 ]);
 // Folders that exist specifically to hold reports, so they are worth going into
 // even though siblings like bin/obj are skipped.
 const REPORT_DIRS = new Set(["coverage", "testresults", "test-results", "target", "build", "site", "jacoco", "reports", "out", "artifacts", "htmlcov", "test"]);
 const MAX_DEPTH = 5;
 const MAX_ENTRIES = 6000;
-// A report for a big solution is large but not unbounded; past this it isn't
-// something the panel can usefully render.
 const MAX_REPORT_BYTES = 64 * 1024 * 1024;
-// Read a candidate and confirm it really is a coverage report.
 function isCoverageFile(abs) {
     try {
         const st = statSync(abs);
@@ -115,10 +113,9 @@ export function newestCoverageFileIn(dir) {
     }
     return pickBest(candidates);
 }
-// Locate the report that belongs with `resultsFile`.
-//
-// Nearest first, because closeness beats recency: a stale report elsewhere in
-// the repo could easily be newer than the one just written.
+// Locate the report that belongs with `resultsFile`. Nearest first, because
+// closeness beats recency: a stale report elsewhere in the repo could easily be
+// newer than the one just written.
 export function discoverCoverageFor(resultsFile, projectRoot) {
     const startDir = dirname(resolvePath(resultsFile));
     // 1. Next to the results file, then in its parent -- `dotnet test` writes

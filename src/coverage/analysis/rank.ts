@@ -1,21 +1,19 @@
-// Ranks uncovered code by how much it looks worth testing. A raw list of
-// uncovered lines is unusable, so runs of lines are scored on signals we can
-// read without understanding the language: whether the file was just changed
-// (much the strongest), how long the run is, whether the file is entirely
-// uncovered, and whether it is production code at all.
+// Ranks uncovered code by how much it looks worth testing. Runs of lines are
+// scored on signals we can read without understanding the language: whether the
+// file was just changed (much the strongest), how long the run is, whether the
+// file is entirely uncovered, and whether it is production code at all.
 //
 // Pure and host-free, so it also runs in the browser bundle.
 
 import { toRanges } from "./patch.js";
 import { isProductionSource } from "../sources/classify.js";
-import { matchPath } from "../sources/paths.js";
+import { matchPath, type PathIdentity } from "../sources/paths.js";
 import type { CoverageFile, CoverageReport } from "../model/types.js";
 import type { UncoveredRegion } from "../model/payload.js";
 
 export type { UncoveredRegion } from "../model/payload.js";
 
-// A single uncovered line is usually a guard clause or a `throw` — worth
-// showing, but not ahead of a twenty-line untested function.
+// A single uncovered line is usually a guard clause or a `throw`.
 const SINGLE_LINE_WEIGHT = 0.4;
 // Applied within the changed group, so a large new gap outranks a small one.
 const CHANGED_WEIGHT = 4;
@@ -23,26 +21,25 @@ const WHOLE_FILE_WEIGHT = 1.6;
 
 const DEFAULT_LIMIT = 25;
 
-// Which report entries the diff touched. Resolved from the changed path
+// Which report entries the diff touched. Resolved from the changed file
 // outwards, the same direction patch.ts uses: asking each entry "did anything
-// change that looks like me?" answers yes for both src/Calc.ts and src/calc.ts,
-// since neither call can see the other candidate.
-function changedFiles(files: readonly CoverageFile[], changedPaths: readonly string[]): Set<CoverageFile> {
+// change that looks like me?" answers yes for both src/Calc.ts and src/calc.ts.
+function changedFiles(files: readonly CoverageFile[], changed: readonly PathIdentity[]): Set<CoverageFile> {
     const found = new Set<CoverageFile>();
-    for (const path of changedPaths) {
-        const match = matchPath([path], files, (f) => [f.absPath, f.path]);
+    for (const one of changed) {
+        const match = matchPath(one, files, (f) => f);
         if (match) found.add(match);
     }
     return found;
 }
 
 export interface RankOptions {
-    // Paths (repo-relative or absolute) touched by the current diff.
-    changedPaths?: readonly string[];
+    // The files the current diff touched. Resolved paths travel with the
+    // spellings so an entry belonging to another package is not ranked changed.
+    changedPaths?: readonly PathIdentity[];
     limit?: number;
 }
 
-// The uncovered runs most worth testing, best first.
 export function rankUncovered(report: CoverageReport | null, options: RankOptions = {}): UncoveredRegion[] {
     if (!report) return [];
     const changedPaths = options.changedPaths ?? [];
@@ -79,9 +76,8 @@ export function rankUncovered(report: CoverageReport | null, options: RankOption
     }
 
     // Changed code is its own group, not just a bigger score. A multiplier
-    // can't express "always look at what you just touched first" — a four-times
-    // bonus still loses to an untouched block four times longer. Sorting in two
-    // groups keeps that promise and makes the order easy to explain.
+    // cannot express "always look at what you just touched first" -- a
+    // four-times bonus still loses to an untouched block four times longer.
     regions.sort((a, b) => {
         if (a.changed !== b.changed) return a.changed ? -1 : 1;
         return b.score - a.score || a.path.localeCompare(b.path) || a.start - b.start;

@@ -1,10 +1,9 @@
 // Asks git which lines the working tree has changed. Crossed with the coverage
-// hit map (see patch.ts), this answers "did the agent test the code it just
-// wrote?".
+// hit map (see patch.ts), this answers "did the agent test what it just wrote?".
 //
-// Two comparisons, in order: uncommitted work against HEAD, and — if the tree
-// is clean — this branch against where it forked from the default branch, so
-// the answer survives the agent committing. Untracked files count as new.
+// Two comparisons, in order: uncommitted work against HEAD, and if the tree is
+// clean, this branch against where it forked from the default branch, so the
+// answer survives the agent committing. Untracked files count as new.
 //
 // git is always run with a fixed argument list, never a shell string, and only
 // inside the resolved project root.
@@ -20,8 +19,7 @@ export type GitExec = (args: string[]) => string | null;
 
 const GIT_TIMEOUT_MS = 5000;
 const MAX_BUFFER = 16 * 1024 * 1024;
-// Past this a file is generated or vendored, and its exact length tells nobody
-// anything useful.
+// Past this a file is generated or vendored, and its length says nothing.
 const MAX_COUNT_BYTES = 2 * 1024 * 1024;
 
 // Runs git commands inside one project root, returning null on any failure.
@@ -41,8 +39,7 @@ function createGitExec(root: string): GitExec {
     };
 }
 
-// How many lines a file has, or undefined if it can't be read. A trailing
-// newline ends the last line rather than starting an empty one.
+// A trailing newline ends the last line rather than starting an empty one.
 function countLines(absPath: string): number | undefined {
     try {
         const st = statSync(absPath);
@@ -62,11 +59,9 @@ export interface FileChanges {
     absPath: string;
     // Line numbers added or modified in the new version of the file.
     lines: Set<number>;
-    // A new or untracked file, where every executable line counts as new. Saves
-    // reading the file just to list its lines.
+    // A new or untracked file, where every executable line counts as new.
     all: boolean;
-    // How long the file is, filled in only for untracked files: they have no
-    // diff to count.
+    // Filled in only for untracked files: they have no diff to count.
     lineCount?: number;
 }
 
@@ -78,15 +73,12 @@ export interface DiffResult {
 }
 
 // git quotes awkward paths as a C string: "src/a\tb.ts". Non-ASCII arrives as
-// one octal escape per UTF-8 byte, so a single character can span several
-// escapes — café.ts comes back as caf\303\251.ts. Decoding each escape on its
-// own would give the Latin-1 reading (cafÃ©.ts), a path matching nothing in the
-// report, so collect the bytes first and decode as UTF-8 once at the end.
+// one octal escape per UTF-8 byte, so decoding each escape on its own gives the
+// Latin-1 reading (cafe.ts as cafÃ©.ts). Collect bytes, decode UTF-8 once.
 const C_ESCAPES: Record<string, number> = { a: 0x07, b: 0x08, t: 0x09, n: 0x0a, v: 0x0b, f: 0x0c, r: 0x0d };
 const utf8Encoder = new TextEncoder();
 const utf8Decoder = new TextDecoder();
 
-// Undo git's C-style quoting on a path.
 function unquotePath(raw: string): string {
     const s = raw.trim();
     if (!s.startsWith('"') || !s.endsWith('"') || s.length < 2) return s;
@@ -117,11 +109,9 @@ function unquotePath(raw: string): string {
     return utf8Decoder.decode(new Uint8Array(bytes));
 }
 
-// Turn `git diff --unified=0` output into the added line numbers per file.
-//
-// With no context lines the hunk header says everything: `@@ -a,b +c,d @@` means
-// d lines were added starting at line c (d omitted means 1, d = 0 is a
-// deletion).
+// Turn `git diff --unified=0` output into the added line numbers per file. With
+// no context lines the hunk header says everything: `@@ -a,b +c,d @@` means d
+// lines were added starting at line c (d omitted means 1, d = 0 is a deletion).
 export function parseUnifiedDiff(diff: string): Map<string, Set<number>> {
     const byPath = new Map<string, Set<number>>();
     let currentPath: string | null = null;
@@ -166,7 +156,6 @@ function defaultBranchRef(git: GitExec): string | null {
     return null;
 }
 
-// Pair each path with its absolute location.
 function toFileChanges(root: string, byPath: Map<string, Set<number>>, all: boolean): FileChanges[] {
     return [...byPath].map(([path, lines]) => ({
         path,
@@ -196,15 +185,14 @@ export function changedLines(root: string, options: DiffOptions = {}): DiffResul
     const files: FileChanges[] = [];
 
     // Untracked files: entirely new, so every executable line is "new code".
-    // --full-name because the rest of this module works in paths relative to the
-    // repository root, which is not always the folder git was invoked in.
+    // --full-name because paths here are relative to the repository root, which
+    // is not always the folder git was invoked in.
     const untracked = git(["ls-files", "--others", "--exclude-standard", "--full-name"]);
     for (const raw of String(untracked || "").split(/\r?\n/)) {
         const path = normalizeSlashes(unquotePath(raw));
         if (!path) continue;
         const absPath = resolvePath(base, path);
-        // Only production files reach patch coverage, so only they are worth
-        // opening to measure.
+        // Only production files reach patch coverage.
         const lineCount = isProductionSource(path) ? countLines(absPath) : undefined;
         files.push({ path, absPath, lines: new Set(), all: true, lineCount });
     }

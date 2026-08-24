@@ -21,7 +21,6 @@ const PREFERRED_NAMES = [
 // Only the start of the file is read: these markers all appear early, and a
 // report for a large repo can be tens of megabytes.
 const SNIFF_CHARS = 8192;
-// Identify the format, or null if this isn't a coverage report.
 export function detectCoverageFormat(content) {
     const head = String(content || "").slice(0, SNIFF_CHARS);
     if (!head.trim())
@@ -37,12 +36,11 @@ export function detectCoverageFormat(content) {
         return "cobertura";
     return null;
 }
-// True when the content is a coverage report of any supported format.
 export function looksLikeCoverage(content) {
     return detectCoverageFormat(content) !== null;
 }
-// Parse with whichever parser matches. Returns null when the content isn't a
-// coverage report, so callers can keep looking instead of failing.
+// Returns null when the content isn't a coverage report, so callers can keep
+// looking instead of failing.
 export function parseCoverage(content) {
     switch (detectCoverageFormat(content)) {
         case "cobertura": return parseCobertura(content);

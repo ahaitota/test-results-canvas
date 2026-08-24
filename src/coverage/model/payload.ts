@@ -1,14 +1,12 @@
 // The wire contract: every shape that travels from the server to the browser.
-//
 // It is a file of its own because the modules that build these shapes import
-// node:fs and node:path, and the client bundle must not pull those in — not
+// node:fs and node:path, and the client bundle must not pull those in -- not
 // even for types.
 
 import type { CoverageFormat, CoverageTotals } from "./types.js";
 
-// One row in the coverage file list. Per-line hits are not included: they stay
-// on the server until a row is expanded, so opening the panel on a big solution
-// costs one small message.
+// One row in the coverage file list. Per-line hits stay on the server until a
+// row is expanded, so opening the panel on a big solution costs one message.
 export interface CoverageFileSummary {
     path: string;
     coveredLines: number;
@@ -27,16 +25,15 @@ export interface PatchFile {
     absPath?: string;
     coveredLines: number[];
     uncoveredLines: number[];
-    // Changed lines the report has no entry for at all. Blank lines and braces
-    // land here, but so does every line of a report taken before the edit, so a
+    // Changed lines the report has no entry for. Blank lines and braces land
+    // here, but so does every line of a report taken before the edit, so a
     // percentage over the measured lines alone can be an overstatement.
     unknownLines: number;
     percent: number | null;
     // A changed file the report has no entry for at all.
     unmeasured: boolean;
     // How many lines git says changed. For an unmeasured file this is the only
-    // sense of size we have, so a 200-line new module doesn't read like a
-    // one-line edit.
+    // sense of size we have.
     changedLines: number;
 }
 
@@ -45,12 +42,13 @@ export interface PatchCoverage {
     // What was compared, e.g. "uncommitted changes".
     against: string;
     files: PatchFile[];
+    // Measured changed lines only: unknownLines is in neither, so `percent` is
+    // coverage of what the report can speak to rather than of the change set.
+    // Anything showing it has to say so whenever unknownLines is above zero.
     covered: number;
     total: number;
     percent: number | null;
     unmeasuredFiles: number;
-    // Changed lines in measured files that the report never mentions, so the
-    // percentage above is not read as the whole story.
     unknownLines: number;
 }
 
@@ -73,9 +71,8 @@ export interface CoveragePayload {
     format: CoverageFormat;
     totals: CoverageTotals;
     files: CoverageFileSummary[];
-    // Coverage of production code only, which is what people mean when they ask
-    // "what's our coverage?". Its totals travel with it so the header never
-    // shows a production percentage over a fraction that counts test code.
+    // Coverage of production code only. Its totals travel with it so the header
+    // never shows a production percentage over a fraction counting test code.
     productionPercent: number | null;
     productionTotals: { coveredLines: number; totalLines: number; files: number };
     patch: PatchCoverage | null;

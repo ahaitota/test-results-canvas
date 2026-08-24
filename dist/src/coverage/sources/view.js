@@ -9,14 +9,12 @@
 import { readFileSync, statSync } from "node:fs";
 import { findByPath, normalizeSlashes } from "./paths.js";
 import { percentOf } from "../model/totals.js";
-// Nobody reads a file bigger than this in a side panel, and the response has to
-// stay small enough to render.
+// Nobody reads a file bigger than this in a side panel.
 const MAX_SOURCE_BYTES = 4 * 1024 * 1024;
 const MAX_LINES = 20000;
-// Find a report entry by path. Slash spelling is picked up in transit, so it is
-// ignored; case is not, or two files whose names differ only in case would each
-// open the other's source. A case-insensitive match is still allowed when only
-// one entry can be meant by it.
+// Slash spelling is picked up in transit, so it is ignored; case is not, or two
+// files whose names differ only in case would each open the other's source. A
+// case-insensitive match is still allowed when only one entry can be meant.
 function findEntry(loaded, path) {
     const wanted = normalizeSlashes(path);
     const exact = loaded.report.files.find((f) => normalizeSlashes(f.path) === wanted);

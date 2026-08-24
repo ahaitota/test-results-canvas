@@ -263,6 +263,7 @@ export function renderShell(title: string, askToken = ""): string {
   .cov-bar-fill { display:block; height:100%; background:var(--cov-color); }
   .cov-pct { font-size:12px; font-weight:600; color:var(--cov-color);
              min-width:38px; text-align:right; flex-shrink:0; }
+  .cov-pct-note { display:block; font-size:10px; font-weight:400; color:var(--fgColor-muted); }
 
   .cov-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
               padding:10px 12px; margin-bottom:16px; border-radius:8px;

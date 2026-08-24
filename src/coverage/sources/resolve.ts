@@ -1,9 +1,6 @@
 // Works out where the files named in a coverage report actually live on this
-// machine.
-//
-// Reports rarely use full paths, so we try in order: the path as written, then
-// each source folder the report declares, then the project root, then a search
-// for a file on disk whose path ends the same way.
+// machine: the path as written, then each source folder the report declares,
+// then the project root, then a filename index of the project.
 //
 // Not finding a file is fine. A report copied from CI names paths that don't
 // exist here; those files keep their percentages, they just can't show source.
@@ -16,13 +13,13 @@ import { basename, dirname, isAbsolute, join, resolve as resolvePath, sep } from
 import type { CoverageFile, CoverageReport } from "../model/types.js";
 import { commonSuffixSegments, normalizeSlashes } from "./paths.js";
 
-// Files that mark the top of a project. Ordered by how definitive they are.
+// Files that mark the top of a project.
 const ROOT_MARKERS = [".git", "package.json", "pom.xml", "build.gradle", "build.gradle.kts", "go.mod", "Cargo.toml", "pyproject.toml", "setup.py"];
 const ROOT_GLOB_MARKERS = [/\.sln$/i, /\.csproj$/i, /\.fsproj$/i];
 
-// Skipped wherever they turn up: none of these ever holds hand-written source.
-// "build" stays here despite being a plausible source folder name, because
-// Gradle writes one per module and its generated/ subtree does hold .java.
+// Skipped wherever they turn up. "build" stays here despite being a plausible
+// source folder name, because Gradle writes one per module and its generated/
+// subtree does hold .java.
 const IGNORE_DIRS = new Set([
     "node_modules", ".git", ".hg", ".svn", ".vs", ".idea", ".venv", "venv",
     "bin", "obj", "dist", "out", "build", "target", "__pycache__",
@@ -30,17 +27,13 @@ const IGNORE_DIRS = new Set([
 ]);
 
 // Skipped only at the top of the project, where it is report output. Deeper
-// down it is ordinary source -- this extension's own src/coverage/ is the
-// example, and excluding it by name hid the very files it measures.
+// down it is ordinary source -- this extension's own src/coverage/ is the case.
 const IGNORE_ROOT_DIRS = new Set(["coverage"]);
 
 const MAX_INDEX_ENTRIES = 40000;
 const MAX_INDEX_DEPTH = 12;
 
-// Walk up from `start` looking for the top of the project, falling back to
-// `start` itself.
-//
-// The nearest marker wins, because preferring the outermost would make a stray
+// The nearest marker wins: preferring the outermost would make a stray
 // package.json in a home directory the root for everything under it. A .git
 // folder wins outright.
 export function findProjectRoot(start: string): string {
@@ -66,9 +59,8 @@ export function findProjectRoot(start: string): string {
     return fallback ?? resolvePath(start);
 }
 
-// A filename -> absolute paths index of the project, built the first time it is
-// needed and only when the cheaper steps have all missed. Capped so an
-// unusually large repo still costs a bounded walk.
+// A filename -> absolute paths index of the project, built only when the
+// cheaper steps have all missed. Capped so a large repo costs a bounded walk.
 class SourceIndex {
     private byName: Map<string, string[]> | null = null;
 
@@ -121,10 +113,9 @@ function existsFile(p: string): boolean {
 
 // A report is untrusted input -- it can name any path on this machine, and
 // whatever is resolved here is what the /source route reads. Candidates are
-// therefore kept inside the project the report belongs to, tested after
-// symlinks are followed so neither an absolute path, a "..", nor a link can
-// point outside it. Without a project root nothing can be trusted, so nothing
-// resolves.
+// kept inside the project, tested after symlinks are followed so neither an
+// absolute path, a "..", nor a link can point outside it. Without a project
+// root nothing can be trusted, so nothing resolves.
 //
 // The candidate itself is returned rather than its canonical form: they name
 // the same file, and the spelling the rest of the pipeline uses stays put.
@@ -162,19 +153,16 @@ interface SourceResolver {
 
 interface Resolution {
     absPath?: string;
-    // The filename index found it. That is a guess from the name alone rather
-    // than a location the report gave us, so guesses are checked for collisions
-    // across the whole report before being kept.
+    // Found by filename alone rather than at a location the report gave us, so
+    // these are checked for collisions across the whole report before use.
     viaIndex: boolean;
 }
 
-// Tries each way of locating one report path, cheapest first, and remembers
-// what it found.
+// Tries each way of locating one report path, cheapest first, and caches it.
 function createSourceResolver(options: ResolverOptions = {}): SourceResolver {
     const { projectRoot } = options;
     // A root is relative to the project the report describes, not to wherever
-    // this process happens to be running. Only roots that exist here are worth
-    // trying; a CI report's roots usually don't.
+    // this process happens to be running. A CI report's roots usually miss.
     const roots = (options.sourceRoots ?? [])
         .map((r) => (projectRoot ? resolvePath(projectRoot, String(r)) : resolvePath(String(r))))
         .filter((r) => existsSync(r));
@@ -185,8 +173,6 @@ function createSourceResolver(options: ResolverOptions = {}): SourceResolver {
     function attempt(reportPath: string): Resolution {
         const raw = String(reportPath || "").trim();
         if (!raw) return { viaIndex: false };
-        // A path in this platform's own separator: the report may use the other
-        // one, and join()/statSync() want ours.
         const native = raw.split(/[\\/]/).join(sep);
 
         // A candidate landing outside the project falls through to the next way
@@ -211,9 +197,8 @@ function createSourceResolver(options: ResolverOptions = {}): SourceResolver {
         }
 
         // Last resort: match on filename, keeping whichever candidate shares the
-        // most trailing folders. That is what separates src/app/Calc.cs from
-        // vendor/Calc.cs. Two candidates sharing the best score name the file
-        // equally well, and choosing between them would be a coin toss.
+        // most trailing folders -- that is what separates src/app/Calc.cs from
+        // vendor/Calc.cs. A tie names the file equally well, so nothing wins.
         if (index) {
             const candidates = index.lookup(basename(native));
             let best: string | undefined;
@@ -252,15 +237,11 @@ function createSourceResolver(options: ResolverOptions = {}): SourceResolver {
 // the parse result untouched so it stays reusable.
 export function resolveReportSources(report: CoverageReport, options: ResolverOptions = {}): CoverageReport {
     const resolver = createSourceResolver({ sourceRoots: report.sourceRoots, ...options });
-    // Normalise slashes once here rather than in each parser. A Windows LCOV
-    // writes "src\ask.ts" while git always says "src/ask.ts", and left alone
-    // the same file would appear twice in patch coverage.
     const resolved = report.files.map((f) => ({ file: f, hit: resolver.resolve(f.path) }));
 
-    // Entries are distinct files, so a guessed name that several of them landed
-    // on identifies none of them. An aggregate JaCoCo report is the case that
-    // matters: api/…/Util.java and worker/…/Util.java are two modules, and a
-    // project holding one Util.java would otherwise show its source for both.
+    // Entries are distinct files, so a guessed name several of them landed on
+    // identifies none of them. An aggregate JaCoCo report is the case that
+    // matters: api/.../Util.java and worker/.../Util.java are two modules.
     const guessed = new Map<string, number>();
     for (const { hit } of resolved) {
         if (hit.viaIndex && hit.absPath) guessed.set(hit.absPath, (guessed.get(hit.absPath) ?? 0) + 1);
@@ -268,6 +249,8 @@ export function resolveReportSources(report: CoverageReport, options: ResolverOp
 
     const files: CoverageFile[] = resolved.map(({ file, hit }) => ({
         ...file,
+        // A Windows LCOV writes "src\ask.ts" where git says "src/ask.ts", and
+        // left alone the same file appears twice in patch coverage.
         path: normalizeSlashes(file.path),
         absPath: hit.absPath && hit.viaIndex && guessed.get(hit.absPath)! > 1 ? undefined : hit.absPath,
     }));

@@ -3,10 +3,8 @@
 // Each row states everything about its file at once: its coverage, whether the
 // change set touched it, how its changed lines fared, and where its worst
 // untested block is. Rows are sorted so the code that most needs a test is what
-// you read first (see rowTier).
-//
-// A project-wide percentage leads nowhere ("74%" tells nobody what to do), so
-// it stays a header stat rather than the headline.
+// you read first (see rowTier). A project-wide percentage leads nowhere, so it
+// stays a header stat rather than the headline.
 
 import { useState } from "preact/hooks";
 import type { CoveragePayload, CoverageSuggestion, CoverageLoadFailure } from "../coverage/model/payload";
@@ -26,8 +24,13 @@ function Bar({ percent, testid }: { percent: number | null; testid?: string }) {
   );
 }
 
-function Pct({ percent }: { percent: number | null }) {
-  return <span class={"cov-pct cov-band-" + bandOf(percent)}>{percent == null ? "\u2014" : percent + "%"}</span>;
+function Pct({ percent, note }: { percent: number | null; note?: string }) {
+  return (
+    <span class={"cov-pct cov-band-" + bandOf(percent)}>
+      {percent == null ? "\u2014" : percent + "%"}
+      {note && <span class="cov-pct-note" data-testid="patch-pct-note">{note}</span>}
+    </span>
+  );
 }
 
 // One file: its numbers, its tags, its note, and its source when opened.
@@ -100,8 +103,7 @@ function FileRow({ row, expanded, revision, onToggle }: {
 }
 
 // The change set's verdict, kept as a banner because it describes the whole run
-// rather than any one file -- including how many files no report mentions,
-// which the list can only show one row at a time.
+// rather than any one file.
 function PatchBanner({ coverage }: { coverage: CoveragePayload }) {
   const [asked, setAsked] = useState<"idle" | "sent" | "error">("idle");
   const patch = coverage.patch;
@@ -117,12 +119,13 @@ function PatchBanner({ coverage }: { coverage: CoveragePayload }) {
   }
 
   // Unmeasured files are not "clean": nothing observed them, so a pass here
-  // would be claiming a result the report cannot support. Nor are changed lines
-  // the report has no entry for, which is what a stale report looks like.
+  // would claim a result the report cannot support. Nor are changed lines the
+  // report has no entry for, which is what a stale report looks like.
+  const unknown = patch.unknownLines ?? 0;
   const clean = patch.total > 0
     && patch.covered === patch.total
     && patch.unmeasuredFiles === 0
-    && (patch.unknownLines ?? 0) === 0;
+    && unknown === 0;
   const onAsk = async () => {
     const ok = await askAgentCoverage("patch");
     setAsked(ok ? "sent" : "error");
@@ -135,11 +138,12 @@ function PatchBanner({ coverage }: { coverage: CoveragePayload }) {
         <span data-testid="patch-headline">{patchHeadline(coverage)}</span>
         <span class="cov-spacer" />
         <Bar percent={patch.percent} testid="patch-bar" />
-        <Pct percent={patch.percent} />
+        <Pct percent={patch.percent} note={unknown > 0 ? "of measured" : undefined} />
       </div>
       <p class="cov-note">
         Compared against {patch.against}. Counts added lines in measured source files only &mdash;
         deleted lines, build output, tests and docs are excluded, so this is smaller than the raw diff.
+        {unknown > 0 && ` The percentage covers only the ${patch.total} changed line${patch.total === 1 ? "" : "s"} this report measures; ${unknown} more ${unknown === 1 ? "is" : "are"} outside it, which is what a report taken before the edit looks like.`}
       </p>
       {!clean && (
         <button

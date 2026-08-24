@@ -112,6 +112,23 @@ test("discoverCoverageFor returns null when the project has no report", () => {
   }
 });
 
+test("discoverCoverageFor finds a monorepo report inside packages/", () => {
+  // A workspace's packages/ folder is source, not a package-manager cache.
+  // Skipping it leaves a monorepo with no coverage at all.
+  const mono = mkdtempSync(join(tmpdir(), "cov-mono-"));
+  try {
+    mkdirSync(join(mono, "packages", "app", "coverage"), { recursive: true });
+    writeFileSync(join(mono, "results.trx"), "<TestRun/>");
+    writeFileSync(join(mono, "packages", "app", "coverage", "lcov.info"), "SF:src/app.ts\nDA:1,1\nend_of_record\n");
+    assert.equal(
+      discoverCoverageFor(join(mono, "results.trx"), mono),
+      resolvePath(mono, "packages", "app", "coverage", "lcov.info"),
+    );
+  } finally {
+    rmSync(mono, { recursive: true, force: true });
+  }
+});
+
 test("pickBest breaks an mtime tie on the more recognisable name", () => {
   const best = pickBest([
     { path: "/x/report.xml", mtimeMs: 100, score: 0 },

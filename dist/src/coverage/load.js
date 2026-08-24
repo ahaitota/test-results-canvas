@@ -14,18 +14,16 @@ import { rankUncovered } from "./analysis/rank.js";
 import { isProductionSource, isTestPath } from "./sources/classify.js";
 import { commentSyntaxFor, nonExecutableLines } from "./sources/executable.js";
 import { percentOf, tallyLines, totalsOf } from "./model/totals.js";
-// A coverage report for a very large solution is still only tens of MB; past
-// this it isn't something the panel can usefully render.
+// A coverage report for a very large solution is still only tens of MB.
 const MAX_REPORT_BYTES = 64 * 1024 * 1024;
-// Limits for the pass that re-reads sources to discard comment lines, so the
-// work stays bounded on a report naming thousands of files.
+// Bounds the pass that re-reads sources on a report naming thousands of files.
 const MAX_SOURCE_BYTES = 2 * 1024 * 1024;
 const MAX_SCAN_BYTES = 96 * 1024 * 1024;
 // Drop lines the report calls coverable but the source shows to be comments or
 // blanks. Both sides of the fraction lose the line, since a "covered" comment
-// is no more meaningful than an uncovered one. The inert sets are returned as
-// well, because patch coverage needs them to tell a changed comment from a
-// changed statement the report failed to mention.
+// is no more meaningful than an uncovered one. The inert sets are returned too,
+// because patch coverage needs them to tell a changed comment from a changed
+// statement the report failed to mention.
 function dropNonExecutable(report) {
     let budget = MAX_SCAN_BYTES;
     let changed = false;
@@ -69,15 +67,14 @@ function dropNonExecutable(report) {
         return { report, inert: inertByPath };
     return { report: { ...report, files, totals: totalsOf(files) }, inert: inertByPath };
 }
-// One row per file for the panel: its percentage, whether the diff touched it,
-// and whether it is itself a test.
+// One row per file for the panel.
 function summarize(files, changedPaths) {
-    // Resolved from the changed path outwards, so the two candidates of a
+    // Resolved from the changed file outwards, so the two candidates of a
     // case-only difference are weighed against each other rather than each
     // being asked on its own whether it looks like the change.
     const changed = new Set();
-    for (const path of changedPaths) {
-        const match = matchPath([path], files, (f) => [f.absPath, f.path]);
+    for (const one of changedPaths) {
+        const match = matchPath(one, files, (f) => f);
         if (match)
             changed.add(match);
     }
@@ -105,9 +102,8 @@ function productionOnly(files) {
     }
     return { coveredLines, totalLines, files: count };
 }
-// Read one coverage report and derive everything from it. Failure is reported
-// with a reason rather than a bare null, so the caller can tell "there is no
-// report" from "the report was too big to read".
+// Failure carries a reason rather than a bare null, so the caller can tell
+// "there is no report" from "the report was too big to read".
 export function loadCoverageFile(coverageFile, options = {}) {
     const abs = resolvePath(String(coverageFile || ""));
     let mtimeMs;
@@ -147,7 +143,7 @@ export function loadCoverageFile(coverageFile, options = {}) {
             diff = null;
         }
     }
-    const changedPaths = diff ? diff.files.map((f) => f.path) : [];
+    const changedPaths = diff ? diff.files : [];
     const patch = computePatchCoverage(report, diff, { inertLines: executable?.inert });
     const hotspots = rankUncovered(report, { changedPaths });
     const changedByPath = new Map();

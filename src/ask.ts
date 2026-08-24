@@ -70,13 +70,11 @@ export function composeAskPrompt(t: TestResult): string {
 
 // --- Coverage prompts ---
 //
-// Same rules as above: every value here comes out of a coverage report, so it is
-// data, not instructions. Paths are flattened and capped exactly like test
-// labels, and line numbers are rendered from parsed integers rather than from
-// report text.
+// Same rules as above: every value comes out of a coverage report, so it is
+// data, not instructions. Paths are flattened and capped like test labels, and
+// line numbers are rendered from parsed integers rather than report text.
 
-// Ranges kept short so the message stays readable in the conversation; the agent
-// can open the file for the rest.
+// Ranges kept short so the message stays readable in the conversation.
 const MAX_RANGES = 12;
 
 function rangeList(lines: readonly number[]): string {
@@ -116,9 +114,30 @@ export function composeCoveragePrompt(file: UncoveredFile): string {
 export function composePatchCoveragePrompt(patch: PatchCoverage): string {
   const unknown = patch.unknownLines ?? 0;
   // A file the report never mentions is a gap, and so is one whose changed
-  // lines it has no entry for -- the second is what a report taken before the
-  // edit looks like, and it is invisible in the percentage.
+  // lines it has no entry for -- invisible in the percentage either way.
   const gaps = patch.files.filter((f) => f.unmeasured || f.uncoveredLines.length > 0 || (f.unknownLines ?? 0) > 0);
+
+  const lines = gaps.slice(0, MAX_RANGES).map((f) => {
+    const path = label(f.path) || "(unknown file)";
+    if (f.unmeasured) return `- ${path}: changed, but no test touches this file at all`;
+    if (!f.uncoveredLines.length) return `- ${path}: ${f.unknownLines} changed line${f.unknownLines === 1 ? "" : "s"} the report does not mention`;
+    return `- ${path}: uncovered lines ${rangeList(f.uncoveredLines)}`;
+  });
+  if (gaps.length > MAX_RANGES) lines.push(`- and ${gaps.length - MAX_RANGES} more files`);
+
+  // The report measured none of the changed lines yet mentions some of them: it
+  // predates the edits, so the ask is a fresh run rather than new tests written
+  // against a figure describing the code as it used to be.
+  if (patch.total === 0 && unknown > 0) {
+    const parts = [
+      `The coverage report says nothing about the changed code in the ${label(patch.against)}: all ${unknown} changed `
+      + `line${unknown === 1 ? " is" : "s are"} absent from it, which is what a report taken before these edits looks like. `
+      + "Re-run the tests with coverage first and let this panel reload, then judge from the fresh report whether tests are missing.",
+    ];
+    if (lines.length) parts.push(lines.join("\n"));
+    return parts.join("\n\n");
+  }
+
   const headline = patch.percent == null
     ? `None of the changed code in the ${label(patch.against)} is covered by tests.`
     : patch.covered === patch.total
@@ -133,19 +152,12 @@ export function composePatchCoveragePrompt(patch: PatchCoverage): string {
   // should be read rather than adding to it.
   if (unknown > 0) {
     parts.push(
-      `${unknown} changed line${unknown === 1 ? " is" : "s are"} absent from the report altogether, so that figure does not describe `
-      + "them either way. Some will be blank lines or braces; the rest mean the report predates these edits, so re-run the tests with "
-      + "coverage before trusting it.",
+      `${unknown} changed line${unknown === 1 ? " is" : "s are"} absent from the report altogether, so that figure covers only the `
+      + `${patch.total} it does measure. Some will be blank lines or braces; the rest mean the report predates these edits, so re-run the `
+      + "tests with coverage before trusting it.",
     );
   }
 
-  const lines = gaps.slice(0, MAX_RANGES).map((f) => {
-    const path = label(f.path) || "(unknown file)";
-    if (f.unmeasured) return `- ${path}: changed, but no test touches this file at all`;
-    if (!f.uncoveredLines.length) return `- ${path}: ${f.unknownLines} changed line${f.unknownLines === 1 ? "" : "s"} the report does not mention`;
-    return `- ${path}: uncovered lines ${rangeList(f.uncoveredLines)}`;
-  });
-  if (gaps.length > MAX_RANGES) lines.push(`- and ${gaps.length - MAX_RANGES} more files`);
   if (lines.length) parts.push(lines.join("\n"));
 
   parts.push("Re-run the tests with coverage afterwards so this panel updates.");

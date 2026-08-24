@@ -1,10 +1,7 @@
 // What to tell the user (or the agent) when a test run produced no coverage.
-//
 // This is by far the most common state, since almost no runner collects
 // coverage unless asked. Rather than show an empty panel, the canvas names the
-// exact command for the project in front of it.
-//
-// Detection is by marker file, so it works without running anything.
+// exact command for the project in front of it. Detection is by marker file.
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -24,7 +21,6 @@ const FALLBACK: CoverageSuggestion = {
     outputHint: "a Cobertura, LCOV or JaCoCo report",
 };
 
-// Does any file in this folder match?
 function hasFileMatching(dir: string, re: RegExp): boolean {
     try {
         return readdirSync(dir).some((n) => re.test(n));
@@ -35,8 +31,7 @@ function hasFileMatching(dir: string, re: RegExp): boolean {
 
 function readPackageJson(root: string): string {
     try {
-        // Only the dependency names matter, and reading it as text saves caring
-        // whether the file is valid JSON.
+        // Only dependency names matter, so text saves caring about valid JSON.
         return readFileSync(join(root, "package.json"), "utf8");
     } catch {
         return "";

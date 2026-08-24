@@ -1,9 +1,6 @@
-// The expanded file: real source with a per-line gutter.
-//
-// Percentages say there is a problem; this says where. Blue = executed (with
-// its hit count), orange = executable but never ran, dim = not executable. Lines
-// the current diff touched get a marker, so "new and untested" is one glance
-// rather than a cross-reference.
+// The expanded file: real source with a per-line gutter. Blue = executed (with
+// its hit count), orange = executable but never ran, dim = not executable.
+// Lines the current diff touched get a marker.
 //
 // Fetched on demand from /source, which only serves files present in the loaded
 // report, and re-fetched when the report is read again. Rendered as Preact text
@@ -99,7 +96,7 @@ export function SourceView({ path, revision }: { path: string; revision?: number
 }
 
 // Hit counts share a narrow gutter with line numbers, so large ones are
-// abbreviated rather than allowed to push the code sideways.
+// abbreviated rather than pushing the code sideways.
 function fmtHits(n: number): string {
   if (n < 1000) return String(n);
   if (n < 1000000) return Math.round(n / 100) / 10 + "k";

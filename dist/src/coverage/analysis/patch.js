@@ -1,19 +1,15 @@
-// Patch coverage: how much of the code that just changed is actually tested —
-// "the agent wrote new code, did it write tests too?". A project-wide
-// percentage can't answer that, since 40 new untested lines barely move it.
-//
-// Pure: git access lives in gitdiff.ts and file loading in the server.
+// Patch coverage: how much of the code that just changed is actually tested.
+// A project-wide percentage cannot answer that, since 40 new untested lines
+// barely move it. Pure: git lives in gitdiff.ts, file loading in the server.
 import { percentOf } from "../model/totals.js";
 import { matchPath } from "../sources/paths.js";
 import { isProductionSource } from "../sources/classify.js";
-// Find the report entry for a changed file. Both sides offer every spelling they
-// have, and an entry is only taken when no other entry could be meant.
+// An entry is only taken when no other entry could be meant.
 export function matchCoverageFile(change, files) {
-    return matchPath([change.absPath, change.path], files, (f) => [f.absPath, f.path]);
+    return matchPath(change, files, (f) => f);
 }
-// Changed lines the report has no entry for. Blank lines and braces belong here
-// and are dropped when the source proves them inert; what remains is real code
-// the report skipped, which is what a report taken before the edit looks like.
+// Changed lines the report has no entry for, minus the ones the source proves
+// inert. What remains is real code the report skipped.
 function countUnknown(changed, lines, inert) {
     let n = 0;
     for (const line of changed) {
@@ -40,9 +36,8 @@ export function computePatchCoverage(report, changes, options = {}) {
     // useful about coverage.
     const production = changes.files.filter((c) => isProductionSource(c.path));
     // Matched up front, because an entry is only that file's when no other
-    // change can claim it too: a report path shortened to src/index.ts ends both
-    // packages/a/src/index.ts and packages/b/src/index.ts, and would otherwise
-    // be reported once for each.
+    // change can claim it too: a report path shortened to src/index.ts ends
+    // both packages/a/src/index.ts and packages/b/src/index.ts.
     const matched = new Map();
     const claims = new Map();
     for (const change of production) {
@@ -62,9 +57,6 @@ export function computePatchCoverage(report, changes, options = {}) {
                     absPath: change.absPath,
                     coveredLines: [],
                     uncoveredLines: [],
-                    // Nothing here is "unmentioned" in the sense the aggregate
-                    // counts: the report has no entry for the file at all, which
-                    // unmeasured and changedLines already say.
                     unknownLines: 0,
                     percent: null,
                     unmeasured: true,
@@ -106,8 +98,6 @@ export function computePatchCoverage(report, changes, options = {}) {
             uncoveredLines,
             unknownLines,
             percent: percentOf(coveredLines.length, coveredLines.length + uncoveredLines.length),
-            // The report does measure this file, even where it says nothing
-            // about the lines that changed.
             unmeasured: false,
             changedLines: change.lineCount ?? change.lines.size,
         });
@@ -127,8 +117,7 @@ export function computePatchCoverage(report, changes, options = {}) {
     });
     return { against: changes.against, files, covered, total, percent: percentOf(covered, total), unmeasuredFiles, unknownLines: unknown };
 }
-// Group line numbers into runs, so the UI can say "lines 40-58" instead of
-// listing nineteen numbers.
+// Group line numbers into runs, so the UI can say "lines 40-58".
 export function toRanges(lines) {
     const sorted = [...lines].sort((a, b) => a - b);
     const ranges = [];

@@ -1,18 +1,14 @@
-// What the Coverage tab shows when the run produced no coverage report.
-//
-// This is the state most users hit first, because almost no runner collects
-// coverage unless asked. An empty panel would teach them the feature is broken;
-// naming the exact command for the project in front of them, with one click to
-// have the agent do it, is what turns the tab into something worth opening.
+// What the Coverage tab shows when the run produced no coverage report. This is
+// the state most users hit first, because almost no runner collects coverage
+// unless asked. Naming the exact command for the project in front of them, with
+// one click to have the agent do it, is what makes the tab worth opening.
 
 import { useState } from "preact/hooks";
 import type { CoverageSuggestion, CoverageLoadFailure } from "../coverage/model/payload";
 import { askAgentCoverage } from "./askAgent";
 
 // A report was found but could not be used. The server decides when a reason is
-// worth showing -- a file that simply is not a report is an ordinary miss during
-// discovery, but a mistake when the caller named it -- so every reason that
-// arrives here is displayed.
+// worth showing, so every reason that arrives here is displayed.
 const FAILURE_TEXT: Record<CoverageLoadFailure, string> = {
   "missing": "The coverage report was named but is no longer on disk.",
   "unreadable": "The coverage report could not be read.",

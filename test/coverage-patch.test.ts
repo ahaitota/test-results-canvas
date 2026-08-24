@@ -370,11 +370,12 @@ test("a changed comment is not a line the report failed to measure", () => {
   // Counting them here would put a reformatted comment block back in front of
   // the reader under a heading about untested code.
   const rep = report([{ path: "src/calc.ts", lines: { 1: 1 } }]);
-  rep.files[0].absPath = "/repo/src/calc.ts";
+  const abs = resolvePath("/repo", "src/calc.ts");
+  rep.files[0].absPath = abs;
   const patch = computePatchCoverage(
     rep,
     { against: "HEAD", files: [change("src/calc.ts", [1, 8, 9])] },
-    { inertLines: new Map([["/repo/src/calc.ts", new Set([8])]]) },
+    { inertLines: new Map([[abs, new Set([8])]]) },
   );
   assert.ok(patch);
   // Line 8 is a comment; line 9 is real code the report says nothing about.
@@ -428,8 +429,31 @@ test("matchCoverageFile refuses a sibling package that merely shares trailing fo
   assert.deepEqual(patch?.files.map((f) => [f.path, f.unmeasured]), [["packages/a/src/index.ts", true]]);
 });
 
+test("matchCoverageFile refuses an entry resolved to another package", () => {
+  // The report shortened its path to src/index.ts, which is the tail of every
+  // package's copy. Resolving it found package b, so pairing it with a change
+  // in package a would report b's hit counts against a's line numbers.
+  const files = report([{ path: "src/index.ts", lines: { 1: 1, 2: 1 } }]).files;
+  files[0].absPath = resolvePath("/repo", "packages/b/src/index.ts");
+  assert.equal(matchCoverageFile(change("packages/a/src/index.ts", [1, 2]), files), undefined);
+});
+
+test("matchCoverageFile still pairs one file reached through two roots", () => {
+  // A symlinked checkout resolves the report through /private/var and git
+  // through /var. One path holding the whole of the other is that file twice,
+  // not two files, so identity must not reject it.
+  const files = report([{ path: "src/calc.ts", lines: { 1: 1 } }]).files;
+  files[0].absPath = "/private/var/repo/src/calc.ts";
+  const matched = matchCoverageFile(
+    { path: "src/calc.ts", absPath: "/var/repo/src/calc.ts", lines: new Set([1]), all: false },
+    files,
+  );
+  assert.equal(matched?.path, "src/calc.ts");
+});
+
 test("toRanges collapses runs and bridges a single-line gap", () => {
   // The gap tolerance keeps a closing brace between two uncovered statements
+
   // from splitting one region into two.
   assert.deepEqual(toRanges([3, 4, 5]), [{ start: 3, end: 5 }]);
   assert.deepEqual(toRanges([3, 5]), [{ start: 3, end: 5 }]);
@@ -456,8 +480,28 @@ test("classify separates production code from tests and generated output", () =>
   assert.equal(isProductionSource("obj/Form1.Designer.cs"), false);
 });
 
+test("classify needs a name boundary before calling a file a test", () => {
+  // "test" ending a word is not a test suffix. Reading contest.ts as one drops
+  // it out of production totals, patch coverage and the hotspot list at once.
+  assert.equal(isTestPath("src/contest.ts"), false);
+  assert.equal(isTestPath("src/latest.ts"), false);
+  assert.equal(isTestPath("src/attest.py"), false);
+  assert.equal(isTestPath("src/manifest.ts"), false);
+  assert.equal(isProductionSource("src/contest.ts"), true);
+  // The forms the boundary has to keep: PascalCase, an all-caps prefix, a bare
+  // name, and the separator spellings TEST_FILE_RE owns.
+  assert.equal(isTestPath("src/CalculatorTests.cs"), true);
+  assert.equal(isTestPath("src/HTTPTests.cs"), true);
+  assert.equal(isTestPath("src/AccountSpec.java"), true);
+  assert.equal(isTestPath("src/Tests.cs"), true);
+  assert.equal(isTestPath("src/tests.py"), true);
+  assert.equal(isTestPath("src/calc_test.go"), true);
+  assert.equal(isTestPath("src/Calc.Tests.cs"), true);
+});
+
 test("classify treats committed build output as generated, but not source that merely reads like it", () => {
   // This repo commits dist/, so a changed src file would otherwise be counted
+
   // twice -- once as source, once as its compiled copy.
   assert.equal(isGeneratedPath("dist/src/server.js"), true);
   assert.equal(isGeneratedPath("dist/src/server.d.ts"), true);
@@ -484,7 +528,7 @@ test("rankUncovered puts a changed file ahead of a bigger untouched gap", () => 
     { path: "src/quiet.ts", lines: Object.fromEntries(Array.from({ length: 30 }, (_, i) => [i + 1, 0])) },
     { path: "src/edited.ts", lines: { 1: 1, 5: 0, 6: 0 } },
   ]);
-  const ranked = rankUncovered(rep, { changedPaths: ["src/edited.ts"] });
+  const ranked = rankUncovered(rep, { changedPaths: [{ path: "src/edited.ts" }] });
   assert.equal(ranked[0].path, "src/edited.ts", "recency of change outranks raw size");
   assert.equal(ranked[0].changed, true);
 });
@@ -497,7 +541,7 @@ test("rankUncovered does not treat a sibling package's file as changed", () => {
     { path: "packages/b/src/index.ts", lines: { 1: 0, 2: 0 } },
     { path: "packages/a/src/index.ts", lines: { 9: 0 } },
   ]);
-  const ranked = rankUncovered(rep, { changedPaths: ["packages/a/src/index.ts"] });
+  const ranked = rankUncovered(rep, { changedPaths: [{ path: "packages/a/src/index.ts" }] });
   const changed = Object.fromEntries(ranked.map((r) => [r.path, r.changed]));
   assert.equal(changed["packages/a/src/index.ts"], true);
   assert.equal(changed["packages/b/src/index.ts"], false);
@@ -508,8 +552,20 @@ test("rankUncovered still counts a shortened report path as changed", () => {
   // Unlike patch coverage, which would attribute the wrong line numbers, the
   // question here is only "did this change?", and the answer is yes.
   const rep = report([{ path: "src/index.ts", lines: { 1: 0, 2: 0 } }]);
-  const ranked = rankUncovered(rep, { changedPaths: ["packages/a/src/index.ts", "packages/b/src/index.ts"] });
+  const ranked = rankUncovered(rep, { changedPaths: [{ path: "packages/a/src/index.ts" }, { path: "packages/b/src/index.ts" }] });
   assert.equal(ranked[0].changed, true);
+});
+
+test("rankUncovered does not rank a resolved sibling as changed", () => {
+  // The report shortened its path to src/index.ts, but resolving it found the
+  // copy in package b. That resolution outranks the shortened spelling, so a
+  // change in package a must not carry package b to the top of the list.
+  const rep = report([{ path: "src/index.ts", lines: { 1: 0, 2: 0 } }]);
+  rep.files[0].absPath = resolvePath("/repo", "packages/b/src/index.ts");
+  const ranked = rankUncovered(rep, {
+    changedPaths: [{ path: "packages/a/src/index.ts", absPath: resolvePath("/repo", "packages/a/src/index.ts") }],
+  });
+  assert.equal(ranked[0].changed, false);
 });
 
 test("rankUncovered keeps case-distinct files apart", () => {
@@ -517,7 +573,7 @@ test("rankUncovered keeps case-distinct files apart", () => {
     { path: "src/Calc.ts", lines: { 1: 0, 2: 0 } },
     { path: "src/calc.ts", lines: { 1: 0, 2: 0 } },
   ]);
-  const ranked = rankUncovered(rep, { changedPaths: ["src/calc.ts"] });
+  const ranked = rankUncovered(rep, { changedPaths: [{ path: "src/calc.ts" }] });
   const changed = Object.fromEntries(ranked.map((r) => [r.path, r.changed]));
   assert.equal(changed["src/calc.ts"], true);
   assert.equal(changed["src/Calc.ts"], false);

@@ -375,3 +375,17 @@ test("the patch prompt explains a report that predates the edit", () => {
   assert.match(prompt, /re-run the tests with coverage before trusting it/);
   assert.match(prompt, /- src\/a\.ts: 2 changed lines the report does not mention/);
 });
+
+test("the patch prompt asks for a fresh run when the report measured none of the change", () => {
+  // Nothing measured, yet the file is in the report: it predates the edit, so
+  // "none of the changed code is covered" describes the old code, and asking
+  // for tests against that figure sends the agent after the wrong thing.
+  const prompt = composePatchCoveragePrompt(patchOf({
+    unknownLines: 2,
+    files: [{ path: "src/a.ts", coveredLines: [], uncoveredLines: [], unknownLines: 2, percent: null, unmeasured: false, changedLines: 2 }],
+  }));
+  assert.doesNotMatch(prompt, /is covered by tests/);
+  assert.doesNotMatch(prompt, /Add tests for the untested changes/);
+  assert.match(prompt, /Re-run the tests with coverage first/);
+  assert.match(prompt, /- src\/a\.ts: 2 changed lines the report does not mention/);
+});
