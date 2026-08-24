@@ -95,7 +95,7 @@ function FileRow({ row, expanded, revision, onToggle }: {
           <div class="cov-source-msg">
             {row.measured
               ? "This file is not on this machine, so only its numbers are available."
-              : "The coverage report never mentions this file, so there is nothing to annotate. It changed, and no test observed it."}
+              : "The coverage report never mentions this file, so there is nothing to annotate. Whether any test reaches it is unknown."}
           </div>
         ))}
     </div>

@@ -51,8 +51,10 @@ function dropNonExecutable(report: CoverageReport): { report: CoverageReport; in
             return f;
         }
         const inert = nonExecutableLines(text, syntax);
-        if (inert.size === 0) return f;
+        // Recorded even when empty, so that a missing entry means the source
+        // was never scanned rather than that it holds no comments.
         inertByPath.set(f.absPath, inert);
+        if (inert.size === 0) return f;
         const lines: Record<number, number> = {};
         let dropped = 0;
         for (const [key, hits] of Object.entries(f.lines)) {

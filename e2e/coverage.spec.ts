@@ -280,6 +280,22 @@ test.describe("new code", () => {
     await expect(page.getByTestId("patch-ask")).toBeVisible();
   });
 
+  test("an unmeasured file reads as unknown coverage, not as untested code", async ({ page, makeServer }) => {
+    // Absence from this report is not evidence about tests: the file can be
+    // excluded from collection, measured by another runtime, or simply missing
+    // from a stale report.
+    const ghost = "coverage-sample/src/Ghost.cs";
+    const diff = `--- a/${ghost}\n+++ b/${ghost}\n@@ -0,0 +1,3 @@\n+a\n+b\n+c\n`;
+    const s = await makeServer({ resultsFile: results(), coverageFile: cobertura(), coverage: true, gitExec: stubGit(diff) });
+    await openCanvas(page, s);
+    await page.getByTestId("tab-coverage").click();
+
+    const ghostRow = page.getByTestId("coverage-file").filter({ hasText: "Ghost.cs" });
+    await page.getByTestId("coverage-files").locator(`[data-path="${ghost}"]`).click();
+    await expect(ghostRow).toContainText("Whether any test reaches it is unknown");
+    await expect(ghostRow).not.toContainText("no test observed it");
+  });
+
   test("with no diff the section explains itself rather than showing nothing", async ({ page, makeServer }) => {
     const s = await makeServer(withCoverage(cobertura()));
     await openCanvas(page, s);

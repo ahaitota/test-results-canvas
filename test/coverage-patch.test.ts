@@ -443,9 +443,9 @@ test("a changed comment is not a line the report failed to measure", () => {
   assert.equal(patch.files[0].unknownLines, 1);
 });
 
-test("a brand-new file counts no unknown lines", () => {
-  // `all` means the changed set is the whole file, so every line the report
-  // left out really is blank or a brace.
+test("a brand-new file counts no unknown lines when its length is unknown", () => {
+  // Without a line count there is nothing to compare the report against, so the
+  // whole-file case claims nothing.
   const patch = computePatchCoverage(report([{ path: "src/new.ts", lines: { 2: 1, 4: 0 } }]), {
     against: "HEAD",
     files: [change("src/new.ts", [], true)],
@@ -454,6 +454,62 @@ test("a brand-new file counts no unknown lines", () => {
   assert.equal(patch.unknownLines, 0);
   assert.deepEqual(patch.files[0].coveredLines, [2]);
   assert.deepEqual(patch.files[0].uncoveredLines, [4]);
+});
+
+test("a stale report of an untracked file that grew counts the lines it never saw", () => {
+  // The report was taken while the file was one line long. Line 2 arrived after
+  // it, so calling the file 100% covered would hide brand-new untested code.
+  const rep = report([{ path: "src/new.ts", lines: { 1: 1 } }]);
+  const abs = resolvePath("/repo", "src/new.ts");
+  rep.files[0].absPath = abs;
+  const patch = computePatchCoverage(
+    rep,
+    { against: "HEAD", files: [{ ...change("src/new.ts", [], true), lineCount: 2 }] },
+    { inertLines: new Map([[abs, new Set<number>()]]) },
+  );
+  assert.ok(patch);
+  assert.equal(patch.files[0].unknownLines, 1);
+  assert.equal(patch.unknownLines, 1);
+  // The measured line really is covered; the gap sits outside the percentage.
+  assert.equal(patch.percent, 100);
+});
+
+test("a whole-file change does not count a comment tail as unmeasured code", () => {
+  const rep = report([{ path: "src/new.ts", lines: { 1: 1 } }]);
+  const abs = resolvePath("/repo", "src/new.ts");
+  rep.files[0].absPath = abs;
+  const patch = computePatchCoverage(
+    rep,
+    { against: "HEAD", files: [{ ...change("src/new.ts", [], true), lineCount: 4 }] },
+    { inertLines: new Map([[abs, new Set([2, 3, 4])]]) },
+  );
+  assert.ok(patch);
+  assert.equal(patch.unknownLines, 0);
+});
+
+test("a whole-file change claims nothing when the source was never scanned", () => {
+  // No inert set means the source could not be read, so which of the trailing
+  // lines could run is unknowable -- and guessing flags every closing brace.
+  const patch = computePatchCoverage(report([{ path: "src/new.ts", lines: { 1: 1 } }]), {
+    against: "HEAD",
+    files: [{ ...change("src/new.ts", [], true), lineCount: 90 }],
+  });
+  assert.ok(patch);
+  assert.equal(patch.unknownLines, 0);
+});
+
+test("a whole-file change counts nothing when the report reaches past the file's end", () => {
+  // A report older than a file that shrank mentions lines that no longer exist.
+  const rep = report([{ path: "src/new.ts", lines: { 1: 1, 9: 0 } }]);
+  const abs = resolvePath("/repo", "src/new.ts");
+  rep.files[0].absPath = abs;
+  const patch = computePatchCoverage(
+    rep,
+    { against: "HEAD", files: [{ ...change("src/new.ts", [], true), lineCount: 3 }] },
+    { inertLines: new Map([[abs, new Set<number>()]]) },
+  );
+  assert.ok(patch);
+  assert.equal(patch.unknownLines, 0);
 });
 
 test("computePatchCoverage returns null when there is no diff at all", () => {

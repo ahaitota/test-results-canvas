@@ -11,6 +11,7 @@ import { discoverCoverageFor, newestCoverageFileIn, pickBest } from "../src/cove
 import { findProjectRoot, resolveReportSources } from "../src/coverage/sources/resolve.js";
 import { commonSuffixSegments, findByPath, normalizeSlashes } from "../src/coverage/sources/paths.js";
 import { loadCoverageFile } from "../src/coverage/load.js";
+import type { GitExec } from "../src/coverage/analysis/gitdiff.js";
 import { readSourceView } from "../src/coverage/sources/view.js";
 import type { SourceFileView } from "../src/coverage/model/payload.js";
 import { suggestCoverageCommand } from "../src/coverage/suggest.js";
@@ -300,6 +301,41 @@ test("loadCoverageFile produces a payload with resolved sources", () => {
 
   assert.ok(loaded.payload.hotspots.length > 0, "the uncovered block must be ranked");
   assert.equal(loaded.payload.hotspots[0].path, "src/calc.ts");
+});
+
+test("a stale report of an untracked file that grew shows the lines it never measured", () => {
+  // The whole path in one: the source scan says which lines could run, the
+  // untracked file's length says the report stopped short of them. This file
+  // holds no comments or blanks, the case where an absent inert set has to mean
+  // "never scanned" rather than "nothing to drop".
+  const dir = mkdtempSync(join(tmpdir(), "cov-grown-"));
+  try {
+    mkdirSync(join(dir, "src"), { recursive: true });
+    writeFileSync(join(dir, "package.json"), '{"name":"grown"}');
+    writeFileSync(join(dir, "src", "grown.ts"), "export const a = 1;\nexport const b = 2;");
+    writeFileSync(
+      join(dir, "coverage.cobertura.xml"),
+      `<?xml version="1.0"?><coverage><sources><source>${dir}</source></sources>
+        <packages><package><classes>
+          <class name="Grown" filename="src/grown.ts"><lines><line number="1" hits="3" /></lines></class>
+        </classes></package></packages></coverage>`,
+    );
+    // Untracked, so the change set is the whole file and git has no diff to give.
+    const exec: GitExec = (args) => {
+      if (args[0] === "rev-parse" && args[1] === "--is-inside-work-tree") return "true\n";
+      if (args[0] === "rev-parse" && args[1] === "--show-toplevel") return dir + "\n";
+      if (args[0] === "ls-files") return "src/grown.ts\n";
+      return "";
+    };
+    const result = loadCoverageFile(join(dir, "coverage.cobertura.xml"), { projectRoot: dir, diff: { exec } });
+    assert.ok(result.ok);
+    const patch = result.ok ? result.coverage.payload.patch : null;
+    assert.ok(patch);
+    assert.equal(patch.unknownLines, 1, "line 2 arrived after the report was taken");
+    assert.equal(patch.files[0].unknownLines, 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("loadCoverageFile reports why it could not load a file", () => {

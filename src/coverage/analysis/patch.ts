@@ -28,6 +28,24 @@ function countUnknown(changed: ReadonlySet<number>, lines: CoverageFile["lines"]
     return n;
 }
 
+// A whole-file change has no line set to compare against, so a stale report
+// shows up as length: the file runs past the last line the report mentions, and
+// those lines were never measured. Treating every unmentioned line that way
+// instead would count the braces and declarations that executable-line reports
+// such as coverlet and JaCoCo never list. An unscanned source proves nothing,
+// so it claims nothing.
+function countUnknownTail(lineCount: number | undefined, lines: CoverageFile["lines"], inert?: ReadonlySet<number>): number {
+    if (lineCount === undefined || !inert) return 0;
+    let last = 0;
+    for (const key of Object.keys(lines)) {
+        const line = Number(key);
+        if (line > last) last = line;
+    }
+    let n = 0;
+    for (let line = last + 1; line <= lineCount; line++) if (!inert.has(line)) n++;
+    return n;
+}
+
 export interface PatchOptions {
     // Include changed files with no coverage data. On by default: an untested
     // new file is the single most useful thing to show.
@@ -98,11 +116,12 @@ export function computePatchCoverage(
             if (hits > 0) coveredLines.push(line);
             else uncoveredLines.push(line);
         }
-        // `all` has no line set to compare against: the changed set is the whole
-        // file, and every line the report left out of it really is blank.
+        // `all` covers the whole file, so staleness is measured by length
+        // rather than by a line set.
+        const inert = match.absPath ? options.inertLines?.get(match.absPath) : undefined;
         const unknownLines = change.all
-            ? 0
-            : countUnknown(change.lines, match.lines, match.absPath ? options.inertLines?.get(match.absPath) : undefined);
+            ? countUnknownTail(change.lineCount, match.lines, inert)
+            : countUnknown(change.lines, match.lines, inert);
 
         // Nothing here the report can speak to either way.
         if (!coveredLines.length && !uncoveredLines.length && !unknownLines) continue;
