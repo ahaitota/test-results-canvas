@@ -219,6 +219,33 @@ test("changedLines resolves paths against git's own top level, not the folder it
   assert.equal(result.files[0].absPath, resolvePath("/repo/packages/app/src/x.ts"));
 });
 
+test("changedLines asks git for untracked paths relative to the repository, not the package", () => {
+  // git prints untracked paths relative to the directory it ran in, so without
+  // --full-name a monorepo package reports new files at a path that resolves
+  // nowhere.
+  const dir = mkdtempSync(join(tmpdir(), "cov-monorepo-"));
+  const pkg = join(dir, "packages", "app");
+  mkdirSync(join(pkg, "src"), { recursive: true });
+  writeFileSync(join(pkg, "src", "new.ts"), "a\nb\n");
+
+  const git: GitExec = (args) => {
+    if (args[0] === "rev-parse" && args[1] === "--show-toplevel") return `${dir}\n`;
+    if (args[0] === "rev-parse") return "true\n";
+    if (args[0] === "ls-files") return args.includes("--full-name") ? "packages/app/src/new.ts\n" : "src/new.ts\n";
+    if (args[0] === "diff") return "";
+    return null;
+  };
+  const result = changedLines(pkg, { exec: git });
+  assert.ok(result);
+
+  const added = result.files[0];
+  assert.equal(added.path, "packages/app/src/new.ts");
+  assert.equal(added.absPath, join(pkg, "src", "new.ts"));
+  assert.equal(added.lineCount, 2, "a path that resolves is a file that can be sized");
+
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test("changedLines degrades to null outside a repository rather than throwing", () => {
   assert.equal(changedLines("/repo", { exec: () => null }), null);
 });

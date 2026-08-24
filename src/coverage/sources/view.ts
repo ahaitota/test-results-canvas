@@ -22,11 +22,17 @@ export type SourceError = "unknown-file" | "no-source" | "unreadable";
 const MAX_SOURCE_BYTES = 4 * 1024 * 1024;
 const MAX_LINES = 20000;
 
-// Find a report entry by path, ignoring slash and case differences picked up in
-// transit.
+// Find a report entry by path. Slash spelling is picked up in transit, so it is
+// ignored; case is not, or two files whose names differ only in case would each
+// open the other's source. A case-insensitive match is still allowed when only
+// one entry can be meant by it.
 function findEntry(loaded: LoadedCoverage, path: string) {
-    const wanted = normalizeSlashes(path).toLowerCase();
-    return loaded.report.files.find((f) => normalizeSlashes(f.path).toLowerCase() === wanted);
+    const wanted = normalizeSlashes(path);
+    const exact = loaded.report.files.find((f) => normalizeSlashes(f.path) === wanted);
+    if (exact) return exact;
+    const lower = wanted.toLowerCase();
+    const near = loaded.report.files.filter((f) => normalizeSlashes(f.path).toLowerCase() === lower);
+    return near.length === 1 ? near[0] : undefined;
 }
 
 // The annotated source for one file, or a reason it can't be shown.

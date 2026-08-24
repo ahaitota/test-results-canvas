@@ -63,10 +63,11 @@ export interface CoverageRow {
   tier: number;
 }
 
-// The report, git and the filesystem each spell paths differently, so matching
-// raw strings produces duplicate rows on Windows.
+// The report, git and the filesystem each spell separators differently. Case is
+// left alone: two paths differing only in case are two files where the
+// filesystem says so.
 function pathKey(path: string): string {
-  return String(path || "").replace(/\\/g, "/").toLowerCase();
+  return String(path || "").replace(/\\/g, "/");
 }
 
 // Rank order for "most actionable": new code first, then the biggest gaps, then
@@ -106,9 +107,26 @@ export function buildCoverageRows(
 ): CoverageRow[] {
   if (!coverage) return [];
   const rows = new Map<string, CoverageRow>();
+  // Case-insensitive index for the fallback below. A key two rows share holds
+  // null, because no single row can be the one meant.
+  const byLower = new Map<string, CoverageRow | null>();
+
+  function addRow(key: string, row: CoverageRow): void {
+    rows.set(key, row);
+    const lower = key.toLowerCase();
+    byLower.set(lower, byLower.has(lower) ? null : row);
+  }
+
+  // Exact first. A Windows report can spell a path in a different case than git
+  // does, so a case-insensitive match is tried after, but only when one row can
+  // be meant by it.
+  function findRow(path: string): CoverageRow | undefined {
+    const key = pathKey(path);
+    return rows.get(key) ?? byLower.get(key.toLowerCase()) ?? undefined;
+  }
 
   for (const f of coverage.files) {
-    rows.set(pathKey(f.path), {
+    addRow(pathKey(f.path), {
       path: f.path,
       folder: folderOf(f.path),
       name: baseOf(f.path),
@@ -132,8 +150,7 @@ export function buildCoverageRows(
   // are added here or the list would drop the strongest signal there is: new
   // code no test even loaded.
   for (const pf of coverage.patch?.files ?? []) {
-    const key = pathKey(pf.path);
-    let row = rows.get(key);
+    let row = findRow(pf.path);
     if (!row) {
       row = {
         path: pf.path,
@@ -153,7 +170,7 @@ export function buildCoverageRows(
         regions: [],
         tier: 0,
       };
-      rows.set(key, row);
+      addRow(pathKey(pf.path), row);
     }
     row.changed = true;
     if (pf.unmeasured) row.measured = false;
@@ -164,7 +181,7 @@ export function buildCoverageRows(
   }
 
   for (const h of coverage.hotspots ?? []) {
-    rows.get(pathKey(h.path))?.regions.push(h);
+    findRow(h.path)?.regions.push(h);
   }
 
   const q = query.trim().toLowerCase();

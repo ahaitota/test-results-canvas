@@ -131,6 +131,20 @@ test("buildCoverageRows matches paths across sources regardless of separator or 
   assert.equal(rows[0]!.regions.length, 1);
 });
 
+test("buildCoverageRows keeps files whose paths differ only in case apart", () => {
+  // A case-sensitive filesystem has two files here, and folding them together
+  // hid one behind the other's percentage.
+  const cov = payload(null, {
+    files: [file("src/Foo.ts", 4, 4), file("src/foo.ts", 0, 4)],
+    hotspots: [],
+  });
+  const rows = buildCoverageRows(cov, "");
+
+  assert.deepEqual(rows.map((r) => r.path).sort(), ["src/Foo.ts", "src/foo.ts"]);
+  assert.equal(rows.find((r) => r.path === "src/Foo.ts")!.percent, 100);
+  assert.equal(rows.find((r) => r.path === "src/foo.ts")!.percent, 0);
+});
+
 test("buildCoverageRows orders by what most needs a test, and sinks test files", () => {
   const cov = payload(
     {

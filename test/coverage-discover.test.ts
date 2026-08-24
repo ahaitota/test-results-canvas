@@ -261,6 +261,67 @@ test("a report entry with no file on disk is refused rather than guessed at", ()
   assert.equal(readSourceView(loaded, "src/ghost.ts"), "no-source");
 });
 
+test("entries differing only in case open their own source, not each other's", () => {
+  // A report written on a case-sensitive filesystem can name both. The two are
+  // given separate files here so a wrong match is visible in the text.
+  const dir = mkdtempSync(join(tmpdir(), "cov-case-"));
+  writeFileSync(join(dir, "upper.ts"), "UPPER\n");
+  writeFileSync(join(dir, "lower.ts"), "lower\n");
+  const entry = (path: string, absPath: string) => ({
+    path,
+    absPath,
+    lines: { 1: 1 },
+    coveredLines: 1,
+    totalLines: 1,
+  });
+  const loaded = {
+    path: "x",
+    mtimeMs: 0,
+    report: {
+      format: "cobertura",
+      sourceRoots: [],
+      totals: { files: 2, coveredLines: 2, totalLines: 2, percent: 100 },
+      files: [entry("src/Foo.ts", join(dir, "upper.ts")), entry("src/foo.ts", join(dir, "lower.ts"))],
+    },
+    payload: null as never,
+    changedByPath: new Map(),
+  } as never;
+
+  const upper = readSourceView(loaded, "src/Foo.ts");
+  const lower = readSourceView(loaded, "src/foo.ts");
+  assert.equal(typeof upper === "string" ? upper : upper.lines[0].text, "UPPER");
+  assert.equal(typeof lower === "string" ? lower : lower.lines[0].text, "lower");
+
+  const backslashed = readSourceView(loaded, "src\\Foo.ts");
+  assert.equal(typeof backslashed === "string" ? backslashed : backslashed.lines[0].text, "UPPER", "separators still don't matter");
+
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("a lone entry is still found when the case does not match", () => {
+  // Windows reports and git disagree on case, and one entry leaves no doubt
+  // about which file is wanted.
+  const dir = mkdtempSync(join(tmpdir(), "cov-case1-"));
+  writeFileSync(join(dir, "calc.ts"), "only\n");
+  const loaded = {
+    path: "x",
+    mtimeMs: 0,
+    report: {
+      format: "cobertura",
+      sourceRoots: [],
+      totals: { files: 1, coveredLines: 1, totalLines: 1, percent: 100 },
+      files: [{ path: "src/calc.ts", absPath: join(dir, "calc.ts"), lines: { 1: 1 }, coveredLines: 1, totalLines: 1 }],
+    },
+    payload: null as never,
+    changedByPath: new Map(),
+  } as never;
+
+  const view = readSourceView(loaded, "SRC/Calc.TS");
+  assert.equal(typeof view === "string" ? view : view.lines[0].text, "only");
+
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test("suggestCoverageCommand names the right command for the project in front of it", () => {
   // package.json alone -> a JS/TS suggestion; the point is that the empty state
   // never shows a generic "enable coverage somehow".

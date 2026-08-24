@@ -171,7 +171,9 @@ export function changedLines(root, options = {}) {
     const base = topLevel ? resolvePath(topLevel) : resolvePath(root);
     const files = [];
     // Untracked files: entirely new, so every executable line is "new code".
-    const untracked = git(["ls-files", "--others", "--exclude-standard"]);
+    // --full-name because the rest of this module works in paths relative to the
+    // repository root, which is not always the folder git was invoked in.
+    const untracked = git(["ls-files", "--others", "--exclude-standard", "--full-name"]);
     for (const raw of String(untracked || "").split(/\r?\n/)) {
         const path = normalizeSlashes(unquotePath(raw));
         if (!path)
