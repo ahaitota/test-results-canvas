@@ -11,6 +11,7 @@ import { watch, readFileSync, writeFileSync, existsSync, readdirSync, statSync }
 import { serializeTrx, parseTrx } from "./parsers/trx.js";
 import { parseJUnit } from "./parsers/junit.js";
 import { labelForPath } from "./labels.js";
+import { readHead } from "./head.js";
 import { composeAskPrompt, composeCoveragePrompt, composePatchCoveragePrompt, composeEnableCoveragePrompt } from "./ask.js";
 import {
     loadCoverageFile,
@@ -81,7 +82,7 @@ export function newestResultsFileIn(dir: string): string | null {
         const abs = resolvePath(dir, n);
         try {
             const st = statSync(abs);
-            if (st.isFile() && st.mtimeMs > bestMtime && looksLikeResults(readFileSync(abs, "utf8"))) {
+            if (st.isFile() && st.mtimeMs > bestMtime && looksLikeResults(readHead(abs))) {
                 best = abs;
                 bestMtime = st.mtimeMs;
             }
@@ -406,11 +407,14 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
     }
 
     // Whether disk still says what the panel is showing. The watcher and the
-    // poll share it, so whichever notices a write first does the reading.
+    // poll share it, so whichever notices a write first does the reading. A
+    // failed target is stamped like any other, so a file that cannot be read is
+    // not read again until it changes; a missing one stamps as null and is
+    // picked up the moment it appears.
     function coverageMoved(): boolean {
         const t = coverageTarget;
         if (!t) return false;
-        return !coverage || stampOf(coveragePathOf(t)) !== coverageStamp;
+        return stampOf(coveragePathOf(t)) !== coverageStamp;
     }
 
     function stopCoveragePoll(): void {
@@ -443,7 +447,7 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
             const changed = coverage !== null || coverageError !== reason;
             coverage = null;
             coverageError = reason;
-            coverageStamp = null;
+            coverageStamp = stampOf(path);
             refreshCoverageHint();
             return changed;
         }
@@ -566,7 +570,7 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         if (input.resultsFile) {
             const p = resolvePath(String(input.resultsFile));
             try {
-                if (existsSync(p) && statSync(p).isFile() && looksLikeResults(readFileSync(p, "utf8"))) abs = p;
+                if (existsSync(p) && statSync(p).isFile() && looksLikeResults(readHead(p))) abs = p;
             } catch { /* unreadable */ }
         }
         if (!abs && input.resultsDir) {

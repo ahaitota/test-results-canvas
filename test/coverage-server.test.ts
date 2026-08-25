@@ -233,6 +233,36 @@ test("a watched report that goes bad clears the panel and says why, then recover
   }
 });
 
+// A read that finds nothing new is pure cost, and it is synchronous: repeating
+// it on every tick blocks the server for as long as the panel stays open. Read
+// work is not observable through the handle, so this measures what it costs.
+test("an unreadable report is not read again until it changes", async () => {
+  const root = makeWatchFixture();
+  const bad = join(root, "a-cov", "junk.cobertura.xml");
+  writeFileSync(bad, "x".repeat(24 * 1024 * 1024));
+  const handle = await createResultsServer({
+    port: 0, watch: true, projectRoot: join(root, "b"), gitExec: null,
+    resultsFile: join(root, "a", "run", "run.trx"),
+    coverageFile: bad,
+  });
+  try {
+    assert.equal(handle.coverageError(), "not-coverage");
+    const before = process.cpuUsage();
+    await settle(1600); // three poll ticks
+    const spent = process.cpuUsage(before);
+    const ms = (spent.user + spent.system) / 1000;
+    assert.ok(ms < 60, `an unchanged report was re-read: ${ms.toFixed(0)}ms of work while idle`);
+
+    // Still watched, so a real report at the same path is picked up.
+    writeFileSync(bad, COBERTURA.replace("SRC", root));
+    await settle(900);
+    assert.ok(handle.getCoverage(), "a repaired report must still be noticed");
+  } finally {
+    await handle.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 // --- Review findings on replacing an explicit report ------------------------
 
 test("naming a report that cannot be read replaces the one on screen", () => {

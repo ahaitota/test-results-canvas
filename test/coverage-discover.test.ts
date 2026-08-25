@@ -131,6 +131,42 @@ test("discoverCoverageFor finds a monorepo report inside packages/", () => {
   }
 });
 
+test("discovery ignores a report an older run left behind", () => {
+  // A report from hours ago measured different code. Offering it as this run's
+  // reports coverage for lines the run never ran.
+  const old = mkdtempSync(join(tmpdir(), "cov-old-"));
+  try {
+    mkdirSync(join(old, "coverage"), { recursive: true });
+    mkdirSync(join(old, "TestResults"), { recursive: true });
+    writeFileSync(join(old, "TestResults", "run.trx"), "<TestRun/>");
+    const report = join(old, "coverage", "lcov.info");
+    writeFileSync(report, "SF:src/app.ts\nDA:1,1\nend_of_record\n");
+    const hoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000);
+    utimesSync(report, hoursAgo, hoursAgo);
+    assert.equal(discoverCoverageFor(join(old, "TestResults", "run.trx"), old), null);
+
+    // The same report written alongside the run is the one being looked for.
+    const now = new Date();
+    utimesSync(report, now, now);
+    assert.equal(discoverCoverageFor(join(old, "TestResults", "run.trx"), old), resolvePath(report));
+  } finally {
+    rmSync(old, { recursive: true, force: true });
+  }
+});
+
+test("a report is recognised from its opening rather than by reading all of it", () => {
+  // Sizing up a candidate reads only the head, so a report far larger than that
+  // window has to stay recognisable.
+  const big = mkdtempSync(join(tmpdir(), "cov-big-"));
+  try {
+    const report = join(big, "coverage.cobertura.xml");
+    writeFileSync(report, `${coberturaFor("src/calc.ts", [[2, 1]])}\n${"<!-- pad -->".repeat(50_000)}`);
+    assert.equal(newestCoverageFileIn(big), resolvePath(report));
+  } finally {
+    rmSync(big, { recursive: true, force: true });
+  }
+});
+
 test("pickBest breaks an mtime tie on the more recognisable name", () => {
   const best = pickBest([
     { path: "/x/report.xml", mtimeMs: 100, score: 0 },
