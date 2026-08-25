@@ -9,6 +9,9 @@ const SOURCE_EXTS = [
     ".c", ".cc", ".cpp", ".cxx", ".h", ".hpp",
 ];
 const TEST_DIR_RE = /(^|\/)([^/]*\.)?(tests?|specs?|__tests__|__specs__|e2e|integration-tests?)(\/|$)/i;
+// .NET names a test project for what it tests: App.UnitTests, App.IntegrationTests.
+// Case-sensitive on the capital, so Contoso.Protests stays production code.
+const TEST_PROJECT_RE = /(^|\/)[A-Za-z0-9_]+\.[A-Za-z0-9_]*(Tests?|Specs?)(\/|$)/;
 const TEST_FILE_RE = /(^|\/)(test_[^/]*|[^/]*_test|[^/]*[.-](test|spec)s?)\.[a-z0-9]+$/i;
 // Names carrying no separator, like CalculatorTests.cs, where the capital is the
 // only boundary -- so this one is case-sensitive on purpose: contest.ts and
@@ -29,7 +32,7 @@ function isSourcePath(path) {
 }
 export function isTestPath(path) {
     const p = normalizeSlashes(path);
-    return TEST_DIR_RE.test(p) || TEST_FILE_RE.test(p) || TEST_SUFFIX_RE.test(p);
+    return TEST_DIR_RE.test(p) || TEST_PROJECT_RE.test(p) || TEST_FILE_RE.test(p) || TEST_SUFFIX_RE.test(p);
 }
 export function isGeneratedPath(path) {
     return GENERATED_RE.test(normalizeSlashes(path));

@@ -11,7 +11,7 @@ import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import type { Dirent } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve as resolvePath, sep } from "node:path";
 import type { CoverageFile, CoverageReport } from "../model/types.js";
-import { commonSuffixSegments } from "./paths.js";
+import { commonSuffixSegments, withinRoot } from "./paths.js";
 
 // Files that mark the top of a project.
 const ROOT_MARKERS = [".git", "package.json", "pom.xml", "build.gradle", "build.gradle.kts", "go.mod", "Cargo.toml", "pyproject.toml", "setup.py"];
@@ -136,7 +136,7 @@ function createContainment(projectRoot: string | undefined): (candidate: string)
         } catch {
             return undefined;
         }
-        if (real !== trusted && !real.startsWith(trusted + sep)) return undefined;
+        if (!withinRoot(trusted, real, process.platform === "win32")) return undefined;
         return candidate;
     };
 }
@@ -161,11 +161,22 @@ interface Resolution {
 // Tries each way of locating one report path, cheapest first, and caches it.
 function createSourceResolver(options: ResolverOptions = {}): SourceResolver {
     const { projectRoot } = options;
+
+    // Roots and report paths are written by whoever wrote the report, and even
+    // asking whether one exists is an action: on Windows a \\host\share probe
+    // opens an SMB connection and can hand over credentials. So containment is
+    // decided lexically before anything is touched. The canonical check still
+    // has the final say, since a path inside the root can still be a link out.
+    const lexicalRoot = projectRoot ? resolvePath(projectRoot) : null;
+    const mayTouch = (candidate: string): boolean =>
+        !lexicalRoot || withinRoot(lexicalRoot, resolvePath(candidate), process.platform === "win32");
+
     // A root is relative to the project the report describes, not to wherever
     // this process happens to be running. A CI report's roots usually miss.
     const roots = (options.sourceRoots ?? [])
         .map((r) => (projectRoot ? resolvePath(projectRoot, String(r)) : resolvePath(String(r))))
-        .filter((r) => existsSync(r));
+        .filter((r) => mayTouch(r) && existsSync(r));
+    const reachable = (candidate: string): boolean => mayTouch(candidate) && existsFile(candidate);
     const index = projectRoot && existsSync(projectRoot) ? new SourceIndex(projectRoot) : null;
     const cache = new Map<string, Resolution>();
     const inProject = createContainment(projectRoot);
@@ -177,20 +188,20 @@ function createSourceResolver(options: ResolverOptions = {}): SourceResolver {
 
         // A candidate landing outside the project falls through to the next way
         // of finding the file rather than ending the search.
-        if (isAbsolute(native) && existsFile(native)) {
+        if (isAbsolute(native) && reachable(native)) {
             const hit = inProject(resolvePath(native));
             if (hit) return { absPath: hit, viaIndex: false };
         }
 
         for (const root of roots) {
             const candidate = resolvePath(root, native);
-            if (!existsFile(candidate)) continue;
+            if (!reachable(candidate)) continue;
             const hit = inProject(candidate);
             if (hit) return { absPath: hit, viaIndex: false };
         }
         if (projectRoot) {
             const candidate = resolvePath(projectRoot, native);
-            if (existsFile(candidate)) {
+            if (reachable(candidate)) {
                 const hit = inProject(candidate);
                 if (hit) return { absPath: hit, viaIndex: false };
             }

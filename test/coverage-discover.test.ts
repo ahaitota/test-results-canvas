@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 import { discoverCoverageFor, newestCoverageFileIn, pickBest } from "../src/coverage/discover.js";
 import { findProjectRoot, resolveReportSources } from "../src/coverage/sources/resolve.js";
-import { commonSuffixSegments, findByPath, normalizeSlashes } from "../src/coverage/sources/paths.js";
+import { commonSuffixSegments, findByPath, normalizeSlashes, withinRoot } from "../src/coverage/sources/paths.js";
 import { loadCoverageFile } from "../src/coverage/load.js";
 import type { GitExec } from "../src/coverage/analysis/gitdiff.js";
 import { readSourceView } from "../src/coverage/sources/view.js";
@@ -522,6 +522,33 @@ test("a report path pointing outside the project resolves to nothing", () => {
   assert.ok(inside.files[0].absPath, "a contained path is unaffected");
 
   rmSync(outside, { recursive: true, force: true });
+});
+
+// Containment is decided on the string before anything is opened, because on
+// Windows merely asking whether \\host\share\x exists opens an SMB connection
+// and offers the caller's credentials to whoever answers. The report says where
+// its sources are, so that host would be the report author's choice.
+test("withinRoot decides containment without touching the filesystem", () => {
+  assert.equal(withinRoot("/repo", "/repo/src/a.ts"), true);
+  assert.equal(withinRoot("/repo", "/repo"), true, "the root itself is inside it");
+  assert.equal(withinRoot("/repo/", "/repo/src/a.ts"), true, "a trailing separator is not a segment");
+  assert.equal(withinRoot("/repo", "/repository/a.ts"), false, "a shared prefix is not a shared folder");
+  assert.equal(withinRoot("/repo", "/etc/passwd"), false);
+  assert.equal(withinRoot("C:\\repo", "C:\\repo\\src\\a.ts"), true, "either separator spelling");
+  assert.equal(withinRoot("C:\\repo", "\\\\attacker\\share\\a.ts"), false, "a UNC path is never inside a local root");
+  assert.equal(withinRoot("C:\\repo", "c:\\repo\\a.ts"), false, "case matters unless the caller says otherwise");
+  assert.equal(withinRoot("C:\\repo", "c:\\repo\\a.ts", true), true);
+});
+
+test("a source root the report points elsewhere is dropped before it is probed", () => {
+  // The roots list is report-controlled too, and it is used to build candidates
+  // rather than being checked one at a time, so it needs the same gate.
+  const parsed = parseCobertura(
+    `<coverage><sources><source>\\\\attacker\\share</source><source>${root}</source></sources>` +
+      `<packages><package><classes><class filename="src/calc.ts"><lines><line number="1" hits="1"/></lines></class></classes></package></packages></coverage>`,
+  )!;
+  const resolved = resolveReportSources(parsed, { projectRoot: root });
+  assert.equal(resolved.files[0].absPath, join(root, "src", "calc.ts"), "the legitimate root still resolves");
 });
 
 test("findByPath ignores case only when one entry can be meant", () => {

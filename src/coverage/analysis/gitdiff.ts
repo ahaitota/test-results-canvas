@@ -192,10 +192,11 @@ export interface DiffOptions {
     exec?: GitExec;
 }
 
-// Prefixes are pinned rather than taken as read: diff.mnemonicPrefix and
-// diff.srcPrefix/dstPrefix rewrite them per repository, and a header reading
-// `+++ after/src/a.ts` would leave the path unable to match coverage.
-const DIFF_ARGS = ["diff", "--unified=0", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/"];
+// Prefixes are pinned and relative paths disabled rather than taken as read:
+// diff.mnemonicPrefix and diff.srcPrefix/dstPrefix rewrite the header, and
+// diff.relative strips the leading folders when git runs below the repository
+// root. Either leaves a path that matches nothing in the coverage report.
+const DIFF_ARGS = ["diff", "--unified=0", "--no-color", "--no-ext-diff", "--no-relative", "--src-prefix=a/", "--dst-prefix=b/"];
 
 // Changed lines for the project at `root`, or null when this is not a git
 // repository, git is unavailable, or nothing has changed.
@@ -213,9 +214,12 @@ export function changedLines(root: string, options: DiffOptions = {}): DiffResul
 
     // Untracked files: entirely new, so every executable line is "new code".
     // --full-name because paths here are relative to the repository root, which
-    // is not always the folder git was invoked in.
+    // is not always the folder git was invoked in. A command that fails says
+    // nothing about the tree, so it stops the analysis rather than reading as an
+    // empty result and reporting a change set that is missing part of the work.
     const untracked = git(["ls-files", "--others", "--exclude-standard", "--full-name"]);
-    for (const raw of String(untracked || "").split(/\r?\n/)) {
+    if (untracked === null) return null;
+    for (const raw of untracked.split(/\r?\n/)) {
         const path = normalizeSlashes(unquotePath(raw));
         if (!path) continue;
         const absPath = resolvePath(base, path);
@@ -224,8 +228,11 @@ export function changedLines(root: string, options: DiffOptions = {}): DiffResul
         files.push({ path, absPath, lines: new Set(), all: true, lineCount });
     }
 
-    // Uncommitted edits (staged and unstaged) against HEAD.
+    // Uncommitted edits (staged and unstaged) against HEAD. A repository with no
+    // commits has no HEAD to diff against, and there the untracked list is
+    // already the whole change set; any other failure would silently shorten it.
     const working = git(DIFF_ARGS.concat("HEAD"));
+    if (working === null && git(["rev-parse", "--verify", "--quiet", "HEAD"]) !== null) return null;
     const workingChanges = parseUnifiedDiff(working ?? "");
     const workingFiles = [...files, ...toFileChanges(base, workingChanges, false)];
     // Only let the working tree win when it actually contains code, so editing

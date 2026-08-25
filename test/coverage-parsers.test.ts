@@ -107,6 +107,17 @@ test("parseLcov tolerates a final record with no end_of_record", () => {
   assert.equal(report.files[0].totalLines, 2);
 });
 
+test("parseLcov counts a branch once however many records report it", () => {
+  // A runner writes one record per test file, so a branch in a file three tests
+  // touch is reported three times. Adding each record's totals up turned an
+  // if/else into "6 of 6 branches", which reads as thorough and is one branch.
+  const record = "SF:src/calc.ts\nDA:1,1\nBRDA:1,0,0,1\nBRDA:1,0,1,-\nend_of_record\n";
+  const report = parseLcov(record + record + record);
+  assert.ok(report);
+  assert.equal(report.files.length, 1);
+  assert.deepEqual(report.files[0].branches, { covered: 1, total: 2 });
+});
+
 test("parseLcov merges the two separator spellings of one path", () => {
   // A Windows runner can write either slash, sometimes both in one report.
   // Merging on the raw spelling left one file as two entries: its lines were

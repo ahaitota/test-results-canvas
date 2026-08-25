@@ -8,25 +8,25 @@
 //
 // The LF/LH/FN summary records are ignored; DA and BRDA are the truth. Runners
 // append a fresh record per test file, so the same SF: often appears many
-// times, and buildFiles() adds those hits together.
+// times; those records are merged here, into one entry per file.
 import { buildFiles, totalsOf } from "../model/totals.js";
-// Close off the file being read and add it to the list.
-function finish(entry, out) {
-    const branches = entry.branchKeys.size
-        ? { covered: entry.branchTaken.size, total: entry.branchKeys.size }
-        : undefined;
-    out.push({ path: entry.path, lines: entry.lines, branches });
+import { normalizeSlashes } from "../sources/paths.js";
+// Branches count once each, however many records mentioned them.
+function totalsFor(entry) {
+    return entry.branchKeys.size ? { covered: entry.branchTaken.size, total: entry.branchKeys.size } : undefined;
 }
 export function parseLcov(text) {
-    const entries = [];
+    // Keyed by file, because a runner appends a fresh record per test file and
+    // the same branch then appears in several of them. Branch outcomes merge by
+    // identity here; adding up each record's totals instead would count one
+    // branch once per record.
+    const byPath = new Map();
     let current = null;
     for (const rawLine of String(text || "").split(/\r?\n/)) {
         const line = rawLine.trim();
         if (!line)
             continue;
         if (line === "end_of_record") {
-            if (current)
-                finish(current, entries);
             current = null;
             continue;
         }
@@ -36,11 +36,13 @@ export function parseLcov(text) {
         const tag = line.slice(0, sep).toUpperCase();
         const value = line.slice(sep + 1);
         if (tag === "SF") {
-            // A missing end_of_record shouldn't swallow the previous file.
-            if (current)
-                finish(current, entries);
-            const path = value.trim();
-            current = path ? { path, lines: {}, branchKeys: new Set(), branchTaken: new Set() } : null;
+            const path = normalizeSlashes(value.trim());
+            if (!path) {
+                current = null;
+                continue;
+            }
+            current = byPath.get(path) ?? { path, lines: {}, branchKeys: new Set(), branchTaken: new Set() };
+            byPath.set(path, current);
             continue;
         }
         if (!current)
@@ -69,9 +71,7 @@ export function parseLcov(text) {
                 current.branchTaken.add(key);
         }
     }
-    if (current)
-        finish(current, entries);
-    const files = buildFiles(entries);
+    const files = buildFiles([...byPath.values()].map((e) => ({ path: e.path, lines: e.lines, branches: totalsFor(e) })));
     return { format: "lcov", files, totals: totalsOf(files), sourceRoots: [] };
 }
 //# sourceMappingURL=lcov.js.map

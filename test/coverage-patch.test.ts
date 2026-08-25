@@ -147,6 +147,62 @@ test('changedLines pins the diff prefixes so a configured "after/" cannot reach 
   }
 });
 
+test("changedLines stops rather than reporting a short change set when git fails", () => {
+  // A failed `diff HEAD` is not a clean tree. Reading it as one fell through to
+  // the branch diff, which reports committed work only -- so the panel showed a
+  // change set with every uncommitted line missing and nothing saying so.
+  const git: GitExec = (args) => {
+    if (args[0] === "rev-parse" && args[1] === "--is-inside-work-tree") return "true\n";
+    if (args[0] === "rev-parse" && args[1] === "--verify") return args[3] === "HEAD" ? "abc123\n" : "origin/main\n";
+    if (args[0] === "rev-parse") return "/repo\n";
+    if (args[0] === "ls-files") return "";
+    if (args[0] === "merge-base") return "deadbee\n";
+    // The uncommitted diff fails; the branch diff would have answered happily.
+    if (args[0] === "diff") return args.includes("HEAD") ? null : "--- a/src/old.ts\n+++ b/src/old.ts\n@@ -0,0 +1 @@\n+n\n";
+    return null;
+  };
+  assert.equal(changedLines("/repo", { exec: git }), null);
+});
+
+test("changedLines still reports untracked work in a repository with no commits", () => {
+  // There `diff HEAD` fails because HEAD does not exist yet, and the untracked
+  // list is already the whole change set -- so this failure is the one that must
+  // not stop the analysis.
+  const calls: string[][] = [];
+  const git: GitExec = (args) => {
+    calls.push(args);
+    if (args[0] === "rev-parse" && args[1] === "--verify") return null;
+    if (args[0] === "rev-parse") return "true\n";
+    if (args[0] === "ls-files") return "src/first.ts\n";
+    if (args[0] === "diff") return null;
+    return null;
+  };
+  const result = changedLines("/repo", { exec: git });
+  assert.equal(result?.against, "uncommitted changes");
+  assert.deepEqual(result?.files.map((f) => f.path), ["src/first.ts"]);
+  assert.ok(!calls.some((c) => c[0] === "merge-base"), "and it does not go looking for a branch point");
+});
+
+test("changedLines disables diff.relative so a run from a subfolder keeps the full path", () => {
+  // diff.relative makes git report src/a.ts as a.ts when it runs inside src,
+  // and the coverage report spells it from the repository root. The prefixes
+  // above are pinned for the same reason; this is the other half of that.
+  const diffArgs: string[][] = [];
+  const git: GitExec = (args) => {
+    if (args[0] === "rev-parse" && args[1] === "--is-inside-work-tree") return "true\n";
+    if (args[0] === "rev-parse") return "/repo\n";
+    if (args[0] === "ls-files") return "";
+    if (args[0] === "diff") {
+      diffArgs.push(args);
+      return "--- a/src/x.ts\n+++ b/src/x.ts\n@@ -0,0 +1 @@\n+n\n";
+    }
+    return "";
+  };
+  changedLines("/repo", { exec: git });
+  assert.ok(diffArgs.length > 0, "a diff was asked for");
+  for (const args of diffArgs) assert.ok(args.includes("--no-relative"), `relative paths disabled in ${args.join(" ")}`);
+});
+
 test("changedLines prefers uncommitted work and marks untracked files as wholly new", () => {
   const calls: string[][] = [];
   const git: GitExec = (args) => {
@@ -613,6 +669,22 @@ test("classify needs a name boundary before calling a file a test", () => {
   assert.equal(isTestPath("src/tests.py"), true);
   assert.equal(isTestPath("src/calc_test.go"), true);
   assert.equal(isTestPath("src/Calc.Tests.cs"), true);
+});
+
+test("classify reads a qualified .NET test project as tests, whatever qualifies it", () => {
+  // TEST_DIR_RE only matches App.Tests. The convention of naming the kind of
+  // test -- UnitTests, IntegrationTests -- is just as common, and those projects
+  // were counted as production: fully covered by definition, so they lifted the
+  // headline and pushed the shipping code down the ranking.
+  assert.equal(isTestPath("src/App.UnitTests/Usings.cs"), true);
+  assert.equal(isTestPath("src/App.IntegrationTests/Fixture.cs"), true);
+  assert.equal(isTestPath("App.FunctionalTests/Setup.cs"), true);
+  assert.equal(isTestPath("src/App.ApiSpecs/Given.cs"), true);
+  // The same boundary rule as above: a qualifier that merely ends in the word
+  // is not one. Lower case is what separates them, so it has to stay.
+  assert.equal(isTestPath("src/Contoso.Protests/Entry.cs"), false);
+  assert.equal(isTestPath("src/Data.Contests/Entry.cs"), false);
+  assert.equal(isProductionSource("src/Contoso.Protests/Entry.cs"), true);
 });
 
 test("classify treats committed build output as generated, but not source that merely reads like it", () => {

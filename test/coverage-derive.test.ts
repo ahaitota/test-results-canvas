@@ -118,18 +118,37 @@ test("buildCoverageRows keeps changed files the report never measured", () => {
   assert.equal(rows[0]!.path, "src/ghost.ts", "and it leads, being the least understood");
 });
 
-test("buildCoverageRows matches paths across sources regardless of separator or case", () => {
-  // The report, git and the filesystem each spell paths their own way. Matching
-  // raw strings would produce two rows for one file on Windows.
+test("buildCoverageRows matches paths across sources regardless of separator", () => {
+  // The report, git and the filesystem each spell separators their own way.
+  // Matching raw strings would produce two rows for one file on Windows.
   const cov = payload(
-    { files: [patchFile("src\\A.ts", [1], [2])] },
-    { files: [file("src/a.ts", 5, 10)], hotspots: [region("SRC/A.ts", 7, 9, 3, 50)] },
+    { files: [patchFile("src\\a.ts", [1], [2])] },
+    { files: [file("src/a.ts", 5, 10)], hotspots: [region("src\\a.ts", 7, 9, 3, 50)] },
   );
   const rows = buildCoverageRows(cov, "", "actionable");
 
   assert.equal(rows.length, 1, "one file, however each tool spells it");
   assert.deepEqual(rows[0]!.newUncovered, [2]);
   assert.equal(rows[0]!.regions.length, 1);
+});
+
+// Case is not a separator. The server compares candidates against the real
+// filesystem before it hands back one spelling for two, so a pair that reaches
+// the client still differing in case is two files on a case-sensitive disk --
+// and the payload carries no identity the client could re-check. Folding them
+// by lowercase overrode that decision and dropped whichever arrived second.
+test("buildCoverageRows keeps an unmeasured changed file apart from its case twin", () => {
+  const cov = payload(
+    { files: [patchFile("src/foo.ts", [], [], true)], unmeasuredFiles: 1 },
+    { files: [file("src/Foo.ts", 4, 4)], hotspots: [] },
+  );
+  const rows = buildCoverageRows(cov, "");
+
+  assert.equal(rows.length, 2, "two files, two rows");
+  const measured = rows.find((r) => r.path === "src/Foo.ts")!;
+  const changed = rows.find((r) => r.path === "src/foo.ts")!;
+  assert.equal(measured.changed, false, "the measured file was not the one that changed");
+  assert.equal(changed.measured, false, "and the changed one was never measured");
 });
 
 test("buildCoverageRows keeps files whose paths differ only in case apart", () => {
@@ -300,9 +319,25 @@ test("fmtRanges renders single lines bare and caps the list", () => {
 
 test("headlinePercent prefers production coverage over the whole-report figure", () => {
   const totals = { files: 3, coveredLines: 88, totalLines: 100, percent: 88 };
-  assert.equal(headlinePercent(payload(null, { productionPercent: 62, totals })), 62);
-  assert.equal(headlinePercent(payload(null, { productionPercent: null, totals })), 88);
+  const production = { files: 2, coveredLines: 40, totalLines: 65 };
+  const noProduction = { files: 0, coveredLines: 0, totalLines: 0 };
+  assert.equal(headlinePercent(payload(null, { productionPercent: 62, productionTotals: production, totals })), 62);
+  assert.equal(headlinePercent(payload(null, { productionPercent: null, productionTotals: noProduction, totals })), 88);
   assert.equal(headlinePercent(null), null);
+});
+
+// A report whose production files hold nothing executable -- interfaces, type
+// declarations, a barrel of re-exports -- has no production percentage and
+// production files all the same. Falling back to the whole report there prints
+// the test project's own number, which is near 100% by construction, under a
+// label that says production.
+test("headline stays unknown when production code exists but nothing in it is executable", () => {
+  const totals = { files: 3, coveredLines: 10, totalLines: 10, percent: 100 };
+  const productionTotals = { files: 1, coveredLines: 0, totalLines: 0 };
+  const cov = payload(null, { productionPercent: null, productionTotals, totals });
+
+  assert.equal(headlinePercent(cov), null, "nothing production was measured, so there is no production figure");
+  assert.deepEqual(headlineTotals(cov), productionTotals, "and the fraction stays with it");
 });
 
 test("headlineTotals draws its fraction from whichever population the percentage used", () => {
@@ -321,7 +356,9 @@ test("headlineTotals draws its fraction from whichever population the percentage
   // Nothing classified as production: the percentage falls back to the whole
   // report, so the fraction has to fall back with it.
   assert.deepEqual(
-    headlineTotals(payload(null, { productionPercent: null, productionTotals, totals })),
+    headlineTotals(
+      payload(null, { productionPercent: null, productionTotals: { files: 0, coveredLines: 0, totalLines: 0 }, totals }),
+    ),
     totals,
   );
 

@@ -102,24 +102,17 @@ export function buildCoverageRows(
 ): CoverageRow[] {
   if (!coverage) return [];
   const rows = new Map<string, CoverageRow>();
-  // A key two rows share holds null, because no single row can be the one meant.
-  const byLower = new Map<string, CoverageRow | null>();
 
-  function addRow(key: string, row: CoverageRow): void {
-    rows.set(key, row);
-    const lower = key.toLowerCase();
-    byLower.set(lower, byLower.has(lower) ? null : row);
-  }
-
-  // Exact first. A Windows report can spell a path in a different case than git
-  // does, so case is ignored after, but only when one row can be meant by it.
+  // Exact only. The server matches a changed file to a report entry against the
+  // filesystem and hands back the report's spelling when they are the same
+  // file, so anything still unmatched here is a different file, whatever its
+  // case looks like.
   function findRow(path: string): CoverageRow | undefined {
-    const key = pathKey(path);
-    return rows.get(key) ?? byLower.get(key.toLowerCase()) ?? undefined;
+    return rows.get(pathKey(path));
   }
 
   for (const f of coverage.files) {
-    addRow(pathKey(f.path), {
+    rows.set(pathKey(f.path), {
       path: f.path,
       folder: folderOf(f.path),
       name: baseOf(f.path),
@@ -164,7 +157,7 @@ export function buildCoverageRows(
         regions: [],
         tier: 0,
       };
-      addRow(pathKey(pf.path), row);
+      rows.set(pathKey(pf.path), row);
     }
     row.changed = true;
     if (pf.unmeasured) row.measured = false;
@@ -241,9 +234,12 @@ export function fmtRanges(lines: readonly number[], max = 6): string {
 
 // Production-only coverage is what people mean by "our coverage"; the overall
 // figure is the fallback when a report has nothing classifiable as production.
+// Production files with nothing executable in them are still production, so
+// they report as unknown rather than borrowing the test files' number.
 export function headlinePercent(coverage: CoveragePayload | null): number | null {
   if (!coverage) return null;
-  return coverage.productionPercent ?? coverage.totals.percent;
+  if (coverage.productionTotals.files > 0) return coverage.productionPercent;
+  return coverage.totals.percent;
 }
 
 // The fraction printed beside that number, from the same population. Pairing a
@@ -251,7 +247,7 @@ export function headlinePercent(coverage: CoveragePayload | null): number | null
 // different measurements next to each other.
 export function headlineTotals(coverage: CoveragePayload | null): { coveredLines: number; totalLines: number; files: number } {
   if (!coverage) return { coveredLines: 0, totalLines: 0, files: 0 };
-  if (coverage.productionPercent != null && coverage.productionTotals) return coverage.productionTotals;
+  if (coverage.productionTotals.files > 0) return coverage.productionTotals;
   return coverage.totals;
 }
 

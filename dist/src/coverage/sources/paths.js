@@ -4,6 +4,18 @@
 export function normalizeSlashes(p) {
     return String(p || "").replace(/\\/g, "/");
 }
+// Whether an absolute path names the root itself or something beneath it. Pure
+// string maths on paths that are already resolved, so a symlink pointing out of
+// the root still passes here; a canonical check has to have the final say.
+export function withinRoot(root, candidate, ignoreCase = false) {
+    const norm = (p) => {
+        const slashed = normalizeSlashes(p).replace(/\/+$/, "");
+        return ignoreCase ? slashed.toLowerCase() : slashed;
+    };
+    const r = norm(root);
+    const c = norm(candidate);
+    return c === r || c.startsWith(r + "/");
+}
 // How many trailing segments two paths share.
 export function commonSuffixSegments(a, b) {
     const left = normalizeSlashes(a).toLowerCase().split("/").filter(Boolean);
