@@ -60,6 +60,7 @@ const NOTHING = {
   resultsFiles: undefined,
   coverageFile: undefined,
   coverageDir: undefined,
+  projectRoot: undefined,
 };
 
 test("asOpenInput extracts string paths", () => {
@@ -67,10 +68,11 @@ test("asOpenInput extracts string paths", () => {
   assert.deepEqual(asOpenInput({ resultsDir: "/a" }), { ...NOTHING, resultsDir: "/a" });
   assert.deepEqual(asOpenInput({ coverageFile: "/a/cov.xml" }), { ...NOTHING, coverageFile: "/a/cov.xml" });
   assert.deepEqual(asOpenInput({ coverageDir: "/a/coverage" }), { ...NOTHING, coverageDir: "/a/coverage" });
+  assert.deepEqual(asOpenInput({ projectRoot: "/a" }), { ...NOTHING, projectRoot: "/a" });
 });
 
 test("asOpenInput drops non-string paths so they never reach the filesystem", () => {
-  assert.deepEqual(asOpenInput({ resultsFile: ["/a/r.trx"], resultsDir: 5, coverageFile: {}, coverageDir: true }), NOTHING);
+  assert.deepEqual(asOpenInput({ resultsFile: ["/a/r.trx"], resultsDir: 5, coverageFile: {}, coverageDir: true, projectRoot: 0 }), NOTHING);
 });
 
 test("asOpenInput tolerates a missing input object", () => {

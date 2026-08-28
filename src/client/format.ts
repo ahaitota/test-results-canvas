@@ -1,4 +1,4 @@
-// Pure, typed helpers ported from the old inline view script.
+// Small formatting and filtering helpers shared across the UI.
 import type { TestResult, TestStatus } from "../types";
 
 export type Row = { t: TestResult; i: number; k: string };

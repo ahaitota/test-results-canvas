@@ -56,6 +56,7 @@ export function asOpenInput(input) {
         resultsFiles: resultsFiles.length ? resultsFiles : undefined,
         coverageFile: asString(input?.coverageFile),
         coverageDir: asString(input?.coverageDir),
+        projectRoot: asString(input?.projectRoot),
     };
 }
 // Input to the `open_files` action.

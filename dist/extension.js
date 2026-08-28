@@ -13,9 +13,7 @@ import { basename, dirname, join, resolve as resolvePath } from "node:path";
 import { watchFile, readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { joinSession, createCanvas } from "@github/copilot-sdk/extension";
 import { createResultsServer, looksLikeResults, RESULT_EXTS } from "./src/server.js";
-import { discoverCoverageFor } from "./src/coverage/discover.js";
-import { findProjectRoot } from "./src/coverage/sources.js";
-import { suggestCoverageCommand } from "./src/coverage/suggest.js";
+import { discoverCoverageFor, findProjectRoot, suggestCoverageCommand } from "./src/coverage/index.js";
 // Action/open input reaches handlers typed as `unknown`; narrow it here first.
 import { asResultInput, asOpenInput, asFilesInput } from "./src/validate.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -148,11 +146,19 @@ function surfaceIfResults(input) {
             return undefined; // already told the agent
         lastSurfaced.set(root, key);
         console.error(`[example-canvas] hook surfacing results: ${found.join(", ")}${coverageFile ? ` (+ coverage ${coverageFile})` : ""}`);
-        const openInput = merged
-            ? `{ "name": ${JSON.stringify(basename(root))}, "resultsFiles": ${JSON.stringify(found)} }`
-            : coverageFile
-                ? `{ "resultsFile": ${JSON.stringify(abs)}, "coverageFile": ${JSON.stringify(coverageFile)} }`
-                : `{ "resultsFile": ${JSON.stringify(abs)} }`;
+        // projectRoot is passed on rather than left to be inferred: the panel
+        // would otherwise guess it from the coverage report, which in a monorepo
+        // can name a different package than the run. A merged run names neither
+        // it nor a coverage file: both are derived from the newest file alone, so
+        // they would hand the whole run one member project's identity.
+        const open = merged
+            ? { name: basename(root), resultsFiles: found }
+            : { resultsFile: abs };
+        if (!merged && coverageFile)
+            open.coverageFile = coverageFile;
+        if (!merged && projectRoot)
+            open.projectRoot = projectRoot;
+        const openInput = JSON.stringify(open);
         // With no coverage report, name the command that would produce one --
         // most runners collect nothing unless asked, and the panel is far more
         // useful once it can show which code the run actually exercised.
@@ -248,6 +254,13 @@ joined.session = await joinSession({
                         description: "Absolute path to a folder containing a coverage report. The newest valid " +
                             "report is loaded and the folder is watched for re-runs. Ignored if " +
                             "coverageFile is given and valid.",
+                    },
+                    projectRoot: {
+                        type: "string",
+                        description: "Absolute path to the repository or package the coverage report describes. " +
+                            "Optional — when omitted it is inferred from the results file. Pass it when " +
+                            "the tests live in a sub-package of a monorepo, so source files and the " +
+                            "changed-lines diff resolve against the right project.",
                     },
                 },
             },
@@ -416,6 +429,7 @@ joined.session = await joinSession({
                         resultsFiles: seed.resultsFiles,
                         coverageFile: seed.coverageFile,
                         coverageDir: seed.coverageDir,
+                        projectRoot: seed.projectRoot,
                         // The server composed this prompt from its own results;
                         // nothing here is supplied by the page.
                         onAsk: async ({ prompt }) => {

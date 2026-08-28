@@ -17,7 +17,7 @@ import {
   headlineTotals,
   patchHeadline,
 } from "../src/client/coverageDerive.js";
-import type { CoveragePayload, CoverageFileSummary, PatchCoverage, PatchFile, UncoveredRegion } from "../src/coverage/payload.js";
+import type { CoveragePayload, CoverageFileSummary, PatchCoverage, PatchFile, UncoveredRegion } from "../src/coverage/model/payload.js";
 
 function file(path: string, coveredLines: number, totalLines: number, rest: Partial<CoverageFileSummary> = {}): CoverageFileSummary {
   return {
@@ -32,11 +32,12 @@ function file(path: string, coveredLines: number, totalLines: number, rest: Part
   };
 }
 
-function patchFile(path: string, covered: number[], uncovered: number[], unmeasured = false, changedLines?: number): PatchFile {
+function patchFile(path: string, covered: number[], uncovered: number[], unmeasured = false, changedLines?: number, unknownLines = 0): PatchFile {
   return {
     path,
     coveredLines: covered,
     uncoveredLines: uncovered,
+    unknownLines,
     percent: covered.length + uncovered.length ? Math.round((covered.length / (covered.length + uncovered.length)) * 100) : null,
     unmeasured,
     changedLines: changedLines ?? covered.length + uncovered.length,
@@ -45,7 +46,7 @@ function patchFile(path: string, covered: number[], uncovered: number[], unmeasu
 
 function payload(patch: Partial<PatchCoverage> | null, rest: Partial<CoveragePayload> = {}): CoveragePayload {
   const full = patch
-    ? { against: "origin/main", files: [], covered: 0, total: 0, percent: null, unmeasuredFiles: 0, ...patch }
+    ? { against: "origin/main", files: [], covered: 0, total: 0, percent: null, unmeasuredFiles: 0, unknownLines: 0, ...patch }
     : null;
   return { patch: full, ...rest } as unknown as CoveragePayload;
 }
@@ -117,18 +118,51 @@ test("buildCoverageRows keeps changed files the report never measured", () => {
   assert.equal(rows[0]!.path, "src/ghost.ts", "and it leads, being the least understood");
 });
 
-test("buildCoverageRows matches paths across sources regardless of separator or case", () => {
-  // The report, git and the filesystem each spell paths their own way. Matching
-  // raw strings would produce two rows for one file on Windows.
+test("buildCoverageRows matches paths across sources regardless of separator", () => {
+  // The report, git and the filesystem each spell separators their own way.
+  // Matching raw strings would produce two rows for one file on Windows.
   const cov = payload(
-    { files: [patchFile("src\\A.ts", [1], [2])] },
-    { files: [file("src/a.ts", 5, 10)], hotspots: [region("SRC/A.ts", 7, 9, 3, 50)] },
+    { files: [patchFile("src\\a.ts", [1], [2])] },
+    { files: [file("src/a.ts", 5, 10)], hotspots: [region("src\\a.ts", 7, 9, 3, 50)] },
   );
   const rows = buildCoverageRows(cov, "", "actionable");
 
   assert.equal(rows.length, 1, "one file, however each tool spells it");
   assert.deepEqual(rows[0]!.newUncovered, [2]);
   assert.equal(rows[0]!.regions.length, 1);
+});
+
+// Case is not a separator. The server compares candidates against the real
+// filesystem before it hands back one spelling for two, so a pair that reaches
+// the client still differing in case is two files on a case-sensitive disk --
+// and the payload carries no identity the client could re-check. Folding them
+// by lowercase overrode that decision and dropped whichever arrived second.
+test("buildCoverageRows keeps an unmeasured changed file apart from its case twin", () => {
+  const cov = payload(
+    { files: [patchFile("src/foo.ts", [], [], true)], unmeasuredFiles: 1 },
+    { files: [file("src/Foo.ts", 4, 4)], hotspots: [] },
+  );
+  const rows = buildCoverageRows(cov, "");
+
+  assert.equal(rows.length, 2, "two files, two rows");
+  const measured = rows.find((r) => r.path === "src/Foo.ts")!;
+  const changed = rows.find((r) => r.path === "src/foo.ts")!;
+  assert.equal(measured.changed, false, "the measured file was not the one that changed");
+  assert.equal(changed.measured, false, "and the changed one was never measured");
+});
+
+test("buildCoverageRows keeps files whose paths differ only in case apart", () => {
+  // A case-sensitive filesystem has two files here, and folding them together
+  // hid one behind the other's percentage.
+  const cov = payload(null, {
+    files: [file("src/Foo.ts", 4, 4), file("src/foo.ts", 0, 4)],
+    hotspots: [],
+  });
+  const rows = buildCoverageRows(cov, "");
+
+  assert.deepEqual(rows.map((r) => r.path).sort(), ["src/Foo.ts", "src/foo.ts"]);
+  assert.equal(rows.find((r) => r.path === "src/Foo.ts")!.percent, 100);
+  assert.equal(rows.find((r) => r.path === "src/foo.ts")!.percent, 0);
 });
 
 test("buildCoverageRows orders by what most needs a test, and sinks test files", () => {
@@ -225,6 +259,29 @@ test("rowNote says a file was never measured, and how much of it that hides", ()
   assert.equal(rowNote(buildCoverageRows(unsized, "", "actionable")[0]!), "changed, but the report never measured it");
 });
 
+test("rowNote will not call a change fully covered when lines went unmentioned", () => {
+  // A report taken before the edit: line 1 is measured and covered, line 2 is
+  // simply absent. "all 1 changed line covered" would be true and misleading.
+  const cov = payload(
+    { files: [patchFile("src/a.ts", [1], [], false, 2, 1)], unknownLines: 1 },
+    { files: [file("src/a.ts", 10, 10, { changed: true })], hotspots: [] },
+  );
+  assert.equal(
+    rowNote(buildCoverageRows(cov, "", "actionable")[0]!),
+    "all 1 changed line covered \u00B7 1 changed line the report does not mention",
+  );
+});
+
+test("rowNote stays quiet about unmentioned lines once it already names untested ones", () => {
+  // Blank lines and closing braces are absent from every format, so saying so
+  // on a row that is already flagged is noise.
+  const cov = payload(
+    { files: [patchFile("src/a.ts", [1], [2], false, 6, 3)], unknownLines: 3 },
+    { files: [file("src/a.ts", 10, 10, { changed: true })], hotspots: [] },
+  );
+  assert.equal(rowNote(buildCoverageRows(cov, "", "actionable")[0]!), "1 of 2 changed lines untested: 2");
+});
+
 test("buildCoverageRows ranks blind spots by size, the only measure they have", () => {
   const cov = payload(
     {
@@ -262,9 +319,25 @@ test("fmtRanges renders single lines bare and caps the list", () => {
 
 test("headlinePercent prefers production coverage over the whole-report figure", () => {
   const totals = { files: 3, coveredLines: 88, totalLines: 100, percent: 88 };
-  assert.equal(headlinePercent(payload(null, { productionPercent: 62, totals })), 62);
-  assert.equal(headlinePercent(payload(null, { productionPercent: null, totals })), 88);
+  const production = { files: 2, coveredLines: 40, totalLines: 65 };
+  const noProduction = { files: 0, coveredLines: 0, totalLines: 0 };
+  assert.equal(headlinePercent(payload(null, { productionPercent: 62, productionTotals: production, totals })), 62);
+  assert.equal(headlinePercent(payload(null, { productionPercent: null, productionTotals: noProduction, totals })), 88);
   assert.equal(headlinePercent(null), null);
+});
+
+// A report whose production files hold nothing executable -- interfaces, type
+// declarations, a barrel of re-exports -- has no production percentage and
+// production files all the same. Falling back to the whole report there prints
+// the test project's own number, which is near 100% by construction, under a
+// label that says production.
+test("headline stays unknown when production code exists but nothing in it is executable", () => {
+  const totals = { files: 3, coveredLines: 10, totalLines: 10, percent: 100 };
+  const productionTotals = { files: 1, coveredLines: 0, totalLines: 0 };
+  const cov = payload(null, { productionPercent: null, productionTotals, totals });
+
+  assert.equal(headlinePercent(cov), null, "nothing production was measured, so there is no production figure");
+  assert.deepEqual(headlineTotals(cov), productionTotals, "and the fraction stays with it");
 });
 
 test("headlineTotals draws its fraction from whichever population the percentage used", () => {
@@ -283,7 +356,9 @@ test("headlineTotals draws its fraction from whichever population the percentage
   // Nothing classified as production: the percentage falls back to the whole
   // report, so the fraction has to fall back with it.
   assert.deepEqual(
-    headlineTotals(payload(null, { productionPercent: null, productionTotals, totals })),
+    headlineTotals(
+      payload(null, { productionPercent: null, productionTotals: { files: 0, coveredLines: 0, totalLines: 0 }, totals }),
+    ),
     totals,
   );
 
@@ -318,6 +393,23 @@ test("patchHeadline does not claim a clean sweep while files are unmeasured", ()
 
 test("patchHeadline reports unmeasured files alone when nothing was measured", () => {
   assert.equal(patchHeadline(payload({ covered: 0, total: 0, unmeasuredFiles: 3 })), "3 changed files with no coverage data");
+});
+
+test("patchHeadline will not report a clean sweep of lines the report never saw", () => {
+  assert.equal(
+    patchHeadline(payload({ covered: 10, total: 10, unknownLines: 4 })),
+    "All 10 changed lines are covered, plus 4 changed lines the report does not mention",
+  );
+  // Already flagged: the unmentioned lines are mostly blanks and braces, and
+  // repeating them behind a real number is noise.
+  assert.equal(patchHeadline(payload({ covered: 8, total: 10, unknownLines: 4 })), "2 of 10 changed lines not covered");
+});
+
+test("patchHeadline joins three clauses without repeating 'plus'", () => {
+  assert.equal(
+    patchHeadline(payload({ covered: 10, total: 10, unmeasuredFiles: 2, unknownLines: 4 })),
+    "All 10 changed lines are covered, plus 2 changed files with no coverage data and 4 changed lines the report does not mention",
+  );
 });
 
 test("patchHeadline is empty without a patch comparison", () => {

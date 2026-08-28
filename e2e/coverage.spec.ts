@@ -6,7 +6,7 @@
 // live `git diff` would make the "New code" section depend on whatever the
 // working tree happens to contain that minute.
 import type { Page } from "@playwright/test";
-import { mkdirSync, mkdtempSync, copyFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, copyFileSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -136,6 +136,26 @@ test.describe("the coverage tab", () => {
     await expect(view.getByTestId("source-ask")).toBeVisible();
   });
 
+  test("re-reading the report refreshes the gutters of a file already open", async ({ page, makeServer }) => {
+    const s = await makeServer(withCoverage(cobertura()));
+    await openCanvas(page, s);
+    await page.getByTestId("tab-coverage").click();
+    await page.getByTestId("coverage-files").locator(`[data-path="${CALC}"]`).click();
+
+    const view = page.getByTestId("source-view").first();
+    await expect(view.locator('[data-line="26"]')).toHaveAttribute("data-cov", "miss");
+
+    const dir = mkdtempSync(join(tmpdir(), "cov-rerun-"));
+    try {
+      const next = join(dir, "coverage.cobertura.xml");
+      writeFileSync(next, readFileSync(cobertura(), "utf8").replace('number="26" hits="0"', 'number="26" hits="7"'));
+      s.loadCoverage(next);
+      await expect(view.locator('[data-line="26"]')).toHaveAttribute("data-cov", "hit");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("ranked untested blocks are named on the file's own row", async ({ page, makeServer }) => {
     const s = await makeServer(withCoverage(cobertura()));
     await openCanvas(page, s);
@@ -212,6 +232,9 @@ test.describe("new code", () => {
     await expect(page.getByTestId("patch-headline")).toContainText("1 of 3 changed lines not covered");
     await expect(page.getByTestId("coverage-row-note").first()).toContainText("26");
     await expect(page.getByTestId("patch-ask")).toBeVisible();
+    // Three of the six changed lines are absent from the report, so the
+    // percentage describes the other three and has to say which it is.
+    await expect(page.getByTestId("patch-pct-note")).toHaveText("of measured");
   });
 
   test("a fully covered change set says so instead of nagging", async ({ page, makeServer }) => {
@@ -222,6 +245,9 @@ test.describe("new code", () => {
 
     await expect(page.getByTestId("patch-headline")).toContainText("All 1 changed line");
     await expect(page.getByTestId("patch-ask")).toHaveCount(0);
+    // The report measured the whole change here, so the percentage stands
+    // unqualified.
+    await expect(page.getByTestId("patch-pct-note")).toHaveCount(0);
   });
 
   // A new file that no test imports produces no uncovered lines *because*
@@ -252,6 +278,22 @@ test.describe("new code", () => {
     expect(why).toContain("never loaded this file");
     expect(why).toContain("not the same as 0%");
     await expect(page.getByTestId("patch-ask")).toBeVisible();
+  });
+
+  test("an unmeasured file reads as unknown coverage, not as untested code", async ({ page, makeServer }) => {
+    // Absence from this report is not evidence about tests: the file can be
+    // excluded from collection, measured by another runtime, or simply missing
+    // from a stale report.
+    const ghost = "coverage-sample/src/Ghost.cs";
+    const diff = `--- a/${ghost}\n+++ b/${ghost}\n@@ -0,0 +1,3 @@\n+a\n+b\n+c\n`;
+    const s = await makeServer({ resultsFile: results(), coverageFile: cobertura(), coverage: true, gitExec: stubGit(diff) });
+    await openCanvas(page, s);
+    await page.getByTestId("tab-coverage").click();
+
+    const ghostRow = page.getByTestId("coverage-file").filter({ hasText: "Ghost.cs" });
+    await page.getByTestId("coverage-files").locator(`[data-path="${ghost}"]`).click();
+    await expect(ghostRow).toContainText("Whether any test reaches it is unknown");
+    await expect(ghostRow).not.toContainText("no test observed it");
   });
 
   test("with no diff the section explains itself rather than showing nothing", async ({ page, makeServer }) => {
@@ -357,6 +399,40 @@ test.describe("asking the agent about coverage", () => {
     expect(asks).toHaveLength(0);
     expect(errors).toEqual([]);
   });
+
+  // The button reports on one report. Left alone it kept reporting on that one
+  // after the next run replaced it, so the new numbers arrived under a disabled
+  // button claiming they had already been asked about.
+  test("a new report puts the buttons back where they can be used again", async ({ page, makeServer }) => {
+    const s = await makeServer(withPatch(() => {}));
+    await openCanvas(page, s);
+    await page.getByTestId("tab-coverage").click();
+    await page.getByTestId("coverage-files").locator(`[data-path="${CALC}"]`).click();
+
+    const patchButton = page.getByTestId("patch-ask");
+    const fileButton = page.getByTestId("source-view").first().getByTestId("source-ask");
+    await patchButton.click();
+    await fileButton.click();
+    await expect(patchButton).toHaveText("Asked the agent");
+    await expect(fileButton).toHaveText("Asked the agent");
+
+    const dir = mkdtempSync(join(tmpdir(), "cov-asked-"));
+    try {
+      // The same report from a new path: enough for the panel to say a fresh
+      // one arrived, while leaving the verdict alone so the buttons are still
+      // offered rather than passing the test by disappearing.
+      const next = join(dir, "coverage.cobertura.xml");
+      copyFileSync(cobertura(), next);
+      s.loadCoverage(next);
+
+      await expect(patchButton).toHaveText("Ask agent to cover the new code");
+      await expect(patchButton).toBeEnabled();
+      await expect(fileButton).toHaveText("Ask agent to add tests");
+      await expect(fileButton).toBeEnabled();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 test.describe("other report formats", () => {
@@ -408,6 +484,7 @@ test.describe("no coverage", () => {
   // checkout can be discovered as its coverage report.
   let dir: string;
   let lonelyResults: string;
+  let otherResults: string;
 
   test.beforeAll(() => {
     dir = mkdtempSync(join(tmpdir(), "canvas-nocov-"));
@@ -416,6 +493,8 @@ test.describe("no coverage", () => {
     mkdirSync(join(dir, "run"), { recursive: true });
     lonelyResults = join(dir, "run", "mixed.trx");
     copyFileSync(get_fixture_path("mixed.trx"), lonelyResults);
+    otherResults = join(dir, "run", "other.trx");
+    copyFileSync(get_fixture_path("mixed.trx"), otherResults);
   });
 
   test.afterAll(() => {
@@ -462,6 +541,28 @@ test.describe("no coverage", () => {
     expect(asks[0].coverage?.scope).toBe("enable");
     // The prompt is the command the empty state was already showing.
     expect(asks[0].prompt).toContain("XPlat Code Coverage");
+  });
+
+  // The button is disabled once asked, so a stuck "Asked the agent" leaves the
+  // next run with no way to ask at all -- and this state has only the one button.
+  test("switching to another run without coverage offers the button again", async ({ page, makeServer }) => {
+    const s = await makeServer({
+      resultsFile: lonelyResults,
+      coverage: true,
+      gitExec: null,
+      onAsk: () => {},
+    });
+    await openCanvas(page, s);
+    await page.getByTestId("tab-coverage").click();
+
+    const button = page.getByTestId("coverage-ask-enable");
+    await button.click();
+    await expect(button).toHaveText("Asked the agent");
+
+    s.loadInput({ resultsFile: otherResults });
+
+    await expect(button).toHaveText("Ask agent to re-run with coverage");
+    await expect(button).toBeEnabled();
   });
 });
 

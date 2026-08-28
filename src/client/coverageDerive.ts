@@ -2,10 +2,9 @@
 // grouping and bucketing rules can be tested on their own, as derive.ts does
 // for the results list.
 
-import type { CoveragePayload, UncoveredRegion } from "../coverage/payload.js";
+import type { CoveragePayload, UncoveredRegion } from "../coverage/model/payload.js";
 
-// Coverage bands. The thresholds are the ones most CI gates use, so the colour
-// a user sees here matches the verdict their pipeline gives.
+// The thresholds most CI gates use, so the colour here matches their verdict.
 export type CoverageBand = "high" | "medium" | "low" | "none";
 
 export function bandOf(percent: number | null): CoverageBand {
@@ -15,8 +14,7 @@ export function bandOf(percent: number | null): CoverageBand {
   return "low";
 }
 
-// Directory part of a report path, normalised to forward slashes. Files at the
-// root group under "." so every file lands in exactly one group.
+// Files at the root group under "." so every file lands in exactly one group.
 export function folderOf(path: string): string {
   const p = String(path || "").replace(/\\/g, "/");
   const i = p.lastIndexOf("/");
@@ -29,9 +27,8 @@ export function baseOf(path: string): string {
   return i >= 0 ? p.slice(i + 1) : p;
 }
 
-// One row per file. The three former lists (New code, Worth covering, All
-// files) overlapped rather than partitioned, so a changed file with an untested
-// block appeared three times with a third of its story in each.
+// One row per file: coverage, whether the change set touched it, how its
+// changed lines fared, and its worst untested block.
 
 export type CoverageSort = "actionable" | "name" | "coverage";
 
@@ -53,24 +50,24 @@ export interface CoverageRow {
   newCovered: number;
   newTotal: number;
   newUncovered: number[];
+  // Changed lines the report has no entry for. Not the same as uncovered: the
+  // report was never asked about them.
+  newUnknown: number;
   // What git says changed, regardless of coverage. For an unmeasured file this
   // is the only size it has.
   changedLines: number;
-  // Ranked untested blocks, worst first. Also empty for a file whose blocks
-  // fell outside the server's ranking cut-off.
+  // Ranked untested blocks, worst first.
   regions: UncoveredRegion[];
-  // Which band of attention the row belongs to; see rowTier.
   tier: number;
 }
 
-// The report, git and the filesystem each spell paths differently, so matching
-// raw strings produces duplicate rows on Windows.
+// Case is left alone: two paths differing only in case are two files where the
+// filesystem says so.
 function pathKey(path: string): string {
-  return String(path || "").replace(/\\/g, "/").toLowerCase();
+  return String(path || "").replace(/\\/g, "/");
 }
 
-// Rank order for "most actionable": new code first, then the biggest gaps, then
-// everything else -- the old section order, without repeating files.
+// Rank order for "most actionable": new code first, then the biggest gaps.
 function rowTier(r: CoverageRow): number {
   if (r.isTest) return 5;
   // Changed code nothing observed: the report cannot even say it is untested.
@@ -85,12 +82,11 @@ function untestedLines(r: CoverageRow): number {
   return Math.max(0, r.totalLines - r.coveredLines);
 }
 
-// Sort comparators. Within a tier the worst offender leads: most untested new
-// lines, then the largest gap, then the lowest percentage.
+// Within a tier the worst offender leads: most untested new lines, then the
+// largest gap, then the lowest percentage.
 function byActionable(a: CoverageRow, b: CoverageRow): number {
   return a.tier - b.tier
-    // Nothing else separates rows in the unmeasured tier: no percentage, no
-    // gaps. Size is the only fact they carry.
+    // Size is the only fact the unmeasured tier carries.
     || (a.tier === 0 ? b.changedLines - a.changedLines : 0)
     || b.newUncovered.length - a.newUncovered.length
     || (b.regions[0]?.score ?? 0) - (a.regions[0]?.score ?? 0)
@@ -107,6 +103,14 @@ export function buildCoverageRows(
   if (!coverage) return [];
   const rows = new Map<string, CoverageRow>();
 
+  // Exact only. The server matches a changed file to a report entry against the
+  // filesystem and hands back the report's spelling when they are the same
+  // file, so anything still unmatched here is a different file, whatever its
+  // case looks like.
+  function findRow(path: string): CoverageRow | undefined {
+    return rows.get(pathKey(path));
+  }
+
   for (const f of coverage.files) {
     rows.set(pathKey(f.path), {
       path: f.path,
@@ -122,6 +126,7 @@ export function buildCoverageRows(
       newCovered: 0,
       newTotal: 0,
       newUncovered: [],
+      newUnknown: 0,
       changedLines: 0,
       regions: [],
       tier: 4,
@@ -129,11 +134,9 @@ export function buildCoverageRows(
   }
 
   // Changed files the report never mentions are absent from `files`, so they
-  // are added here or the list would drop the strongest signal there is: new
-  // code no test even loaded.
+  // are added here or the list would drop the strongest signal there is.
   for (const pf of coverage.patch?.files ?? []) {
-    const key = pathKey(pf.path);
-    let row = rows.get(key);
+    let row = findRow(pf.path);
     if (!row) {
       row = {
         path: pf.path,
@@ -149,22 +152,24 @@ export function buildCoverageRows(
         newCovered: 0,
         newTotal: 0,
         newUncovered: [],
+        newUnknown: 0,
         changedLines: 0,
         regions: [],
         tier: 0,
       };
-      rows.set(key, row);
+      rows.set(pathKey(pf.path), row);
     }
     row.changed = true;
     if (pf.unmeasured) row.measured = false;
     row.newCovered = pf.coveredLines.length;
     row.newTotal = pf.coveredLines.length + pf.uncoveredLines.length;
     row.newUncovered = pf.uncoveredLines;
+    row.newUnknown = pf.unknownLines ?? 0;
     row.changedLines = pf.changedLines ?? 0;
   }
 
   for (const h of coverage.hotspots ?? []) {
-    rows.get(pathKey(h.path))?.regions.push(h);
+    findRow(h.path)?.regions.push(h);
   }
 
   const q = query.trim().toLowerCase();
@@ -180,8 +185,8 @@ export function buildCoverageRows(
   return list;
 }
 
-// What the row says about itself beyond its percentage: the part the old "New
-// code" and "Worth covering" sections carried.
+// A short sentence about the row beyond its percentage: how its changed lines
+// fared, and its worst untested block.
 export function rowNote(r: CoverageRow): string {
   if (r.changed && !r.measured) {
     return r.changedLines > 0
@@ -194,6 +199,10 @@ export function rowNote(r: CoverageRow): string {
       ? `all ${r.newTotal} changed line${r.newTotal === 1 ? "" : "s"} covered`
       : `${r.newUncovered.length} of ${r.newTotal} changed line${r.newTotal === 1 ? "" : "s"} untested: ${fmtRanges(r.newUncovered, 4)}`);
   }
+  // Only worth saying where the row would otherwise read as fully covered.
+  if (r.newUnknown > 0 && r.newUncovered.length === 0) {
+    bits.push(`${r.newUnknown} changed line${r.newUnknown === 1 ? "" : "s"} the report does not mention`);
+  }
   const top = r.regions[0];
   if (top) {
     const where = top.start === top.end ? `line ${top.start}` : `lines ${top.start}\u2013${top.end}`;
@@ -203,9 +212,8 @@ export function rowNote(r: CoverageRow): string {
   return bits.join(" \u00B7 ");
 }
 
-// Contiguous runs, so line numbers show as "40-58" rather than nineteen
-// separate numbers. Mirrors the server-side toRanges(), including the one-line
-// gap tolerance, so both ends describe a region the same way.
+// Contiguous runs, so lines show as "40-58". Mirrors the server-side
+// toRanges(), including the one-line gap tolerance.
 export function toRanges(lines: readonly number[]): { start: number; end: number }[] {
   const sorted = [...lines].sort((a, b) => a - b);
   const ranges: { start: number; end: number }[] = [];
@@ -224,12 +232,14 @@ export function fmtRanges(lines: readonly number[], max = 6): string {
   return shown.join(", ") + (rest > 0 ? `, +${rest} more` : "");
 }
 
-// The single number to show in the header. Production-only coverage is what
-// people mean by "our coverage"; the overall figure is the fallback when a
-// report contains nothing classifiable as production code.
+// Production-only coverage is what people mean by "our coverage"; the overall
+// figure is the fallback when a report has nothing classifiable as production.
+// Production files with nothing executable in them are still production, so
+// they report as unknown rather than borrowing the test files' number.
 export function headlinePercent(coverage: CoveragePayload | null): number | null {
   if (!coverage) return null;
-  return coverage.productionPercent ?? coverage.totals.percent;
+  if (coverage.productionTotals.files > 0) return coverage.productionPercent;
+  return coverage.totals.percent;
 }
 
 // The fraction printed beside that number, from the same population. Pairing a
@@ -237,7 +247,7 @@ export function headlinePercent(coverage: CoveragePayload | null): number | null
 // different measurements next to each other.
 export function headlineTotals(coverage: CoveragePayload | null): { coveredLines: number; totalLines: number; files: number } {
   if (!coverage) return { coveredLines: 0, totalLines: 0, files: 0 };
-  if (coverage.productionPercent != null && coverage.productionTotals) return coverage.productionTotals;
+  if (coverage.productionTotals.files > 0) return coverage.productionTotals;
   return coverage.totals;
 }
 
@@ -248,12 +258,23 @@ export function patchHeadline(coverage: CoveragePayload | null): string {
   const patch = coverage?.patch;
   if (!patch) return "";
   const uncovered = patch.total - patch.covered;
-  const blind = patch.unmeasuredFiles > 0
-    ? `${patch.unmeasuredFiles} changed file${patch.unmeasuredFiles === 1 ? "" : "s"} with no coverage data`
-    : "";
-  if (patch.total === 0 && patch.unmeasuredFiles > 0) return blind;
-  const measured = uncovered === 0
-    ? `All ${patch.total} changed line${patch.total === 1 ? " is" : "s are"} covered`
-    : `${uncovered} of ${patch.total} changed line${patch.total === 1 ? "" : "s"} not covered`;
-  return blind ? `${measured}, plus ${blind}` : measured;
+  const unknown = patch.unknownLines ?? 0;
+
+  const parts: string[] = [];
+  if (patch.total > 0) {
+    parts.push(uncovered === 0
+      ? `All ${patch.total} changed line${patch.total === 1 ? " is" : "s are"} covered`
+      : `${uncovered} of ${patch.total} changed line${patch.total === 1 ? "" : "s"} not covered`);
+  }
+  if (patch.unmeasuredFiles > 0) {
+    parts.push(`${patch.unmeasuredFiles} changed file${patch.unmeasuredFiles === 1 ? "" : "s"} with no coverage data`);
+  }
+  // Lines the report has no entry for sit outside the percentage entirely.
+  // Named only where the rest reads as a clean sweep.
+  if (unknown > 0 && uncovered === 0) {
+    parts.push(`${unknown} changed line${unknown === 1 ? "" : "s"} the report does not mention`);
+  }
+
+  if (!parts.length) return "";
+  return parts.length === 1 ? parts[0] : `${parts[0]}, plus ${parts.slice(1).join(" and ")}`;
 }

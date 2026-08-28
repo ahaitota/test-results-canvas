@@ -55,6 +55,7 @@ export function asOpenInput(input: { [k: string]: unknown } | undefined): {
     resultsFiles?: string[];
     coverageFile?: string;
     coverageDir?: string;
+    projectRoot?: string;
 } {
     const resultsFiles = asStringArray(input?.resultsFiles);
     return {
@@ -66,6 +67,7 @@ export function asOpenInput(input: { [k: string]: unknown } | undefined): {
         resultsFiles: resultsFiles.length ? resultsFiles : undefined,
         coverageFile: asString(input?.coverageFile),
         coverageDir: asString(input?.coverageDir),
+        projectRoot: asString(input?.projectRoot),
     };
 }
 

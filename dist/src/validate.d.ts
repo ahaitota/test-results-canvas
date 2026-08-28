@@ -13,6 +13,7 @@ export declare function asOpenInput(input: {
     resultsFiles?: string[];
     coverageFile?: string;
     coverageDir?: string;
+    projectRoot?: string;
 };
 export declare function asFilesInput(input: {
     [k: string]: unknown;

@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { GitExec } from "./coverage/gitdiff.js";
+import type { CoverageLoadFailure, GitExec } from "./coverage/index.js";
 import type { TestResult, TestStatus } from "./types.js";
 export declare const RESULT_EXTS: string[];
 export declare function looksLikeResults(xml: unknown): boolean;
@@ -16,6 +16,7 @@ export interface ResultsServerOptions {
     name?: string;
     coverageFile?: string;
     coverageDir?: string;
+    projectRoot?: string;
     title?: string;
     port?: number;
     watch?: boolean;
@@ -45,6 +46,7 @@ export interface SeedInput {
     resultsFiles?: readonly string[];
     coverageFile?: string;
     coverageDir?: string;
+    projectRoot?: string;
 }
 export interface OpenFilesResult {
     ok: boolean;
@@ -78,8 +80,9 @@ export declare function createResultsServer(options?: ResultsServerOptions): Pro
         files: readonly string[];
     }): OpenFilesResult;
     loadInput(input?: SeedInput): string | null;
-    getCoverage: () => import("./coverage/payload.js").CoveragePayload | null;
+    getCoverage: () => import("./coverage/index.js").CoveragePayload | null;
     coveragePath: () => string | null;
+    coverageError: () => CoverageLoadFailure | null;
     projectRoot: () => string | undefined;
     loadCoverage(path: string): boolean;
     broadcast: () => void;

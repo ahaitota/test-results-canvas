@@ -6,7 +6,7 @@
 // Run with: node --test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { commentSyntaxFor, nonExecutableLines } from "../src/coverage/executable.js";
+import { commentSyntaxFor, nonExecutableLines } from "../src/coverage/sources/executable.js";
 
 const inertC = (src: string) => [...nonExecutableLines(src, "c")].sort((a, b) => a - b);
 const inertHash = (src: string) => [...nonExecutableLines(src, "hash")].sort((a, b) => a - b);
@@ -106,6 +106,29 @@ test("an apostrophe in a comment does not swallow the rest of the file", () => {
     "runAgain();", //           4
   ].join("\n");
   assert.deepEqual(inertC(src), [1, 3], "lines 2 and 4 must stay counted");
+});
+
+// `/*` inside a regex literal is body, not a comment opener. Believing it turns
+// every line after into prose, and patch coverage then reports changed code as
+// nothing that could run.
+test("a regex literal holding a comment marker does not silence the rest of the file", () => {
+  const src = [
+    "const marker = /[/*]/;", // 1
+    "run();", //                 2
+    "// real comment", //        3
+    "stillRuns();", //           4
+  ].join("\n");
+  assert.deepEqual(inertC(src), [3], "only the comment on line 3 is inert");
+});
+
+test("a genuine block comment is still recognised after a regex on an earlier line", () => {
+  const src = [
+    "const re = /a/;", // 1
+    "/* prose", //        2
+    "   more */", //      3
+    "run();", //          4
+  ].join("\n");
+  assert.deepEqual(inertC(src), [2, 3]);
 });
 
 test("an unterminated quote does not leak past the end of its line", () => {

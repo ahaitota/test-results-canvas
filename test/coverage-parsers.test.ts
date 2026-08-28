@@ -2,11 +2,11 @@
 // Run with: node --test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseCobertura } from "../src/coverage/cobertura.js";
-import { parseLcov } from "../src/coverage/lcov.js";
-import { parseJacoco } from "../src/coverage/jacoco.js";
-import { detectCoverageFormat, parseCoverage, looksLikeCoverage } from "../src/coverage/detect.js";
-import type { CoverageFile } from "../src/coverage/types.js";
+import { parseCobertura } from "../src/coverage/formats/cobertura.js";
+import { parseLcov } from "../src/coverage/formats/lcov.js";
+import { parseJacoco } from "../src/coverage/formats/jacoco.js";
+import { detectCoverageFormat, parseCoverage, looksLikeCoverage } from "../src/coverage/formats/detect.js";
+import type { CoverageFile } from "../src/coverage/model/types.js";
 
 const byPath = (files: CoverageFile[]) => Object.fromEntries(files.map((f) => [f.path, f]));
 
@@ -107,6 +107,42 @@ test("parseLcov tolerates a final record with no end_of_record", () => {
   assert.equal(report.files[0].totalLines, 2);
 });
 
+test("parseLcov counts a branch once however many records report it", () => {
+  // A runner writes one record per test file, so a branch in a file three tests
+  // touch is reported three times. Adding each record's totals up turned an
+  // if/else into "6 of 6 branches", which reads as thorough and is one branch.
+  const record = "SF:src/calc.ts\nDA:1,1\nBRDA:1,0,0,1\nBRDA:1,0,1,-\nend_of_record\n";
+  const report = parseLcov(record + record + record);
+  assert.ok(report);
+  assert.equal(report.files.length, 1);
+  assert.deepEqual(report.files[0].branches, { covered: 1, total: 2 });
+});
+
+test("parseLcov merges the two separator spellings of one path", () => {
+  // A Windows runner can write either slash, sometimes both in one report.
+  // Merging on the raw spelling left one file as two entries: its lines were
+  // counted twice in the totals, and patch matching saw two candidates for
+  // every changed line and could only call them ambiguous.
+  const report = parseLcov("SF:src\\calc.ts\nDA:1,1\nDA:2,0\nend_of_record\nSF:src/calc.ts\nDA:2,4\nend_of_record\n");
+  assert.ok(report);
+  assert.equal(report.files.length, 1);
+  assert.equal(report.files[0].path, "src/calc.ts");
+  assert.deepEqual(report.files[0].lines, { 1: 1, 2: 4 });
+  assert.equal(report.totals.files, 1);
+  assert.equal(report.totals.totalLines, 2, "totals follow the merged files, not the raw records");
+  assert.equal(report.totals.coveredLines, 2);
+});
+
+test("parseCobertura decodes an escaped source root", () => {
+  // Left encoded, a real directory is unopenable, so every file in the report
+  // fails to resolve and the panel can show numbers but never source.
+  const report = parseCobertura(`<coverage><sources><source>C:/R&amp;D/src</source></sources>`
+    + `<packages><package><classes><class filename="a.cs"><lines><line number="1" hits="1"/></lines></class>`
+    + `</classes></package></packages></coverage>`);
+  assert.ok(report);
+  assert.deepEqual(report.sourceRoots, ["C:/R&D/src"]);
+});
+
 const JACOCO = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE report PUBLIC "-//JACOCO//DTD Report 1.1//EN" "report.dtd">
 <report name="demo">
@@ -135,6 +171,30 @@ test("parseJacoco builds package-qualified paths and maps mi/ci to hits", () => 
   assert.deepEqual(calc.branches, { covered: 2, total: 4 });
   assert.equal(files["com/example/util/Helper.java"].coveredLines, 1);
   assert.equal(report.totals.totalLines, 3);
+});
+
+test("parseJacoco keeps two modules' identical packages apart", () => {
+  // An aggregate report nests packages under <group> per module, and two
+  // modules routinely hold the same package and file name. Without the group
+  // in the path both entries carry the same path and get merged into one file
+  // with summed hits, so a line covered in one module reads as covered in both.
+  const aggregate = `<?xml version="1.0" encoding="UTF-8"?>
+<report name="all">
+  <group name="api">
+    <package name="com/example"><sourcefile name="Util.java">
+      <line nr="7" mi="0" ci="2"/>
+    </sourcefile></package>
+  </group>
+  <group name="worker">
+    <package name="com/example"><sourcefile name="Util.java">
+      <line nr="7" mi="3" ci="0"/>
+    </sourcefile></package>
+  </group>
+</report>`;
+  const files = byPath(parseJacoco(aggregate).files);
+  assert.deepEqual(Object.keys(files).sort(), ["api/com/example/Util.java", "worker/com/example/Util.java"]);
+  assert.deepEqual(files["api/com/example/Util.java"].lines, { 7: 1 });
+  assert.deepEqual(files["worker/com/example/Util.java"].lines, { 7: 0 }, "the covered module must not cover the other");
 });
 
 test("detectCoverageFormat picks the dialect from content, not the filename", () => {
