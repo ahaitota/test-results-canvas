@@ -18,6 +18,10 @@ export interface ServerState {
   results: TestResult[];
   file: string;
   files: string[];
+  // Where the desktop shell should be pointed: the file a single run was read
+  // from, or the folder a merged run's files share. Null when nothing on disk
+  // backs the rows.
+  reveal: { kind: "file" | "dir"; path: string } | null;
   // Null unless several results files were merged into one run.
   group: { name: string; sources: GroupSource[] } | null;
   // Null until a coverage report is found for the loaded run.
@@ -42,7 +46,7 @@ const INITIAL_TITLE = (window as unknown as { __INITIAL_TITLE__?: string }).__IN
 // `onReconcile` is handed the keys that survived the new payload, so the caller
 // can drop expansion state belonging to rows that are gone.
 export function useResultsStream(onReconcile: (reused: Set<string>) => void) {
-  const [state, setState] = useState<AppState>({ title: INITIAL_TITLE, results: [], file: "", files: [], group: null, coverage: null, coverageHint: null, coverageError: null, diff: null, keys: [] });
+  const [state, setState] = useState<AppState>({ title: INITIAL_TITLE, results: [], file: "", files: [], reveal: null, group: null, coverage: null, coverageHint: null, coverageError: null, diff: null, keys: [] });
   const prevPayload = useRef<{ results: TestResult[]; keys: string[] }>({ results: [], keys: [] });
   const keySeq = useRef(new Map<string, number>());
   // Read through a ref so the subscription never needs re-creating.

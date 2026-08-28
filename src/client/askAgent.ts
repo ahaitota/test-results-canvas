@@ -1,5 +1,6 @@
 // Posts a row reference to the extension, which composes the message and sends
 // it into the agent session. The page never sends prompt text -- see src/ask.ts.
+// Same channel, and the same token, for the shell actions in revealReport().
 const ASK_TOKEN = (window as unknown as { __ASK_TOKEN__?: string }).__ASK_TOKEN__ || "";
 
 // `index` is the row's position in the payload the server broadcast, which
@@ -49,5 +50,26 @@ export async function askAgentImpact(): Promise<boolean> {
     return res.ok;
   } catch {
     return false;
+  }
+}
+
+// Hands the run to the desktop shell. The page names only the action; the server
+// acts on the files it already holds. Resolves to null on success, or to the
+// reason to show the user -- a launch that fails must not look like one that
+// worked.
+export type RevealMode = "reveal" | "open";
+
+export async function revealReport(mode: RevealMode): Promise<string | null> {
+  try {
+    const res = await fetch("/reveal", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${ASK_TOKEN}` },
+      body: JSON.stringify({ mode }),
+    });
+    if (res.ok) return null;
+    const body = await res.json().catch(() => null) as { error?: unknown } | null;
+    return typeof body?.error === "string" ? body.error : "could not open the report";
+  } catch {
+    return "could not reach the panel";
   }
 }

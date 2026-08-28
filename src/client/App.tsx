@@ -124,7 +124,7 @@ export function App() {
 
   return (
     <>
-      <FilePicker files={state.files} file={state.file} onPick={onPickFile} onFocus={onFocusFiles} />
+      <FilePicker files={state.files} file={state.file} reveal={state.reveal} onPick={onPickFile} onFocus={onFocusFiles} />
       <div class="head"><h1><span data-testid="title">{state.title || "Test Results"}</span></h1></div>
       {state.group && <GroupSummary name={state.group.name} sources={state.group.sources} total={all.length} />}
       <Banner total={all.length} failed={counts.failed} passRate={counts.passRate} />
