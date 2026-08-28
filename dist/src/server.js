@@ -2,7 +2,7 @@
 // updates over SSE, loads TRX/JUnit files, and watches the results directory.
 import { createServer } from "node:http";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { dirname, join, basename, resolve as resolvePath } from "node:path";
+import { dirname, join, basename, relative, isAbsolute, resolve as resolvePath } from "node:path";
 import { watch, readFileSync, writeFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { serializeTrx, parseTrx } from "./parsers/trx.js";
 import { parseJUnit } from "./parsers/junit.js";
@@ -516,11 +516,24 @@ export async function createResultsServer(options = {}) {
             attachCoverage(entries[0]?.source.path ?? null);
             return;
         }
-        // Called without a projectRoot on purpose: that arm walks the conventional
-        // folders and then the whole repo, so in a solution every project would
-        // "find" a report — usually another project's. Only a report living with
-        // the source counts as that source's own.
-        const owners = entries.map((e) => e.source.path).filter((p) => discoverCoverageFor(p));
+        // Locality is enforced here, not by how discoverCoverageFor is called:
+        // it deliberately searches wider than one project. Its nearby walk is
+        // what finds dotnet's TestResults/<guid>/coverage.cobertura.xml, which
+        // sits below the .trx's own folder and is wanted; its parent walk is
+        // not, because in a solution the parent holds the sibling projects, so
+        // every source would "find" a report and none would look like an owner.
+        // A report counts as this source's own only if it lives under it.
+        const owns = (resultsPath) => {
+            const found = discoverCoverageFor(resultsPath);
+            if (!found)
+                return false;
+            // relative() rather than a startsWith on the path: it honours the
+            // platform's case rules, and it will not count a sibling that merely
+            // shares a name prefix (ProjA.Tests against ProjA).
+            const rel = relative(dirname(resultsPath), found);
+            return !rel.startsWith("..") && !isAbsolute(rel);
+        };
+        const owners = entries.map((e) => e.source.path).filter(owns);
         if (owners.length === 1) {
             attachCoverage(owners[0]);
             return;
