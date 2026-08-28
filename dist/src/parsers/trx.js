@@ -5,6 +5,7 @@
 //   { name, status: "pass"|"fail"|"skip", durationMs?, message? }
 // and a valid TRX document, so the canvas can persist results to a real .trx
 // file and reload them — mocking the output of an actual test run.
+import { xmlUnescape } from "../xml.js";
 const TRX_NS = "http://microsoft.com/schemas/VisualStudio/TeamTest/2010";
 // Map our status -> TRX outcome and back.
 const STATUS_TO_OUTCOME = { pass: "Passed", fail: "Failed", skip: "NotExecuted" };
@@ -22,15 +23,6 @@ function xmlEscape(s) {
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;");
-}
-function xmlUnescape(s) {
-    return String(s ?? "")
-        .replace(/&lt;/g, "<")
-        .replace(/&gt;/g, ">")
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
-        .replace(/&apos;/g, "'")
-        .replace(/&amp;/g, "&");
 }
 // Deterministic pseudo-GUID from a seed so re-serializing the same data is
 // stable (avoids noisy diffs). Not cryptographic — just needs to look like a GUID.
@@ -217,3 +209,4 @@ export function parseTrx(xml) {
     }
     return results;
 }
+//# sourceMappingURL=trx.js.map

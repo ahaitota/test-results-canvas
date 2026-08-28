@@ -17,6 +17,10 @@ Once installed, you don't have to do anything special. In **any** project:
 Supported report formats: `.trx` (VSTest/`dotnet test --logger trx`) and JUnit
 `.xml` (Maven Surefire, Gradle, pytest, jest-junit, etc.).
 
+It also shows **code coverage** when the run produced a report (Cobertura, LCOV
+or JaCoCo), in a **Coverage** tab beside **Tests**.
+
+
 ## Install (once, per user — works in every project)
 ### Step 1:
 
@@ -55,8 +59,10 @@ extension.ts             the real entry point source (compiled to dist/extension
 src/
   view.ts                HTML shell + CSS served to the panel (no result rendering)
   server.ts              SDK-free HTTP/SSE server, file loading + watching
+  ask.ts                 server-side composition of the "ask agent" prompts
   validate.ts            narrows untrusted agent input at the action/open boundary
   labels.ts              file-picker label disambiguation
+  rowkey.ts              stable row identity across live payloads
   types.ts               shared TestResult / TestStatus types
   client/                Preact UI bundled to dist/client/app.js by esbuild
     main.tsx             client entry point
@@ -70,16 +76,60 @@ src/
   parsers/
     trx.ts               .NET TRX parser
     junit.ts             JUnit XML parser
+  coverage/
+    payload.ts           the SSE wire contract, shared with the client (host-free)
+    types.ts             CoverageReport / CoverageFile model + tallying
+    xml.ts               minimal shared XML scanner
+    cobertura.ts         Cobertura parser
+    lcov.ts              LCOV parser
+    jacoco.ts            JaCoCo parser
+    detect.ts            content sniffing — format is never inferred from a name
+    discover.ts          find the report paired with a results file (nearest first)
+    sources.ts           report paths -> real files; project-root detection
+    classify.ts          production vs test vs generated code
+    gitdiff.ts           changed lines per file (git exec is injectable)
+    patch.ts             changed lines x hit map = patch coverage
+    rank.ts              "worth covering" ranking
+    suggest.ts           the coverage command for the detected ecosystem
+    source.ts            allow-listed source reads behind /source
+    load.ts              loads + derives one report end to end
+  client/                Preact app, bundled by esbuild to dist/client/app.js
+    App.tsx              cross-cutting state; Tests / Coverage branch
+    ViewTabs.tsx         the Tests | Coverage switcher
+    CoverageView.tsx     the merged file list: one row per file
+    SourceView.tsx       gutter-annotated source for one file
+    CoverageEmpty.tsx    the no-coverage state and its ask-agent button
+    coverageDerive.ts    merges report + patch + hotspots into one row per file
+    (Summary, Toolbar, ResultsList, TestRow, derive, ...)  the results view
 test/
   trx.test.ts            unit tests for the TRX parser
   junit.test.ts          unit tests for the JUnit parser
   labels.test.ts         unit tests for the label generator
+  rowkey.test.ts         unit tests for row identity
+  ask.test.ts            unit tests for prompt composition
   validate.test.ts       unit tests for the input-validation boundary
+  coverage-parsers.test.ts   the three coverage parsers + format detection
+  coverage-patch.test.ts     diff parsing, patch intersection, ranking, /source
+  coverage-discover.test.ts  discovery, path resolution, project roots
+  coverage-merge.test.ts     merging the unit, browser and server LCOV reports
+  coverage-server.test.ts    coverage state following the loaded results file
 e2e/                     Playwright browser tests (load the compiled dist server)
+  coverage-collect.ts    picks the client bundle out of the browser's V8 coverage
+coverage-sample/         fixture sources the coverage reports point at. They are
+                         C# because the canvas's first audience is .NET: the
+                         fixtures mimic a coverlet/Cobertura run, and a fixture
+                         written in the language the canvas is written in could
+                         pass by resembling the repo rather than a user's
+                         project. Outside e2e/ on purpose: anything under a test
+                         folder is classified as test code and excluded from
+                         ranking.
 bench/                   rendering benchmark over generated runs of 100-50,000 tests
 scripts/
   typecheck-sdk.ts       checks the pinned SDK against the installed app's copy
   wrap-junit.ts          adds the <testsuite> wrapper node:test omits
+  e2e-coverage.ts        runs the e2e suite collecting browser + server coverage
+  coverage-report.ts     converts that V8 output to LCOV and merges all three
+  lcov.ts                the LCOV read/merge/write itself (pure, unit-tested)
 dist/                    compiled JS + .d.ts (committed; regenerate with `npm run build`)
 tsconfig.json            type-check config (noEmit)
 tsconfig.build.json      build config (emits dist/)
@@ -95,6 +145,9 @@ npm run typecheck    # type-check without emitting
 npm run typecheck:sdk # re-check against the installed app's SDK (see below)
 npm test             # run unit tests (via tsx)
 npm run test:e2e     # build + run Playwright e2e tests
+npm run test:coverage # unit tests + JUnit + LCOV in test-results/, to dogfood the coverage tab
+npm run coverage     # the above plus browser + server coverage from the e2e run,
+                     # merged into test-results/lcov-merged.info
 npm run bench        # build + measure rendering against the perf budgets
 ```
 
@@ -126,15 +179,15 @@ and Playwright resolve them to the `.ts` sources. After changing any source, run
 > Note that the build and test suites all import the code directly, so they pass
 > even when discovery is broken.
 
-> **Never render result-file text as raw HTML.** Test names, class names and
-> failure messages are attacker-controlled — a name containing a quote or angle
-> bracket is a live injection attempt. The UI is built from Preact components in
-> `src/client/`, which escape interpolated text and attribute values
-> automatically, so the safe path is simply to render the value and let Preact
-> handle it. The ways to break that are `dangerouslySetInnerHTML` and direct
-> `innerHTML` assignment; neither appears in the codebase today, and neither
-> should be added for result-file content. `e2e/xss.spec.ts` renders a hostile
-> fixture and asserts no `on*` attributes reach the DOM — keep it passing.
+> **Everything that comes out of a report is untrusted text.** Test names, class
+> names, failure messages, coverage file paths and source file contents are all
+> attacker-controlled. The client renders them as Preact text nodes and
+> attributes, which escape on the way in, so the rule is simply: never reach for
+> `dangerouslySetInnerHTML` (or `v-html`, or `{@html}`) to display any of it —
+> that reintroduces exactly this bug. Neither that nor direct `innerHTML`
+> assignment appears in the codebase today. `e2e/xss.spec.ts` and
+> `e2e/coverage-xss.spec.ts` render hostile fixtures and assert that no `on*`
+> attribute and no injected element reaches the DOM. Keep them passing.
 
 ### `@github/copilot-sdk`
 

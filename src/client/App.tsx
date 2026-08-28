@@ -14,6 +14,10 @@ import { useJumpToFailure } from "./useJumpToFailure";
 import { FilePicker, Banner, Summary } from "./Summary";
 import { Toolbar } from "./Toolbar";
 import { ResultsList } from "./ResultsList";
+import { ViewTabs } from "./ViewTabs";
+import type { ViewTab } from "./ViewTabs";
+import { CoverageView } from "./CoverageView";
+import { headlinePercent } from "./coverageDerive";
 
 // Add or remove one member, leaving the previous set untouched.
 function toggleIn<T>(setter: (fn: (prev: Set<T>) => Set<T>) => void, key: T): void {
@@ -33,6 +37,7 @@ export function App() {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [expandedSecondary, setExpandedSecondary] = useState<Set<string>>(new Set());
+  const [tab, setTab] = useState<ViewTab>("tests");
 
   // A new payload can retire rows; drop their expansion rather than let it
   // transfer to whichever row happens to take their place.
@@ -102,6 +107,7 @@ export function App() {
   };
 
   const showingText = all.length > 0 && view.length !== all.length ? `Showing ${view.length} of ${all.length}` : "";
+  const coveragePercent = headlinePercent(state.coverage);
 
   return (
     <>
@@ -114,33 +120,42 @@ export function App() {
         counts={counts}
         filterStatuses={filterStatuses}
         onToggleStatus={(s) => toggleIn(setFilterStatuses, s)}
+        coveragePercent={coveragePercent}
+        onCoverage={() => setTab("coverage")}
       />
-      <Toolbar
-        visible={all.length > 0}
-        searchText={searchText}
-        onSearch={setSearchText}
-        jumpDisabled={jumper.failingCount === 0}
-        onJump={() => jumper.jump(1)}
-        groupBy={groupBy}
-        onGroupBy={setGroupBy}
-        sortBy={sortBy}
-        onSortBy={setSortBy}
-        showingText={showingText}
-      />
-      <ResultsList
-        total={all.length}
-        viewCount={view.length}
-        items={items}
-        groupBy={groupBy}
-        collapsedGroups={collapsedGroups}
-        expandedRows={expandedRows}
-        expandedSecondary={expandedSecondary}
-        onToggleGroup={(k) => toggleIn(setCollapsedGroups, k)}
-        onToggleRow={(k) => toggleIn(setExpandedRows, k)}
-        onToggleSecondary={(k) => toggleIn(setExpandedSecondary, k)}
-        setRowRef={jumper.setRowRef}
-        virtual={virtual}
-      />
+      <ViewTabs tab={tab} onTab={setTab} coveragePercent={coveragePercent} hasCoverage={Boolean(state.coverage)} />
+      {tab === "coverage"
+        ? <CoverageView coverage={state.coverage} hint={state.coverageHint} error={state.coverageError} run={state.file} />
+        : (
+          <>
+            <Toolbar
+              visible={all.length > 0}
+              searchText={searchText}
+              onSearch={setSearchText}
+              jumpDisabled={jumper.failingCount === 0}
+              onJump={() => jumper.jump(1)}
+              groupBy={groupBy}
+              onGroupBy={setGroupBy}
+              sortBy={sortBy}
+              onSortBy={setSortBy}
+              showingText={showingText}
+            />
+            <ResultsList
+              total={all.length}
+              viewCount={view.length}
+              items={items}
+              groupBy={groupBy}
+              collapsedGroups={collapsedGroups}
+              expandedRows={expandedRows}
+              expandedSecondary={expandedSecondary}
+              onToggleGroup={(k) => toggleIn(setCollapsedGroups, k)}
+              onToggleRow={(k) => toggleIn(setExpandedRows, k)}
+              onToggleSecondary={(k) => toggleIn(setExpandedSecondary, k)}
+              setRowRef={jumper.setRowRef}
+              virtual={virtual}
+            />
+          </>
+        )}
     </>
   );
 }

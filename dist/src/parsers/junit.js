@@ -16,57 +16,7 @@
 //       <testcase ...><skipped message="..." /></testcase>            -> skip
 //     </testsuite>
 //   </testsuites>
-function xmlUnescape(s) {
-    return String(s ?? "")
-        .replace(/&lt;/g, "<")
-        .replace(/&gt;/g, ">")
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
-        .replace(/&apos;/g, "'")
-        .replace(/&amp;/g, "&");
-}
-// Read an XML attribute value out of a raw tag's attribute string. Both quote
-// styles are legal, so a quoted value may itself contain an attribute-like
-// substring (name="parses time='5s' syntax"). Searching for the wanted name
-// directly would find that substring, so walk complete name=value pairs left to
-// right instead: consuming each whole quoted value puts the text inside it out
-// of reach.
-//
-// Hand-rolled rather than a regex: every character is visited at most once and
-// never revisited, so a malformed tag carrying a long token with no "=" costs
-// linear time. A regex pairing a greedy name against a following "=" backtracks
-// over that token from every start position, which is quadratic.
-function attr(tag, name) {
-    const text = String(tag || "");
-    const isSpace = (c) => c === " " || c === "\t" || c === "\n" || c === "\r";
-    let i = 0;
-    while (i < text.length) {
-        while (i < text.length && isSpace(text[i]))
-            i++;
-        const keyStart = i;
-        while (i < text.length && !isSpace(text[i]) && text[i] !== "=")
-            i++;
-        const key = text.slice(keyStart, i);
-        while (i < text.length && isSpace(text[i]))
-            i++;
-        if (text[i] !== "=")
-            continue; // a bare token, not an attribute
-        i++;
-        while (i < text.length && isSpace(text[i]))
-            i++;
-        const quote = text[i];
-        if (quote !== '"' && quote !== "'")
-            continue; // unquoted value: not well-formed
-        const valueStart = ++i;
-        while (i < text.length && text[i] !== quote)
-            i++;
-        const value = text.slice(valueStart, i);
-        i++; // step past the closing quote
-        if (key === name)
-            return xmlUnescape(value);
-    }
-    return undefined;
-}
+import { attr, xmlUnescape } from "../xml.js";
 // JUnit "time" is seconds (float) -> milliseconds.
 function timeToMs(t) {
     const n = parseFloat(t ?? "");
@@ -291,3 +241,4 @@ function emitCase(attrs, inner, ctx, results) {
         computerName: ctx.suiteHost,
     });
 }
+//# sourceMappingURL=junit.js.map

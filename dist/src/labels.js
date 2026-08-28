@@ -18,3 +18,4 @@ export function labelForPath(abs, discovered, localNames = []) {
         i++;
     return `${withParent} (${i})`;
 }
+//# sourceMappingURL=labels.js.map

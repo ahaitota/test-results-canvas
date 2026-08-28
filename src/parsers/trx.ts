@@ -7,6 +7,7 @@
 // file and reload them — mocking the output of an actual test run.
 
 import type { TestResult, TestStatus } from "../types.js";
+import { xmlUnescape } from "../xml.js";
 
 interface TrxDef {
     className?: string;
@@ -33,16 +34,6 @@ function xmlEscape(s: unknown): string {
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;");
-}
-
-function xmlUnescape(s: unknown): string {
-    return String(s ?? "")
-        .replace(/&lt;/g, "<")
-        .replace(/&gt;/g, ">")
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
-        .replace(/&apos;/g, "'")
-        .replace(/&amp;/g, "&");
 }
 
 // Deterministic pseudo-GUID from a seed so re-serializing the same data is
