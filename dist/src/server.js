@@ -2,11 +2,12 @@
 // updates over SSE, loads TRX/JUnit files, and watches the results directory.
 import { createServer } from "node:http";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { dirname, join, basename, resolve as resolvePath } from "node:path";
+import { dirname, join, basename, relative, isAbsolute, resolve as resolvePath } from "node:path";
 import { watch, readFileSync, writeFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { serializeTrx, parseTrx } from "./parsers/trx.js";
 import { parseJUnit } from "./parsers/junit.js";
 import { labelForPath } from "./labels.js";
+import { mergeSources } from "./sources.js";
 import { readHead } from "./head.js";
 import { composeAskPrompt, composeCoveragePrompt, composePatchCoveragePrompt, composeEnableCoveragePrompt, composeImpactPrompt } from "./ask.js";
 import { computeRelevance, identitiesOf, matchAgentTests } from "./diff/relevance.js";
@@ -130,6 +131,20 @@ function loadFile(name, discovered) {
         return [];
     }
 }
+// Parse an absolute path, or null when it is missing, unreadable, or not a
+// results file at all. Distinct from loadFile()'s empty array: a source set has
+// to tell "this file reported no tests" from "this path is not a report".
+function parseResultsFile(abs) {
+    try {
+        const xml = readFileSync(abs, "utf8");
+        if (!looksLikeResults(xml))
+            return null;
+        return /<testsuites?[\s>]/i.test(xml) ? parseJUnit(xml) : parseTrx(xml);
+    }
+    catch {
+        return null;
+    }
+}
 // Persist results as TRX, but only for writable local .trx files (never a
 // discovered project file — that's the agent's own output).
 function persist(results, name, discovered) {
@@ -175,9 +190,21 @@ export async function createResultsServer(options = {}) {
     const clients = new Set();
     let file = DEFAULT_FILE;
     let results = [];
-    let watcher = null;
+    // The active source set. One entry is the classic single-file case; several
+    // is a merged run. Empty means nothing was seeded, and `results` is then
+    // owned directly by the report/clear actions.
+    let entries = [];
+    // The display name of a merged run, or null when a single file is loaded.
+    let groupName = null;
+    // The group that was opened, remembered independently of what is displayed:
+    // picking one member out of the picker switches the view, and must not
+    // destroy the only way back to the merge.
+    let groupDef = null;
+    // One watcher per directory the sources live in.
+    const watchers = new Map();
     // Held at this level so closing the server can cancel a reload that was
-    // already queued.
+    // already queued. Keyed by absolute path, so two sources in one folder
+    // debounce independently.
     const resultsTimers = new Map();
     // `coverageWatcher` follows the report's folder so a re-run refreshes the
     // panel the same way results already do.
@@ -216,6 +243,9 @@ export async function createResultsServer(options = {}) {
     // The run on screen. A panel opened on a folder keeps the same run as it
     // re-runs, under whatever name each writes.
     let resultsAbsPath = null;
+    // Set when the caller named a coverage report outright, so a results refresh
+    // never re-discovers over the top of an explicit choice.
+    let explicitCoverage = false;
     let resultsTarget = null;
     // --- Diff mode (issue #8) ---
     //
@@ -289,7 +319,13 @@ export async function createResultsServer(options = {}) {
             title,
             results,
             file,
-            files: listResultFiles(discovered),
+            files: selectableFiles(),
+            // Null for the classic single-file case, so a one-file panel renders
+            // exactly as it did. Only what the header shows: a path would be
+            // payload the UI never reads.
+            group: groupName
+                ? { name: groupName, sources: entries.map((e) => ({ label: e.source.label, count: e.source.count })) }
+                : null,
             coverage: coverage ? { ...coverage.payload, revision: coverageRevision } : null,
             coverageHint,
             diff,
@@ -304,17 +340,19 @@ export async function createResultsServer(options = {}) {
         for (const res of clients)
             res.write(`event: reload\ndata: 1\n\n`);
     }
-    function stopWatcher() {
+    function stopWatchers() {
+        // Timers first: a reload already queued must not fire against a folder
+        // this server has stopped watching.
         for (const t of resultsTimers.values())
             clearTimeout(t);
         resultsTimers.clear();
-        if (!watcher)
-            return;
-        try {
-            watcher.close();
+        for (const w of watchers.values()) {
+            try {
+                w.close();
+            }
+            catch { /* already closed */ }
         }
-        catch { /* already closed */ }
-        watcher = null;
+        watchers.clear();
     }
     function stopCoverageWatcher() {
         // Retire the current generation first: a debounced callback that has
@@ -529,71 +567,306 @@ export async function createResultsServer(options = {}) {
         if (found)
             tryCoverage(found);
     }
-    function refreshFromDir(dir) {
-        const abs = newestResultsFileIn(dir);
-        if (!abs)
+    // Coverage for a merged run is deliberately NOT merged: N test projects
+    // write N reports, and stitching them is its own problem. So a report is
+    // attached only when exactly one source has one — showing project A's
+    // coverage beside A+B+C results would read as coverage for all of it.
+    function attachCoverageForSources() {
+        if (!coverageEnabled)
             return;
+        if (entries.length <= 1) {
+            attachCoverage(entries[0]?.source.path ?? null);
+            return;
+        }
+        // Locality is enforced here, not by how discoverCoverageFor is called:
+        // it deliberately searches wider than one project. Its nearby walk is
+        // what finds dotnet's TestResults/<guid>/coverage.cobertura.xml, which
+        // sits below the .trx's own folder and is wanted; its parent walk is
+        // not, because in a solution the parent holds the sibling projects, so
+        // every source would "find" a report and none would look like an owner.
+        // A report counts as this source's own only if it lives under it.
+        const owns = (resultsPath) => {
+            const found = discoverCoverageFor(resultsPath);
+            if (!found)
+                return false;
+            // relative() rather than a startsWith on the path: it honours the
+            // platform's case rules, and it will not count a sibling that merely
+            // shares a name prefix (ProjA.Tests against ProjA).
+            const rel = relative(dirname(resultsPath), found);
+            return !rel.startsWith("..") && !isAbsolute(rel);
+        };
+        const owners = entries.map((e) => e.source.path).filter(owns);
+        if (owners.length === 1) {
+            attachCoverage(owners[0]);
+            return;
+        }
+        // No single report speaks for the merged run: show none, and let the
+        // existing hint say how to produce one. Cleared through clearCoverage so
+        // the previous run's error and its outstanding request go too — a
+        // request left standing keeps the poll alive, which would re-attach the
+        // very report this branch declined to show.
+        clearCoverage();
+        resultsAbsPath = entries[0].source.path;
+        // Inference must not overwrite a root the caller named.
+        if (!explicitProjectRoot)
+            projectRoot = findProjectRoot(dirname(resultsAbsPath));
+        refreshCoverageHint();
+    }
+    // --- The source set ---
+    // The merged run appears in the picker under its own name, alongside the
+    // individual files. Listed from the group that was opened rather than the
+    // one on screen, so drilling into a member leaves a way back.
+    function selectableFiles() {
+        const list = listResultFiles(discovered);
+        const name = groupDef?.name;
+        return name && !list.includes(name) ? [name, ...list] : list;
+    }
+    function buildEntry(abs) {
+        const rows = parseResultsFile(abs);
+        if (rows === null)
+            return null;
         const label = labelForPath(abs, discovered, listLocalNames());
         discovered.set(label, abs);
-        file = label;
-        applyResults(loadFile(label, discovered), abs);
-        // Re-derive so a moved report (dotnet's per-run guid folder) is picked
-        // up rather than going stale.
-        attachCoverage(abs);
+        return { source: { label, path: abs, count: rows.length }, rows };
+    }
+    // Resolve named files into sources, reporting what fell out so the caller
+    // can hand back a receipt rather than a silent partial merge.
+    function collectSources(files) {
+        const built = [];
+        const skipped = [];
+        const seen = new Set();
+        for (const raw of files) {
+            const abs = resolvePath(raw);
+            if (seen.has(abs)) {
+                skipped.push({ path: raw, reason: "duplicate of another source" });
+                continue;
+            }
+            seen.add(abs);
+            if (!existsSync(abs)) {
+                skipped.push({ path: raw, reason: "no such file" });
+                continue;
+            }
+            const entry = buildEntry(abs);
+            if (!entry) {
+                skipped.push({ path: raw, reason: "not a readable test-results file" });
+                continue;
+            }
+            built.push(entry);
+        }
+        return { entries: built, skipped };
+    }
+    // Swap in a new set and rebuild everything that hangs off it.
+    function applySources(list, name) {
+        entries = list;
+        groupName = name;
+        // Recorded from what actually resolved, so a path that could not be read
+        // is not retried on every restore.
+        if (name)
+            groupDef = { name, paths: list.map((e) => e.source.path) };
+        rebuild();
+        if (watchEnabled)
+            syncWatchers();
+    }
+    function rebuild() {
+        // One file is not a merged run: tagging its rows would put a "File" the
+        // picker already names into every row's detail. Sliced rather than used
+        // directly, so add_result can't grow the source's cached parse.
+        const rows = entries.length === 1
+            ? entries[0].rows.slice()
+            : mergeSources(entries.map((e) => ({ source: e.source, results: e.rows })));
+        // Through applyResults so diff mode sees the new rows. It wants one path
+        // to find a git root from, and any source will do: changedLines resolves
+        // the repository top level itself, so every member of a group in one
+        // checkout yields the same diff. Passing the first keeps it stable across
+        // re-runs, which is what lets the baseline mark genuinely new tests.
+        applyResults(rows, entries[0]?.source.path ?? null);
+        if (entries.length)
+            file = groupName ?? entries[0].source.label;
+    }
+    // Re-read one source in place. False when nothing usable came back, so a
+    // half-written file keeps showing the rows it already had.
+    function reparse(entry, abs) {
+        const rows = parseResultsFile(abs);
+        if (rows === null)
+            return false;
+        const label = abs === entry.source.path ? entry.source.label : labelForPath(abs, discovered, listLocalNames());
+        if (abs !== entry.source.path)
+            discovered.set(label, abs);
+        entry.rows = rows;
+        entry.source = { label, path: abs, count: rows.length };
+        return true;
+    }
+    // Only the sources living in `dir` are touched: a five-project group must
+    // not re-read four untouched files because the fifth was rewritten.
+    function refreshDir(dir, changedName) {
+        const here = entries.filter((e) => dirname(e.source.path) === dir);
+        let changed = false, moved = false;
+        if (here.length === 1) {
+            // Alone in its folder, a source follows that folder's newest report:
+            // `dotnet test` writes a fresh <machine>_<user>_<timestamp>.trx per
+            // run instead of overwriting, and re-deriving is how a single named
+            // file has always stayed live.
+            //
+            // Sources that SHARE a folder must not do this. They would all
+            // re-resolve onto the same newest file and quietly collapse into one,
+            // losing the rest of the merge — so they re-parse their own path.
+            const abs = newestResultsFileIn(dir) ?? here[0].source.path;
+            moved = abs !== here[0].source.path;
+            changed = reparse(here[0], abs);
+        }
+        else {
+            for (const entry of here) {
+                if (basename(entry.source.path) === changedName && reparse(entry, entry.source.path))
+                    changed = true;
+            }
+        }
+        if (!changed)
+            return;
+        rebuild();
+        // A moved report means the coverage beside it moved too. An explicitly
+        // named report is left alone — the caller chose it.
+        if (moved && !explicitCoverage)
+            attachCoverageForSources();
         broadcast();
     }
-    function watchDir(dir) {
-        stopWatcher();
+    function startWatch(dir) {
         try {
-            watcher = watch(dir, { persistent: false }, (_event, filename) => {
+            const w = watch(dir, { persistent: false }, (_event, filename) => {
                 if (!filename)
                     return;
                 const name = String(filename);
                 if (!RESULT_EXTS.some((e) => name.toLowerCase().endsWith(e)))
                     return;
+                // Keyed by absolute path rather than bare name: two watched
+                // folders can each hold a `results.trx`, and they must not
+                // cancel one another's pending reload.
                 const abs = resolvePath(dir, name);
                 clearTimeout(resultsTimers.get(abs));
                 resultsTimers.set(abs, setTimeout(() => {
                     resultsTimers.delete(abs);
-                    refreshFromDir(dir);
+                    refreshDir(dir, name);
                 }, 400));
             });
-            watcher.on("error", (err) => console.error("[server] watcher error:", err?.message || err));
+            w.on("error", (err) => console.error("[server] watcher error:", err?.message || err));
+            watchers.set(dir, w);
         }
         catch (err) {
             console.error(`[server] watch failed for ${dir}:`, err instanceof Error ? err.message : err);
         }
     }
-    // Seed from an explicit file or the newest file in a directory.
-    function seed(input) {
-        let abs = null;
-        if (input.resultsFile) {
-            const p = resolvePath(String(input.resultsFile));
+    // One watcher per directory the sources live in, recomputed from the active
+    // set: several sources in one folder share a watcher, and a folder nothing
+    // points at any more is dropped.
+    function syncWatchers() {
+        const wanted = new Set(entries.map((e) => dirname(e.source.path)));
+        for (const [dir, w] of watchers) {
+            if (wanted.has(dir))
+                continue;
             try {
-                if (existsSync(p) && statSync(p).isFile() && looksLikeResults(readHead(p)))
-                    abs = p;
+                w.close();
             }
-            catch { /* unreadable */ }
+            catch { /* already closed */ }
+            watchers.delete(dir);
         }
-        if (!abs && input.resultsDir) {
-            const d = resolvePath(String(input.resultsDir));
-            if (existsSync(d))
-                abs = newestResultsFileIn(d);
+        for (const dir of wanted)
+            if (!watchers.has(dir))
+                startWatch(dir);
+    }
+    // Seed from a set of files, or from the original single file/dir.
+    function seed(input) {
+        let loaded = false;
+        const files = input.resultsFiles ?? [];
+        if (files.length) {
+            const built = collectSources(files);
+            if (built.entries.length) {
+                applySources(built.entries, groupNameFor(input.name, built.entries.length));
+                loaded = true;
+            }
+        }
+        if (!loaded && (input.resultsFile || input.resultsDir)) {
+            let abs = null;
+            if (input.resultsFile) {
+                const p = resolvePath(String(input.resultsFile));
+                // isFile, so a folder handed to resultsFile falls through to the
+                // resultsDir branch rather than swallowing it; and the head is
+                // sniffed so something that is not a report falls through too
+                // rather than blanking the panel.
+                try {
+                    if (existsSync(p) && statSync(p).isFile() && looksLikeResults(readHead(p)))
+                        abs = p;
+                }
+                catch { /* unreadable */ }
+            }
+            if (!abs && input.resultsDir) {
+                const d = resolvePath(String(input.resultsDir));
+                if (existsSync(d))
+                    abs = newestResultsFileIn(d);
+            }
+            const entry = abs ? buildEntry(abs) : null;
+            if (entry) {
+                applySources([entry], null);
+                // A fresh seed re-points the whole panel, so a group left over
+                // from a previous open must not stay in the picker.
+                groupDef = null;
+                loaded = true;
+            }
         }
         // Honoured even when no results file resolved: the agent may be pointing
         // the panel at coverage for a run whose report it could not find.
-        const explicitCoverage = seedCoverage(input, abs);
-        if (!abs)
+        explicitCoverage = seedCoverage(input, entries[0]?.source.path ?? null);
+        if (!loaded)
             return null;
-        const label = labelForPath(abs, discovered, listLocalNames());
-        discovered.set(label, abs);
-        file = label;
-        applyResults(loadFile(label, discovered), abs);
-        if (watchEnabled)
-            watchDir(dirname(abs));
         if (!explicitCoverage)
-            attachCoverage(abs);
-        return abs;
+            attachCoverageForSources();
+        return entries[0].source.path;
+    }
+    // One source is never a group, however it was opened and whatever the caller
+    // called it: there is nothing to group by, so a name would only buy the UI a
+    // File grouping that buckets every row under "(no file)".
+    function groupNameFor(name, count) {
+        return count > 1 ? (name || "Merged results") : null;
+    }
+    // Load one file on its own, leaving any merged run behind — picking a file
+    // outside it is a deliberate departure. `label` is the picker name chosen,
+    // which is what the <select> expects to see back. `groupDef` survives, so
+    // the merge stays listed and can be picked again.
+    function loadSingle(abs, label) {
+        const entry = buildEntry(abs);
+        // Registered but unparseable: keep the old behaviour of showing an empty
+        // run rather than refusing the selection outright.
+        applySources(entry ? [entry] : [], null);
+        file = label;
+        attachCoverage(abs);
+    }
+    // Re-open the group after drilling into one of its files. Re-collected from
+    // disk rather than cached, so a member rewritten meanwhile comes back
+    // current. False when nothing resolves any more, leaving the view alone.
+    function restoreGroup(def) {
+        const built = collectSources(def.paths);
+        // A member deleted since the group was opened drops out; the rest still
+        // merge, and the per-source counts in the header show what came back.
+        if (!built.entries.length)
+            return false;
+        // Decayed to one readable file, it is no longer a merge — but `groupDef`
+        // stays, because the group still exists and the member may return.
+        applySources(built.entries, groupNameFor(def.name, built.entries.length));
+        if (!explicitCoverage)
+            attachCoverageForSources();
+        return true;
+    }
+    // A merged run is spread over files this server does not own, so a report or
+    // clear action would be thrown away by the next refresh. Refuse, with
+    // something the agent can act on.
+    function denyWrite() {
+        if (!groupName)
+            return null;
+        const n = entries.length;
+        return {
+            ok: false,
+            error: `"${groupName}" is ${n} results file${n === 1 ? "" : "s"} merged into one run. ` +
+                `Reporting or clearing results would discard the merge, and these files belong to the test run, not to this panel. ` +
+                `Load a single file first, or re-run the tests and reopen the canvas with the new files.`,
+        };
     }
     // True when an explicit coverageFile/coverageDir produced a report. The
     // pointer is remembered either way, paired with the run it was given for,
@@ -652,7 +925,16 @@ export async function createResultsServer(options = {}) {
         }
         return false;
     }
-    if (!seed({ resultsFile, resultsDir, coverageFile: options.coverageFile, coverageDir: options.coverageDir })) {
+    if (!seed({
+        name: options.name,
+        resultsFile,
+        resultsDir,
+        resultsFiles: options.resultsFiles,
+        coverageFile: options.coverageFile,
+        coverageDir: options.coverageDir,
+    })) {
+        // Nothing seeded: fall back to a results.trx sitting in the extension
+        // folder, which is also what the report/clear actions write to.
         applyResults(loadFile(file, discovered), null);
         // No results file resolved, but an explicit coverage report may still
         // have been given, and the hint needs a project root either way.
@@ -866,22 +1148,33 @@ export async function createResultsServer(options = {}) {
         }
         if (url.startsWith("/files")) {
             res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ files: listResultFiles(discovered), current: file }));
+            res.end(JSON.stringify({ files: selectableFiles(), current: file }));
             return;
         }
         if (url.startsWith("/load")) {
             const u = new URL(url, "http://localhost");
             const name = u.searchParams.get("file") || "";
+            // The merged run is listed in the picker under its own name.
+            // Re-selecting it while displayed is a no-op; selecting it after
+            // drilling into a member rebuilds the merge.
+            if (groupDef && name === groupDef.name) {
+                // Read before restoring: restoreGroup sets groupName, so asking
+                // afterwards would never see that this was a real switch.
+                const active = groupName === name;
+                const ok = active || restoreGroup(groupDef);
+                if (ok && !active)
+                    broadcast();
+                res.writeHead(ok ? 200 : 400, { "Content-Type": "application/json" });
+                res.end(JSON.stringify(ok ? { ok: true, file: name } : { ok: false, error: "no source of that group could be read" }));
+                return;
+            }
             const abs = resolveResultPath(name, discovered);
             if (!abs) {
                 res.writeHead(400, { "Content-Type": "application/json" });
                 res.end(JSON.stringify({ ok: false, error: "unknown file" }));
                 return;
             }
-            file = name;
-            applyResults(loadFile(name, discovered), abs);
-            // Picking a different run means a different coverage report.
-            attachCoverage(abs);
+            loadSingle(abs, name);
             broadcast();
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ ok: true, file: name }));
@@ -947,33 +1240,73 @@ export async function createResultsServer(options = {}) {
         currentFile: () => file,
         getResults: () => results,
         setResults(list) {
+            const denied = denyWrite();
+            if (denied)
+                return denied;
             applyResults((list || []).map((t) => ({ name: t.name, status: normalizeStatus(t.status), durationMs: t.durationMs, message: t.message })), null);
             persist(results, file, discovered);
             broadcast();
-            return results.length;
+            return { ok: true, total: results.length };
         },
         addResult(t) {
+            const denied = denyWrite();
+            if (denied)
+                return denied;
             results.push({ name: t.name, status: normalizeStatus(t.status), durationMs: t.durationMs, message: t.message });
             // Extending the run, not replacing it: baseline and agent tags hold.
             retag();
             persist(results, file, discovered);
             broadcast();
-            return results.length;
+            return { ok: true, total: results.length };
         },
         clearResults() {
+            const denied = denyWrite();
+            if (denied)
+                return denied;
             applyResults([], null);
             persist(results, file, discovered);
             broadcast();
+            return { ok: true, total: 0 };
         },
         loadNamed(name) {
+            if (groupDef && name === groupDef.name) {
+                if (groupName === name)
+                    return true;
+                if (!restoreGroup(groupDef))
+                    return false;
+                broadcast();
+                return true;
+            }
             const abs = resolveResultPath(name, discovered);
             if (!abs)
                 return false;
-            file = name;
-            applyResults(loadFile(name, discovered), abs);
-            attachCoverage(abs);
+            loadSingle(abs, name);
             broadcast();
             return true;
+        },
+        // Merge a named set of results files into one run — the openFiles(name,
+        // files) shape. Returns per-source counts so the caller can verify the
+        // merge instead of trusting it.
+        openFiles(input) {
+            const built = collectSources(input.files ?? []);
+            if (!built.entries.length) {
+                return { ok: false, error: "none of those paths could be read as a test-results file", skipped: built.skipped };
+            }
+            const name = groupNameFor(input.name, built.entries.length);
+            applySources(built.entries, name);
+            // Resolved to a single file, so this is an ordinary run, not a merge:
+            // any group left from an earlier open must not stay in the picker.
+            if (!name)
+                groupDef = null;
+            if (!explicitCoverage)
+                attachCoverageForSources();
+            broadcast();
+            return {
+                ok: true,
+                total: results.length,
+                sources: entries.map((e) => ({ label: e.source.label, count: e.source.count })),
+                skipped: built.skipped,
+            };
         },
         // Re-seed from fresh open input (e.g. a re-open pointing at a new file).
         loadInput(input = {}) {
@@ -1023,7 +1356,7 @@ export async function createResultsServer(options = {}) {
         broadcast,
         reload,
         async close() {
-            stopWatcher();
+            stopWatchers();
             stopCoverageWatcher();
             stopCoveragePoll();
             for (const res of clients) {

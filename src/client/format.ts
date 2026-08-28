@@ -13,6 +13,7 @@ export const GROUP_OPTIONS = [
   { value: "class", label: "Class" },
   { value: "suite", label: "Suite" },
   { value: "framework", label: "Framework" },
+  { value: "file", label: "File" },
 ] as const;
 export type GroupBy = (typeof GROUP_OPTIONS)[number]["value"];
 
@@ -58,7 +59,7 @@ export function fmtTime(iso?: string): string {
 const HAYSTACK_SEP = "\u001f";
 
 export function searchHaystack(t: TestResult): string {
-  return [t.name, t.className, t.method, t.framework, t.suite, t.computerName, t.message]
+  return [t.name, t.className, t.method, t.framework, t.suite, t.computerName, t.source, t.message]
     .filter((v) => v != null && v !== "")
     .join(HAYSTACK_SEP)
     .toLowerCase();
@@ -84,6 +85,7 @@ export function groupKeyOf(t: TestResult, groupBy: GroupBy): string {
     case "class": return t.className || "(no class)";
     case "suite": return t.suite || t.className || "(no suite)";
     case "framework": return t.framework || "(no framework)";
+    case "file": return t.source || "(no file)";
     case "none": return "";
   }
 }

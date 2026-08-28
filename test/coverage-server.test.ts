@@ -970,3 +970,109 @@ test("a new project root re-resolves the report on screen and tells clients", as
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// --- Which source owns a report, in a merged run ---------------------------
+//
+// A merged run attaches coverage only when exactly one of its sources has a
+// report of its own, so "of its own" has to be exact. Discovery searches wider
+// than one project on purpose, which makes these four layouts behave
+// differently from each other; they are the ones dotnet actually writes.
+
+type Layout = "flat" | "dotnet" | "both" | "shared";
+
+// One solution, two test projects. Where the .trx and the report sit relative
+// to each other is the whole point, so each layout places them differently.
+// The solution sits a level below the temp dir because discovery walks the
+// parent: a report two levels under the system temp dir is reachable from any
+// other test's fixture there, and would decide that test's result too.
+function makeSolution(layout: Layout): { root: string; results: string[]; reportA: string } {
+  const root = realpathSync.native(mkdtempSync(join(realpathSync.native(tmpdir()), "cov-owners-")));
+  const sol = join(root, "sol");
+  mkdirSync(join(sol, "src"), { recursive: true });
+  writeFileSync(join(sol, "src", "calc.ts"), "export const a = 1;\nexport const b = 2;\n");
+  const report = COBERTURA.replace("SRC", sol);
+
+  const results: string[] = [];
+  let reportA = "";
+  for (const proj of ["ProjA", "ProjB"]) {
+    const dir = join(sol, proj);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, proj + ".csproj"), "<Project />");
+
+    // Only "dotnet" uses the TestResults folder `dotnet test` writes by
+    // default; the others leave the .trx in the project folder.
+    const runDir = layout === "dotnet" ? join(dir, "TestResults") : dir;
+    mkdirSync(runDir, { recursive: true });
+    const trx = join(runDir, proj + ".trx");
+    writeFileSync(trx, TRX);
+    results.push(trx);
+
+    if (layout === "shared" || (proj === "ProjB" && layout !== "both")) continue;
+    // The collector writes below the run folder, in a per-run guid directory —
+    // one level further down than the .trx itself, not beside it.
+    const covDir = layout === "dotnet" ? join(runDir, "3f2504e0-4f89-11d3-9a0c-0305e82c3301") : dir;
+    mkdirSync(covDir, { recursive: true });
+    const file = join(covDir, "coverage.cobertura.xml");
+    writeFileSync(file, report);
+    if (proj === "ProjA") reportA = file;
+  }
+
+  if (layout === "shared") {
+    // A solution-wide report belongs to no single project.
+    mkdirSync(join(sol, "coverage"));
+    writeFileSync(join(sol, "coverage", "coverage.cobertura.xml"), report);
+  }
+  return { root, results, reportA };
+}
+
+test("a merged run attaches the report of its one source that has one", async () => {
+  // Flat: ProjB's .trx sits one level under the solution root, so discovery
+  // walks up and reaches ProjA's report. That does not make it ProjB's.
+  const { root, results, reportA } = makeSolution("flat");
+  const handle = await createResultsServer({ port: 0, watch: false, gitExec: null, resultsFiles: results });
+  try {
+    assert.equal(handle.coveragePath(), reportA, "only ProjA owns a report, so ProjA's must show");
+    assert.ok(handle.getCoverage(), "the attached report must load");
+  } finally {
+    await handle.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a merged run owns a report dotnet wrote below the .trx's own folder", async () => {
+  // The canonical layout: TestResults/<guid>/coverage.cobertura.xml beside
+  // TestResults/*.trx. Ownership must reach downwards, or this finds nothing.
+  const { root, results, reportA } = makeSolution("dotnet");
+  const handle = await createResultsServer({ port: 0, watch: false, gitExec: null, resultsFiles: results });
+  try {
+    assert.equal(handle.coveragePath(), reportA, "the per-run folder is inside ProjA's run folder");
+    assert.ok(handle.getCoverage(), "the attached report must load");
+  } finally {
+    await handle.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a merged run shows no coverage when both sources have their own report", async () => {
+  const { root, results } = makeSolution("both");
+  const handle = await createResultsServer({ port: 0, watch: false, gitExec: null, resultsFiles: results });
+  try {
+    assert.equal(handle.getCoverage(), null, "two reports cannot both speak for the merged run");
+    assert.equal(handle.coveragePath(), null);
+  } finally {
+    await handle.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a merged run shows no coverage for a report shared by the whole solution", async () => {
+  const { root, results } = makeSolution("shared");
+  const handle = await createResultsServer({ port: 0, watch: false, gitExec: null, resultsFiles: results });
+  try {
+    assert.equal(handle.getCoverage(), null, "a solution-wide report is nobody's own");
+    assert.equal(handle.coveragePath(), null);
+  } finally {
+    await handle.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});

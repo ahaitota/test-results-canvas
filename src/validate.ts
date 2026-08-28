@@ -24,6 +24,28 @@ export function asResultInput(value: unknown): ResultInput | null {
     return { name, status: raw.status, durationMs: asNumber(raw.durationMs), message: asString(raw.message) };
 }
 
+// The most paths a single open/action may name. A merged run is a handful of
+// test projects, not a filesystem crawl; the cap keeps one bad argument from
+// turning into thousands of stat calls.
+export const MAX_SOURCE_PATHS = 64;
+
+// Non-empty strings from an array, deduped and capped. Anything that is not an
+// array yields an empty list. Duplicates are dropped here rather than after
+// path resolution so the cap counts real files, not repeats of one.
+export function asStringArray(value: unknown, max: number = MAX_SOURCE_PATHS): string[] {
+    if (!Array.isArray(value)) return [];
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const entry of value) {
+        const s = asString(entry);
+        if (!s || seen.has(s)) continue;
+        seen.add(s);
+        out.push(s);
+        if (out.length >= max) break;
+    }
+    return out;
+}
+
 // One test the agent believes the change affects. `name` is required -- without
 // it there is nothing to match against -- while `className` only narrows the
 // match and `reason` is what the badge's tooltip will say.
@@ -36,19 +58,35 @@ export function asAgentTestRef(value: unknown): AgentTestRef | null {
 }
 
 // The optional file/folder seeds from a canvas open input; `input` itself is
-// optional, since opening with no input is legal.
+// optional, since opening with no input is legal. `resultsFiles` is the merged
+// form; the singular fields are the original one-file API and keep working.
 export function asOpenInput(input: { [k: string]: unknown } | undefined): {
+    name?: string;
     resultsFile?: string;
     resultsDir?: string;
+    resultsFiles?: string[];
     coverageFile?: string;
     coverageDir?: string;
     projectRoot?: string;
 } {
+    const resultsFiles = asStringArray(input?.resultsFiles);
     return {
+        name: asString(input?.name),
         resultsFile: asString(input?.resultsFile),
         resultsDir: asString(input?.resultsDir),
+        // Absent rather than empty, so a caller can tell "no list given" from
+        // "a list that held nothing usable".
+        resultsFiles: resultsFiles.length ? resultsFiles : undefined,
         coverageFile: asString(input?.coverageFile),
         coverageDir: asString(input?.coverageDir),
         projectRoot: asString(input?.projectRoot),
     };
+}
+
+// Input to the `open_files` action.
+export function asFilesInput(input: { [k: string]: unknown } | undefined): {
+    name?: string;
+    files: string[];
+} {
+    return { name: asString(input?.name), files: asStringArray(input?.files) };
 }

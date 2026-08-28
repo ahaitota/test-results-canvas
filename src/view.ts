@@ -81,6 +81,14 @@ export function renderShell(title: string, askToken = ""): string {
   .banner.fail { color:var(--fgColor-danger); }
   .banner.pass { color:var(--fgColor-success); }
   .banner .rate { color:var(--fgColor-muted); font-weight:400; }
+  /* Merged runs only: which files this run is made of, and what each contributed. */
+  .group-summary { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:0 0 8px; font-size:13px; }
+  .group-name { font-weight:600; }
+  .group-counts { color:var(--fgColor-muted); }
+  .group-sources { display:flex; gap:6px; flex-wrap:wrap; }
+  .group-source { display:inline-flex; align-items:center; gap:6px; padding:2px 8px; border-radius:999px;
+                  font-size:12px; border:1px solid var(--borderColor-muted); color:var(--fgColor-muted); }
+  .group-source-count { font-weight:600; color:var(--fgColor-default); }
   .summary { display:flex; gap:8px; margin:16px 0; flex-wrap:wrap; }
   .summary .brk { flex-basis:100%; height:0; margin:0; }
   .pill { padding:4px 12px; border-radius:999px; font-size:13px; font-weight:600;

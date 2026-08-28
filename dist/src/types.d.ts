@@ -14,4 +14,5 @@ export interface TestResult {
     computerName?: string;
     startTime?: string;
     endTime?: string;
+    source?: string;
 }

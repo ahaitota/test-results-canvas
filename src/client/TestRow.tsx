@@ -120,7 +120,7 @@ function RowDetails({ t, index, secondaryOpen, onToggleMore }: Pick<RowProps, "t
   // an empty box if that fallback or these fields change.
   const method = t.method || t.name;
   const endTime = fmtTime(t.endTime);
-  const hasSecondary = Boolean(method || t.framework || endTime || t.computerName || t.adapter);
+  const hasSecondary = Boolean(method || t.framework || endTime || t.computerName || t.adapter || t.source);
 
   const primaryGrid = (
     <div class="dgrid">
@@ -138,6 +138,7 @@ function RowDetails({ t, index, secondaryOpen, onToggleMore }: Pick<RowProps, "t
       <div class={"dgrid secondary" + (secondaryOpen ? "" : " hidden")} data-testid="row-secondary">
         <TestResultProperty name="Method" value={method} mono />
         <TestResultProperty name="Framework" value={t.framework} />
+        <TestResultProperty name="File" value={t.source} />
         <TestResultProperty name="End time" value={endTime} />
         <TestResultProperty name="Computer" value={t.computerName} />
         <TestResultProperty name="Adapter" value={t.adapter} spansFullWidth mono />
