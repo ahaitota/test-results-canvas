@@ -14,9 +14,9 @@
 
 import type { TestResult } from "../types.js";
 import { rowIdentity } from "../rowkey.js";
-import { isTestPath, isProductionSource } from "../coverage/classify.js";
-import { normalizeSlashes } from "../coverage/sources.js";
-import type { DiffResult } from "../coverage/gitdiff.js";
+import { isTestPath, isProductionSource } from "../coverage/sources/classify.js";
+import { normalizeSlashes } from "../coverage/sources/paths.js";
+import type { DiffResult } from "../coverage/analysis/gitdiff.js";
 import type { DiffPayload, RelevanceTags, TestRelevance } from "./payload.js";
 
 // Below this a name carries no signal: "id" and "io" pair with half the repo.

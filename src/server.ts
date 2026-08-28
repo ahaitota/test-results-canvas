@@ -11,22 +11,24 @@ import { watch, readFileSync, writeFileSync, existsSync, readdirSync, statSync }
 import { serializeTrx, parseTrx } from "./parsers/trx.js";
 import { parseJUnit } from "./parsers/junit.js";
 import { labelForPath } from "./labels.js";
+import { readHead } from "./head.js";
 import { composeAskPrompt, composeCoveragePrompt, composePatchCoveragePrompt, composeEnableCoveragePrompt, composeImpactPrompt } from "./ask.js";
 import { computeRelevance, identitiesOf, matchAgentTests } from "./diff/relevance.js";
 import type { AgentTestRef } from "./diff/relevance.js";
 import type { DiffPayload } from "./diff/payload.js";
 import { rowIdentity } from "./rowkey.js";
-import { loadCoverageFile } from "./coverage/load.js";
-import type { LoadedCoverage } from "./coverage/load.js";
-import { discoverCoverageFor, newestCoverageFileIn } from "./coverage/discover.js";
-import { findProjectRoot } from "./coverage/sources.js";
-import { suggestCoverageCommand } from "./coverage/suggest.js";
-import type { CoverageSuggestion } from "./coverage/suggest.js";
-import { readSourceView } from "./coverage/source.js";
-import { hasCoverageExt } from "./coverage/detect.js";
-import { changedLines } from "./coverage/gitdiff.js";
-import { isGeneratedPath } from "./coverage/classify.js";
-import type { GitExec, DiffResult } from "./coverage/gitdiff.js";
+import {
+    loadCoverageFile,
+    discoverCoverageFor,
+    newestCoverageFileIn,
+    findProjectRoot,
+    suggestCoverageCommand,
+    readSourceView,
+    hasCoverageExt,
+    changedLines,
+    isGeneratedPath,
+} from "./coverage/index.js";
+import type { LoadedCoverage, CoverageSuggestion, CoverageLoadFailure, GitExec, DiffResult } from "./coverage/index.js";
 import { randomBytes } from "node:crypto";
 import type { TestResult, TestStatus } from "./types.js";
 
@@ -86,7 +88,7 @@ export function newestResultsFileIn(dir: string): string | null {
         const abs = resolvePath(dir, n);
         try {
             const st = statSync(abs);
-            if (st.isFile() && st.mtimeMs > bestMtime && looksLikeResults(readFileSync(abs, "utf8"))) {
+            if (st.isFile() && st.mtimeMs > bestMtime && looksLikeResults(readHead(abs))) {
                 best = abs;
                 bestMtime = st.mtimeMs;
             }
@@ -175,6 +177,9 @@ export interface ResultsServerOptions {
     coverageFile?: string;
     // Folder to take the newest coverage report from.
     coverageDir?: string;
+    // The repository or package the report describes. When absent it is
+    // inferred from the results file, which is a guess; the agent knows.
+    projectRoot?: string;
     title?: string;
     port?: number;
     watch?: boolean;
@@ -183,15 +188,13 @@ export interface ResultsServerOptions {
     coverage?: boolean;
     // Injected for tests; `null` disables the changed-lines section outright.
     gitExec?: GitExec | null;
-    // Called when the user clicks "Ask agent" on a row. Injected rather than
-    // imported so this module stays host-free: the extension passes a closure
-    // over session.send, tests pass a spy.
+    // Injected rather than imported so this module stays host-free: the
+    // extension passes a closure over session.send, tests pass a spy.
     onAsk?: (req: AskRequest) => void | Promise<void>;
 }
 
 // What POST /ask hands to the host once the row has been resolved server-side.
-// `test` is set for a test-row ask and `coverage` for one raised from the
-// coverage view; exactly one of them is present.
+// Exactly one of `test` and `coverage` is present.
 export interface AskRequest {
     prompt: string;
     test?: TestResult;
@@ -214,13 +217,21 @@ export interface SeedInput {
     resultsDir?: string;
     coverageFile?: string;
     coverageDir?: string;
+    projectRoot?: string;
 }
 
 // The handle returned by createResultsServer; the type the SDK glue stores per canvas.
 export type ResultsServerHandle = Awaited<ReturnType<typeof createResultsServer>>;
 
-// Start one Test Results server. Returns a handle with the URL plus methods the
-// SDK actions (and tests) use to mutate state and tear down.
+// A file or a folder the panel follows.
+//
+//   file -- exactly that path, and nothing else appearing beside it.
+//   dir  -- whichever qualifying file in the folder is newest, so a re-run
+//           writing under a different name still lands.
+type PathTarget =
+    | { kind: "file"; path: string }
+    | { kind: "dir"; dir: string };
+
 export async function createResultsServer(options: ResultsServerOptions = {}) {
     // watch=false disables the results-dir watcher.
     const { resultsFile, resultsDir, title = "Test Results", port = 0, watch: watchEnabled = true, onAsk } = options;
@@ -244,15 +255,47 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
     let file = DEFAULT_FILE;
     let results: TestResult[] = [];
     let watcher: FSWatcher | null = null;
+    // Held at this level so closing the server can cancel a reload that was
+    // already queued.
+    const resultsTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
     // `coverageWatcher` follows the report's folder so a re-run refreshes the
     // panel the same way results already do.
     let coverage: LoadedCoverage | null = null;
     let coverageWatcher: FSWatcher | null = null;
+    // What the panel has been asked to show, kept apart from what it managed to
+    // load. Requests outlive their failures: a report named before the run that
+    // writes it does not exist yet, and that is normal rather than an error.
+    let coverageTarget: PathTarget | null = null;
+    let coverageWatchDir: string | null = null;
+    // Identity of the report on screen, so disk can be compared against it
+    // without re-reading it.
+    let coverageStamp: string | null = null;
+    let coverageRevision = 0;
+    // Looks for what the watcher cannot see. Runs while there is a request.
+    let coveragePoll: ReturnType<typeof setInterval> | null = null;
+    let coverageTimer: ReturnType<typeof setTimeout> | null = null;
+    // Bumped every time the watcher is retired, so a callback already queued
+    // against the old folder cannot resurrect the report it belonged to.
+    let coverageWatchGeneration = 0;
     let projectRoot: string | undefined;
+    // A root the caller named. Inference must never overwrite it: the agent ran
+    // the command and knows which package the report belongs to.
+    let explicitProjectRoot: string | undefined = options.projectRoot ? resolvePath(String(options.projectRoot)) : undefined;
+    if (explicitProjectRoot) projectRoot = explicitProjectRoot;
     let coverageHint: CoverageSuggestion | null = null;
-    // Used to find the coverage report that belongs with the loaded results.
+    // Set when a report was found but could not be used, so the empty state can
+    // say why instead of implying no coverage was collected.
+    let coverageError: CoverageLoadFailure | null = null;
+    // A report the caller named, and the run it was named for: an explicit
+    // report belongs to that run, not to whatever run is loaded next. Null
+    // means "named before any run was known".
+    let explicitCoverageInput: SeedInput | null = null;
+    let explicitCoverageFor: PathTarget | null = null;
+    // The run on screen. A panel opened on a folder keeps the same run as it
+    // re-runs, under whatever name each writes.
     let resultsAbsPath: string | null = null;
+    let resultsTarget: PathTarget | null = null;
 
     // --- Diff mode (issue #8) ---
     //
@@ -331,9 +374,10 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
             results,
             file,
             files: listResultFiles(discovered),
-            coverage: coverage?.payload ?? null,
+            coverage: coverage ? { ...coverage.payload, revision: coverageRevision } : null,
             coverageHint,
             diff,
+            coverageError,
         });
     }
     function broadcast() {
@@ -344,6 +388,8 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
     }
 
     function stopWatcher() {
+        for (const t of resultsTimers.values()) clearTimeout(t);
+        resultsTimers.clear();
         if (!watcher) return;
         try {
             watcher.close();
@@ -351,33 +397,164 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         watcher = null;
     }
     function stopCoverageWatcher() {
+        // Retire the current generation first: a debounced callback that has
+        // already been queued must not act on the folder we are leaving.
+        coverageWatchGeneration++;
+        if (coverageTimer) {
+            clearTimeout(coverageTimer);
+            coverageTimer = null;
+        }
         if (!coverageWatcher) return;
         try {
             coverageWatcher.close();
         } catch { /* already closed */ }
         coverageWatcher = null;
+        coverageWatchDir = null;
     }
 
     // --- Coverage loading ---
 
-    // Re-read the report currently loaded (a re-run overwrites it in place).
-    function reloadCoverage(): boolean {
-        if (!coverage) return false;
-        const next = loadCoverageFile(coverage.path, loadOptions());
-        if (!next) return false;
-        coverage = next;
+    // Forget the request and everything that came of it. Used when the run
+    // changes: whatever comes next belongs to a different run.
+    function clearCoverage(): void {
+        coverage = null;
+        coverageError = null;
+        coverageTarget = null;
+        coverageStamp = null;
+        armCoverageWatch();
+    }
+
+    function targetDir(t: PathTarget): string {
+        return t.kind === "file" ? dirname(t.path) : t.dir;
+    }
+
+    function targetHolds(t: PathTarget, path: string): boolean {
+        return t.kind === "file" ? t.path === path : dirname(path) === t.dir;
+    }
+
+    function coveragePathOf(t: PathTarget): string | null {
+        return t.kind === "file" ? t.path : (existsSync(t.dir) ? newestCoverageFileIn(t.dir) : null);
+    }
+
+    // Enough of a file to notice it being rewritten without reading it.
+    function stampOf(path: string | null): string | null {
+        if (!path) return null;
+        try {
+            const s = statSync(path);
+            return `${path}:${s.mtimeMs}:${s.size}`;
+        } catch {
+            return null;
+        }
+    }
+
+    // Keep a watcher on the folder holding the report on screen, so its next
+    // rewrite shows up at once. The watcher is a shortcut for the common case,
+    // not the source of truth -- `syncCoveragePoll` is what guarantees a change
+    // is noticed.
+    function armCoverageWatch(): void {
+        const t = coverageTarget;
+        if (coverage && t && watchEnabled) {
+            const dir = targetDir(t);
+            if (dir !== coverageWatchDir) watchCoverageDir(dir);
+        } else {
+            stopCoverageWatcher();
+        }
+        syncCoveragePoll();
+    }
+
+    // Compare disk against the panel for as long as there is a request to
+    // answer. A directory watcher cannot carry this alone: the folder may not
+    // exist yet, may be built a level at a time, and may be swapped out without
+    // an event arriving. A tick costs a stat.
+    function syncCoveragePoll(): void {
+        const wanted = watchEnabled && coverageTarget !== null;
+        if (wanted === (coveragePoll !== null)) return;
+        if (!wanted) return stopCoveragePoll();
+        coveragePoll = setInterval(() => {
+            if (coverageMoved() && settleCoverage()) broadcast();
+        }, 500);
+        coveragePoll.unref?.();
+    }
+
+    // Whether disk still says what the panel is showing. The watcher and the
+    // poll share it, so whichever notices a write first does the reading. A
+    // failed target is stamped like any other, so a file that cannot be read is
+    // not read again until it changes; a missing one stamps as null and is
+    // picked up the moment it appears.
+    function coverageMoved(): boolean {
+        const t = coverageTarget;
+        if (!t) return false;
+        return stampOf(coveragePathOf(t)) !== coverageStamp;
+    }
+
+    function stopCoveragePoll(): void {
+        if (!coveragePoll) return;
+        clearInterval(coveragePoll);
+        coveragePoll = null;
+    }
+
+    // Read the target again and put the watcher and the poll where they belong.
+    // Returns whether anything the panel shows changed.
+    function settleCoverage(): boolean {
+        if (!coverageTarget) return false;
+        const changed = refreshCoverage();
+        armCoverageWatch();
+        return changed;
+    }
+
+    // Make what the panel shows match what it was asked for, reading from disk.
+    // Returns true when clients need telling. A report that has gone bad counts
+    // as a change, since the numbers on screen no longer describe anything.
+    function refreshCoverage(): boolean {
+        const t = coverageTarget;
+        if (!t) return false;
+        const path = coveragePathOf(t);
+        const loaded = path ? loadCoverageFile(path, loadOptions()) : null;
+        if (!loaded?.ok) {
+            // The target is kept: a report is routinely absent or half-written
+            // for a moment during a run, and the next look recovers it.
+            const reason = loaded ? loaded.reason : "missing";
+            const changed = coverage !== null || coverageError !== reason;
+            coverage = null;
+            coverageError = reason;
+            coverageStamp = stampOf(path);
+            refreshCoverageHint();
+            return changed;
+        }
+        // Any successful read counts as a change: a re-run overwrites the report
+        // in place, so its path stays the same.
+        coverage = loaded.coverage;
+        coverageError = null;
+        coverageStamp = stampOf(path);
+        coverageRevision++;
+        if (!projectRoot) projectRoot = loaded.coverage.projectRoot;
+        refreshCoverageHint();
         return true;
     }
 
-    // Returns false when the path is not a readable coverage report, leaving
-    // the previous state alone.
-    function setCoverage(absPath: string): boolean {
+    // Take on a target a caller named. It becomes the request whether or not it
+    // loads, so a failure is what the panel shows, and a target that does not
+    // exist yet is waited for.
+    function requestCoverage(t: PathTarget): boolean {
+        coverageTarget = t;
+        settleCoverage();
+        return coverage !== null;
+    }
+
+    // Try a candidate discovery came up with. Only a guess, so it becomes the
+    // request only if it loads. From then on its folder is followed, because a
+    // re-run may write the report under a new name.
+    function tryCoverage(absPath: string): boolean {
         const loaded = loadCoverageFile(absPath, loadOptions());
-        if (!loaded) return false;
-        coverage = loaded;
-        if (!projectRoot) projectRoot = loaded.projectRoot;
+        if (!loaded.ok) return false;
+        coverage = loaded.coverage;
+        coverageError = null;
+        coverageTarget = { kind: "dir", dir: dirname(absPath) };
+        coverageStamp = stampOf(absPath);
+        coverageRevision++;
+        if (!projectRoot) projectRoot = loaded.coverage.projectRoot;
         refreshCoverageHint();
-        if (watchEnabled) watchCoverageDir(dirname(absPath));
+        armCoverageWatch();
         return true;
     }
 
@@ -385,20 +562,16 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
     // different folders (`coverage/lcov.info` vs `test-results/junit.xml`).
     function watchCoverageDir(dir: string): void {
         stopCoverageWatcher();
-        let timer: ReturnType<typeof setTimeout> | undefined;
+        const generation = coverageWatchGeneration;
+        coverageWatchDir = dir;
         try {
             coverageWatcher = watch(dir, { persistent: false }, (_event, filename) => {
+                if (generation !== coverageWatchGeneration) return;
                 if (!filename || !hasCoverageExt(String(filename))) return;
-                clearTimeout(timer);
-                timer = setTimeout(() => {
-                    // dotnet writes a fresh guid folder while c8 and jacoco
-                    // overwrite, so re-discover rather than assume.
-                    const next = newestCoverageFileIn(dir);
-                    if (next && next !== coverage?.path) {
-                        if (setCoverage(next)) broadcast();
-                        return;
-                    }
-                    if (reloadCoverage()) broadcast();
+                if (coverageTimer) clearTimeout(coverageTimer);
+                coverageTimer = setTimeout(() => {
+                    coverageTimer = null;
+                    if (coverageMoved() && settleCoverage()) broadcast();
                 }, 400);
             });
             coverageWatcher.on("error", (err) => console.error("[server] coverage watcher error:", err?.message || err));
@@ -408,14 +581,25 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
     }
 
     // Find and load the report that belongs with the results file just loaded.
+    // Whatever was loaded before belongs to a different run.
     function attachCoverage(resultsAbs: string | null): void {
         if (!coverageEnabled) return;
         resultsAbsPath = resultsAbs;
-        if (resultsAbs) projectRoot = findProjectRoot(dirname(resultsAbs));
+        if (resultsAbs && !explicitProjectRoot) projectRoot = findProjectRoot(dirname(resultsAbs));
+        clearCoverage();
         refreshCoverageHint();
         if (!resultsAbs) return;
+
+        // A report named for this run outranks anything discovery would guess
+        // at. One named for a different run is not reused.
+        if (explicitCoverageInput && (explicitCoverageFor === null || targetHolds(explicitCoverageFor, resultsAbs))) {
+            seedCoverage(explicitCoverageInput, resultsAbs);
+            return;
+        }
+        explicitCoverageInput = null;
+        explicitCoverageFor = null;
         const found = discoverCoverageFor(resultsAbs, projectRoot);
-        if (found) setCoverage(found);
+        if (found) tryCoverage(found);
     }
 
     function refreshFromDir(dir: string): void {
@@ -432,16 +616,15 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
     }
     function watchDir(dir: string): void {
         stopWatcher();
-        const debounce = new Map<string, ReturnType<typeof setTimeout>>();
         try {
             watcher = watch(dir, { persistent: false }, (_event, filename) => {
                 if (!filename) return;
                 const name = String(filename);
                 if (!RESULT_EXTS.some((e) => name.toLowerCase().endsWith(e))) return;
                 const abs = resolvePath(dir, name);
-                clearTimeout(debounce.get(abs));
-                debounce.set(abs, setTimeout(() => {
-                    debounce.delete(abs);
+                clearTimeout(resultsTimers.get(abs));
+                resultsTimers.set(abs, setTimeout(() => {
+                    resultsTimers.delete(abs);
                     refreshFromDir(dir);
                 }, 400));
             });
@@ -457,7 +640,7 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         if (input.resultsFile) {
             const p = resolvePath(String(input.resultsFile));
             try {
-                if (existsSync(p) && statSync(p).isFile() && looksLikeResults(readFileSync(p, "utf8"))) abs = p;
+                if (existsSync(p) && statSync(p).isFile() && looksLikeResults(readHead(p))) abs = p;
             } catch { /* unreadable */ }
         }
         if (!abs && input.resultsDir) {
@@ -477,21 +660,50 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         return abs;
     }
 
-    // True when an explicit coverageFile/coverageDir produced a report.
+    // True when an explicit coverageFile/coverageDir produced a report. The
+    // pointer is remembered either way, paired with the run it was given for,
+    // so a later reload of that run uses it instead of falling back to
+    // discovery.
     function seedCoverage(input: SeedInput, resultsAbs: string | null): boolean {
         if (!coverageEnabled) return false;
         resultsAbsPath = resultsAbs ?? resultsAbsPath;
+        if (input.resultsDir) resultsTarget = { kind: "dir", dir: resolvePath(String(input.resultsDir)) };
+        else if (resultsAbs) resultsTarget = { kind: "file", path: resultsAbs };
+        if (input.projectRoot) {
+            const next = resolvePath(String(input.projectRoot));
+            const moved = next !== projectRoot;
+            explicitProjectRoot = next;
+            projectRoot = next;
+            // Sources and the diff are resolved against the root, so a report
+            // already on screen was read against the old one. Skipped when this
+            // call also names a report, read against the new root below anyway.
+            if (moved && coverageTarget && !input.coverageFile && !input.coverageDir) settleCoverage();
+        }
+        const named = Boolean(input.coverageFile || input.coverageDir);
+        if (named) {
+            explicitCoverageInput = input;
+            // Coverage named on its own answers for the run on screen now, not
+            // for whichever run is loaded next.
+            explicitCoverageFor = resultsTarget;
+        }
+        // The run is what the panel is about, so its package decides the root.
+        // Re-derived on every seed: a canvas reopened for another project would
+        // otherwise resolve sources and the diff against the previous one.
+        if (!explicitProjectRoot && resultsAbsPath) projectRoot = findProjectRoot(dirname(resultsAbsPath));
         if (input.coverageFile) {
             const p = resolvePath(String(input.coverageFile));
             if (!projectRoot) projectRoot = findProjectRoot(dirname(p));
-            if (setCoverage(p)) return true;
+            if (requestCoverage({ kind: "file", path: p })) return true;
         }
         if (input.coverageDir) {
             const d = resolvePath(String(input.coverageDir));
             const found = existsSync(d) ? newestCoverageFileIn(d) : null;
-            if (found) {
-                if (!projectRoot) projectRoot = findProjectRoot(dirname(found));
-                if (setCoverage(found)) return true;
+            if (found && !projectRoot) projectRoot = findProjectRoot(dirname(found));
+            // A named folder holding nothing is still the request: the run that
+            // fills it may not have finished. Skipped only when a named file
+            // already failed, since that reason is the more specific one.
+            if (found || !input.coverageFile) {
+                if (requestCoverage({ kind: "dir", dir: d })) return true;
             }
         }
         return false;
@@ -809,13 +1021,14 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         loadInput(input: SeedInput = {}) {
             const abs = seed(input);
             // An explicit coverage report can resolve even when no results file
-            // does, and that still changes what the panel shows.
-            if (abs || input.coverageFile || input.coverageDir) broadcast();
+            // does, and a new project root re-resolves the report on screen.
+            if (abs || input.coverageFile || input.coverageDir || input.projectRoot) broadcast();
             return abs;
         },
         // Coverage accessors, mirroring the results ones above.
         getCoverage: () => coverage?.payload ?? null,
         coveragePath: () => coverage?.path ?? null,
+        coverageError: () => coverageError,
         projectRoot: () => projectRoot,
         // --- Diff mode ---
         // set_impacted_tests: the agent read the diff and named these tests.
@@ -836,15 +1049,23 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
             broadcast();
         },
         loadCoverage(path: string) {
-            if (!setCoverage(resolvePath(path))) return false;
+            // A caller naming a file directly: it replaces whatever the panel
+            // was showing, and is remembered like any other named report.
+            const p = resolvePath(path);
+            explicitCoverageInput = { coverageFile: p };
+            explicitCoverageFor = resultsTarget;
+            const ok = requestCoverage({ kind: "file", path: p });
+            // Broadcast either way: a failure is part of the state the panel
+            // renders, not just a return value for the caller.
             broadcast();
-            return true;
+            return ok;
         },
         broadcast,
         reload,
         async close() {
             stopWatcher();
             stopCoverageWatcher();
+            stopCoveragePoll();
             for (const res of clients) {
                 try {
                     res.end();

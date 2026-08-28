@@ -12,8 +12,8 @@
 //
 // Pure: the caller reads git and hands the result in.
 import { rowIdentity } from "../rowkey.js";
-import { isTestPath, isProductionSource } from "../coverage/classify.js";
-import { normalizeSlashes } from "../coverage/sources.js";
+import { isTestPath, isProductionSource } from "../coverage/sources/classify.js";
+import { normalizeSlashes } from "../coverage/sources/paths.js";
 // Below this a name carries no signal: "id" and "io" pair with half the repo.
 const MIN_TOKEN = 3;
 // Reasons land in a tooltip.

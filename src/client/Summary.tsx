@@ -40,9 +40,9 @@ export function Summary({ total, counts, filterStatuses, onToggleStatus, coverag
   coveragePercent?: number | null;
   onCoverage?: () => void;
 }) {
-  const chip = (status: TestStatus, text: string) => (
+  const chip = (status: TestStatus, text: string, quiet: boolean) => (
     <span
-      class={"pill pill-" + status + (filterStatuses.has(status) ? " active" : "")}
+      class={"pill pill-" + status + (quiet ? " pill-quiet" : "") + (filterStatuses.has(status) ? " active" : "")}
       data-filter={status}
       data-testid={"chip-" + status}
       role="button"
@@ -63,9 +63,9 @@ export function Summary({ total, counts, filterStatuses, onToggleStatus, coverag
     <div class={"summary" + (filterStatuses.size ? " filtering" : "")} data-testid="summary">
       {total > 0 && (
         <>
-          {chip("pass", counts.passed + " passed")}
-          {chip("fail", counts.failed + " failed")}
-          {chip("skip", counts.skipped + " skipped")}
+          {chip("pass", counts.passed + " passed", counts.failed > 0 || counts.passed === 0)}
+          {chip("fail", counts.failed + " failed", counts.failed === 0)}
+          {chip("skip", counts.skipped + " skipped", false)}
           <span class="brk"></span>
           <span class="pill pill-total" data-testid="total">{fmtDur(counts.totalDur) + " total"}</span>
           {coveragePercent != null && (

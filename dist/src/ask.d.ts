@@ -1,5 +1,5 @@
 import type { TestResult } from "./types.js";
-import type { PatchCoverage } from "./coverage/patch.js";
+import type { PatchCoverage } from "./coverage/index.js";
 export declare function testPath(t: TestResult): string;
 export declare function composeAskPrompt(t: TestResult): string;
 export interface UncoveredFile {

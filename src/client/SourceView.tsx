@@ -1,21 +1,19 @@
-// The expanded file: real source with a per-line gutter.
-//
-// Percentages say there is a problem; this says where. Green = executed (with
-// its hit count), red = executable but never ran, dim = not executable. Lines
-// the current diff touched get a marker, so "new and untested" is one glance
-// rather than a cross-reference.
+// The expanded file: real source with a per-line gutter. Blue = executed (with
+// its hit count), orange = executable but never ran, dim = not executable.
+// Lines the current diff touched get a marker.
 //
 // Fetched on demand from /source, which only serves files present in the loaded
-// report, and rendered as Preact text nodes so hostile source content and
-// hostile file paths are escaped rather than parsed.
+// report, and re-fetched when the report is read again. Rendered as Preact text
+// nodes so hostile source content and hostile file paths are escaped rather
+// than parsed.
 
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { SourceFileView } from "../coverage/payload";
+import type { SourceFileView } from "../coverage/model/payload";
 import { askAgentCoverage } from "./askAgent";
 
 type Load = { state: "loading" } | { state: "error"; message: string } | { state: "ok"; view: SourceFileView };
 
-export function SourceView({ path }: { path: string }) {
+export function SourceView({ path, revision }: { path: string; revision?: number }) {
   const [load, setLoad] = useState<Load>({ state: "loading" });
   const [asked, setAsked] = useState<"idle" | "sent" | "error">("idle");
   const firstUncoveredRef = useRef<HTMLDivElement | null>(null);
@@ -23,6 +21,9 @@ export function SourceView({ path }: { path: string }) {
   useEffect(() => {
     let cancelled = false;
     setLoad({ state: "loading" });
+    // The file on screen is about to be replaced, so the answer to the last ask
+    // no longer applies to it.
+    setAsked("idle");
     fetch("/source?file=" + encodeURIComponent(path))
       .then(async (r) => {
         const body = await r.json().catch(() => ({}));
@@ -36,7 +37,7 @@ export function SourceView({ path }: { path: string }) {
     return () => {
       cancelled = true;
     };
-  }, [path]);
+  }, [path, revision]);
 
   // Land the reader on the first gap rather than at the top of a 600-line file.
   useEffect(() => {
@@ -62,7 +63,7 @@ export function SourceView({ path }: { path: string }) {
         {view.firstUncovered != null && (
           <button
             type="button"
-            class={"ask-btn" + (asked === "sent" ? " ask-sent" : asked === "error" ? " ask-error" : "")}
+            class={"ask-btn ask-cov" + (asked === "sent" ? " ask-sent" : asked === "error" ? " ask-error" : "")}
             data-testid="source-ask"
             onClick={onAsk}
             disabled={asked === "sent"}
@@ -98,7 +99,7 @@ export function SourceView({ path }: { path: string }) {
 }
 
 // Hit counts share a narrow gutter with line numbers, so large ones are
-// abbreviated rather than allowed to push the code sideways.
+// abbreviated rather than pushing the code sideways.
 function fmtHits(n: number): string {
   if (n < 1000) return String(n);
   if (n < 1000000) return Math.round(n / 100) / 10 + "k";

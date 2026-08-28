@@ -38,6 +38,15 @@ export function renderShell(title, askToken = "") {
     --bgColor-danger-muted: var(--true-color-red-muted, #f851491a);
     --borderColor-default: var(--border-color-default, #3d444d);
     --borderColor-muted: #3d444db3;
+    /* Coverage owns a blue/orange scale of its own. Green and red are reserved
+       for test outcome: sharing them made an uncovered line shout as loudly as
+       a failing test, and put both colours in one box on the New code banner.
+       The blue tracks the accent token, so only the orange needs a per-theme value. */
+    --covColor-covered: var(--fgColor-accent);
+    --covColor-partial: var(--fgColor-attention);
+    --covColor-uncovered: #db6d28;
+    --covBgColor-covered-muted: var(--bgColor-accent-muted);
+    --covBgColor-uncovered-muted: #db6d2826;
     --fontStack-sans: -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
     --fontStack-mono: ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
   }
@@ -58,6 +67,8 @@ export function renderShell(title, askToken = "") {
     --bgColor-danger-muted: var(--true-color-red-muted, #ffebe9);
     --borderColor-default: var(--border-color-default, #d1d9e0);
     --borderColor-muted: #d1d9e0b3;
+    --covColor-uncovered: #bc4c00;
+    --covBgColor-uncovered-muted: #fff1e5;
   }
   html, body { transition: background-color .15s ease, color .15s ease; }
   body { font-family:var(--fontStack-sans);
@@ -78,6 +89,10 @@ export function renderShell(title, askToken = "") {
   .pill-fail { background:var(--bgColor-danger-muted); color:var(--fgColor-danger); }
   .pill-skip { background:var(--bgColor-muted); color:var(--fgColor-muted); }
   .pill-total { background:var(--bgColor-accent-muted); color:var(--fgColor-accent); }
+  /* A count only earns its colour when it is the run's actual verdict: red on
+     "0 failed" reads as a problem on a clean run, and green on "N passed" softens
+     one that is failing. The other chip goes quiet. */
+  .pill.pill-quiet { background:var(--bgColor-muted); color:var(--fgColor-muted); }
   .row { padding:10px 12px; margin:6px 0 0; border-radius:8px;
          border:1px solid var(--borderColor-default); }
   .row[data-status="pass"] { background:var(--bgColor-success-muted); }
@@ -217,6 +232,9 @@ export function renderShell(title, askToken = "") {
   .ask-btn:disabled { cursor: default; opacity: .7; }
   .ask-btn.ask-sent { color: var(--fgColor-success); border-color: var(--fgColor-success); }
   .ask-btn.ask-error { color: var(--fgColor-danger); border-color: var(--fgColor-danger); }
+  /* The same button inside the coverage tab, which keeps green and red out. */
+  .ask-btn.ask-cov.ask-sent { color: var(--covColor-covered); border-color: var(--covColor-covered); }
+  .ask-btn.ask-cov.ask-error { color: var(--covColor-uncovered); border-color: var(--covColor-uncovered); }
 
   /* --- Diff mode --- */
   .diffbar { display:flex; flex-direction:column; gap:8px; margin:12px 0 0;
@@ -256,9 +274,9 @@ export function renderShell(title, askToken = "") {
 
   /* Coverage bands drive both the bar fill and the percentage text, so the
      colour always agrees with the number next to it. */
-  .cov-band-high { --cov-color: var(--fgColor-success); }
-  .cov-band-medium { --cov-color: var(--fgColor-attention); }
-  .cov-band-low { --cov-color: var(--fgColor-danger); }
+  .cov-band-high { --cov-color: var(--covColor-covered); }
+  .cov-band-medium { --cov-color: var(--covColor-partial); }
+  .cov-band-low { --cov-color: var(--covColor-uncovered); }
   .cov-band-none { --cov-color: var(--fgColor-muted); }
   .cov-bar { display:inline-block; width:72px; height:6px; flex-shrink:0;
              border-radius:999px; background:var(--bgColor-muted);
@@ -266,6 +284,7 @@ export function renderShell(title, askToken = "") {
   .cov-bar-fill { display:block; height:100%; background:var(--cov-color); }
   .cov-pct { font-size:12px; font-weight:600; color:var(--cov-color);
              min-width:38px; text-align:right; flex-shrink:0; }
+  .cov-pct-note { display:block; font-size:10px; font-weight:400; color:var(--fgColor-muted); }
 
   .cov-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
               padding:10px 12px; margin-bottom:16px; border-radius:8px;
@@ -283,11 +302,12 @@ export function renderShell(title, askToken = "") {
   .cov-list { display:flex; flex-direction:column; gap:2px; }
 
   .cov-patch { margin:0 0 16px; }
+  /* Neutral whatever the verdict: the bar and percentage inside already carry
+     the signal, and a coloured banner here read as a second pass/fail result. */
   .cov-patch-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
                     font-size:13px; font-weight:600; padding:8px 12px; border-radius:6px;
-                    border:1px solid var(--borderColor-muted); }
-  .cov-patch-head.ok { background:var(--bgColor-success-muted); color:var(--fgColor-success); }
-  .cov-patch-head.warn { background:var(--bgColor-danger-muted); color:var(--fgColor-danger); }
+                    border:1px solid var(--borderColor-muted);
+                    background:var(--bgColor-muted); color:var(--fgColor-default); }
   .cov-patch-label { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.04em;
                      opacity:.75; flex-shrink:0; }
 
@@ -322,7 +342,8 @@ export function renderShell(title, askToken = "") {
              background:var(--bgColor-muted); color:var(--fgColor-muted);
              border:1px solid var(--borderColor-muted); }
   .cov-tag-changed { background:var(--bgColor-accent-muted); color:var(--fgColor-accent); }
-  .cov-tag-unmeasured { background:var(--bgColor-danger-muted); color:var(--fgColor-danger); }
+  /* "Not measured" stays on the neutral .cov-tag base: it is a gap in the
+     report, not a failure, so it should not carry an alarm colour. */
 
   /* Source view: a fixed-width gutter keeps line numbers and hit counts from
      shifting the code as counts grow. */
@@ -336,14 +357,14 @@ export function renderShell(title, askToken = "") {
   .cov-code { max-height:420px; overflow:auto; background:var(--bgColor-inset);
               font-family:var(--fontStack-mono); font-size:12px; line-height:1.55; }
   .cov-line { display:flex; align-items:flex-start; white-space:pre; border-left:3px solid transparent; }
-  .cov-line.cov-hit { background:var(--bgColor-success-muted); border-left-color:var(--fgColor-success); }
-  .cov-line.cov-miss { background:var(--bgColor-danger-muted); border-left-color:var(--fgColor-danger); }
+  .cov-line.cov-hit { background:var(--covBgColor-covered-muted); border-left-color:var(--covColor-covered); }
+  .cov-line.cov-miss { background:var(--covBgColor-uncovered-muted); border-left-color:var(--covColor-uncovered); }
   .cov-line.cov-changed .cov-ln { color:var(--fgColor-accent); font-weight:600; }
   .cov-ln { width:44px; padding-right:8px; text-align:right; flex-shrink:0;
             color:var(--fgColor-muted); user-select:none; }
   .cov-hits { width:40px; padding-right:10px; text-align:right; flex-shrink:0;
               color:var(--fgColor-muted); user-select:none; }
-  .cov-line.cov-miss .cov-hits { color:var(--fgColor-danger); font-weight:600; }
+  .cov-line.cov-miss .cov-hits { color:var(--covColor-uncovered); font-weight:600; }
   .cov-text { flex:1 1 auto; padding-right:10px; }
 
   .cov-empty { padding:20px; border-radius:8px; border:1px dashed var(--borderColor-default);

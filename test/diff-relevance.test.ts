@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { resolve as resolvePath } from "node:path";
 import { computeRelevance, matchAgentTests, expectedTestNames, testTokens, identitiesOf } from "../src/diff/relevance.js";
-import type { DiffResult, FileChanges } from "../src/coverage/gitdiff.js";
+import type { DiffResult, FileChanges } from "../src/coverage/analysis/gitdiff.js";
 import type { TestResult } from "../src/types.js";
 
 function t(name: string, extra: Partial<TestResult> = {}): TestResult {

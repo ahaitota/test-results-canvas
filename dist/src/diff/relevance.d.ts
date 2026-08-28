@@ -1,5 +1,5 @@
 import type { TestResult } from "../types.js";
-import type { DiffResult } from "../coverage/gitdiff.js";
+import type { DiffResult } from "../coverage/analysis/gitdiff.js";
 import type { DiffPayload } from "./payload.js";
 export declare function expectedTestNames(subject: string): string[];
 export declare function testTokens(t: TestResult): string[];

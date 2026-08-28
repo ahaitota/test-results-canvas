@@ -1,22 +1,13 @@
 // The Coverage tab: one row per file, and every file exactly once.
 //
-// This used to be three lists -- "New code", "Worth covering" and "All files" --
-// ordered by how actionable each was. They did not partition the files, they
-// overlapped: a changed file containing a large untested block appeared in all
-// three, showing a third of its story in each, with nothing on screen saying
-// they were the same file. Reading it meant cross-referencing by name.
-//
-// Now each file states everything at once: its coverage, whether the change set
-// touched it, how its changed lines fared, and where its worst untested block
-// is. The prioritisation the sections used to express through their order
-// survives as the default sort (see rowTier), so the code that most needs a
-// test is still what you read first.
-//
-// A project-wide percentage leads nowhere ("74%" tells nobody what to do), so
-// it stays a header stat rather than the headline.
+// Each row states everything about its file at once: its coverage, whether the
+// change set touched it, how its changed lines fared, and where its worst
+// untested block is. Rows are sorted so the code that most needs a test is what
+// you read first (see rowTier). A project-wide percentage leads nowhere, so it
+// stays a header stat rather than the headline.
 
-import { useState } from "preact/hooks";
-import type { CoveragePayload, CoverageSuggestion } from "../coverage/payload";
+import { useEffect, useState } from "preact/hooks";
+import type { CoveragePayload, CoverageSuggestion, CoverageLoadFailure } from "../coverage/model/payload";
 import type { CoverageRow, CoverageSort } from "./coverageDerive";
 import { bandOf, buildCoverageRows, headlinePercent, headlineTotals, patchHeadline, rowNote } from "./coverageDerive";
 import { CoverageEmpty } from "./CoverageEmpty";
@@ -33,14 +24,20 @@ function Bar({ percent, testid }: { percent: number | null; testid?: string }) {
   );
 }
 
-function Pct({ percent }: { percent: number | null }) {
-  return <span class={"cov-pct cov-band-" + bandOf(percent)}>{percent == null ? "\u2014" : percent + "%"}</span>;
+function Pct({ percent, note }: { percent: number | null; note?: string }) {
+  return (
+    <span class={"cov-pct cov-band-" + bandOf(percent)}>
+      {percent == null ? "\u2014" : percent + "%"}
+      {note && <span class="cov-pct-note" data-testid="patch-pct-note">{note}</span>}
+    </span>
+  );
 }
 
 // One file: its numbers, its tags, its note, and its source when opened.
-function FileRow({ row, expanded, onToggle }: {
+function FileRow({ row, expanded, revision, onToggle }: {
   row: CoverageRow;
   expanded: boolean;
+  revision?: number;
   onToggle: () => void;
 }) {
   const note = rowNote(row);
@@ -93,12 +90,12 @@ function FileRow({ row, expanded, onToggle }: {
       </div>
       {note && <p class="cov-row-note" data-testid="coverage-row-note">{note}</p>}
       {expanded && (openable
-        ? <SourceView path={row.path} />
+        ? <SourceView path={row.path} revision={revision} />
         : (
           <div class="cov-source-msg">
             {row.measured
               ? "This file is not on this machine, so only its numbers are available."
-              : "The coverage report never mentions this file, so there is nothing to annotate. It changed, and no test observed it."}
+              : "The coverage report never mentions this file, so there is nothing to annotate. Whether any test reaches it is unknown."}
           </div>
         ))}
     </div>
@@ -106,11 +103,17 @@ function FileRow({ row, expanded, onToggle }: {
 }
 
 // The change set's verdict, kept as a banner because it describes the whole run
-// rather than any one file -- including how many files no report mentions,
-// which the list can only show one row at a time.
+// rather than any one file.
 function PatchBanner({ coverage }: { coverage: CoveragePayload }) {
   const [asked, setAsked] = useState<"idle" | "sent" | "error">("idle");
   const patch = coverage.patch;
+
+  // A new report is a new question. Without this the button stays "Asked the
+  // agent", disabled, over numbers it was never asked about.
+  useEffect(() => {
+    setAsked("idle");
+  }, [coverage.revision, patch?.against, patch?.total, patch?.covered]);
+
   if (!patch) {
     return (
       <div class="cov-patch" data-testid="coverage-patch">
@@ -122,9 +125,14 @@ function PatchBanner({ coverage }: { coverage: CoveragePayload }) {
     );
   }
 
-  // Unmeasured files are not "clean": nothing observed them, so the green state
-  // would be claiming a result the report cannot support.
-  const clean = patch.total > 0 && patch.covered === patch.total && patch.unmeasuredFiles === 0;
+  // Unmeasured files are not "clean": nothing observed them, so a pass here
+  // would claim a result the report cannot support. Nor are changed lines the
+  // report has no entry for, which is what a stale report looks like.
+  const unknown = patch.unknownLines ?? 0;
+  const clean = patch.total > 0
+    && patch.covered === patch.total
+    && patch.unmeasuredFiles === 0
+    && unknown === 0;
   const onAsk = async () => {
     const ok = await askAgentCoverage("patch");
     setAsked(ok ? "sent" : "error");
@@ -132,21 +140,22 @@ function PatchBanner({ coverage }: { coverage: CoveragePayload }) {
 
   return (
     <div class="cov-patch" data-testid="coverage-patch">
-      <div class={"cov-patch-head" + (clean ? " ok" : " warn")}>
+      <div class="cov-patch-head">
         <span class="cov-patch-label">New code</span>
         <span data-testid="patch-headline">{patchHeadline(coverage)}</span>
         <span class="cov-spacer" />
         <Bar percent={patch.percent} testid="patch-bar" />
-        <Pct percent={patch.percent} />
+        <Pct percent={patch.percent} note={unknown > 0 ? "of measured" : undefined} />
       </div>
       <p class="cov-note">
         Compared against {patch.against}. Counts added lines in measured source files only &mdash;
         deleted lines, build output, tests and docs are excluded, so this is smaller than the raw diff.
+        {unknown > 0 && ` The percentage covers only the ${patch.total} changed line${patch.total === 1 ? "" : "s"} this report measures; ${unknown} more ${unknown === 1 ? "is" : "are"} outside it, which is what a report taken before the edit looks like.`}
       </p>
       {!clean && (
         <button
           type="button"
-          class={"ask-btn" + (asked === "sent" ? " ask-sent" : asked === "error" ? " ask-error" : "")}
+          class={"ask-btn ask-cov" + (asked === "sent" ? " ask-sent" : asked === "error" ? " ask-error" : "")}
           data-testid="patch-ask"
           onClick={onAsk}
           disabled={asked === "sent"}
@@ -164,16 +173,16 @@ const SORTS: { key: CoverageSort; label: string; hint: string }[] = [
   { key: "name", label: "Name", hint: "alphabetical by path" },
 ];
 
-export function CoverageView({ coverage, hint }: { coverage: CoveragePayload | null; hint: CoverageSuggestion | null }) {
+export function CoverageView({ coverage, hint, error, run }: { coverage: CoveragePayload | null; hint: CoverageSuggestion | null; error: CoverageLoadFailure | null; run?: string }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<CoverageSort>("actionable");
 
-  if (!coverage) return <CoverageEmpty hint={hint} />;
+  // Keyed by the run, so switching to another one that also lacks coverage
+  // starts from a fresh button rather than the last run's "Asked the agent".
+  if (!coverage) return <CoverageEmpty key={run ?? ""} hint={hint} error={error} />;
 
-  // Keyed by path, which is now enough: one row per file means a path
-  // identifies a row again. It did not when the same file appeared in three
-  // lists, and a shared key made every copy open and close together.
+  // Keyed by path: one row per file, so a path identifies a row.
   const toggleRow = (path: string) => setExpanded((prev) => {
     const next = new Set(prev);
     if (next.has(path)) next.delete(path);
@@ -233,6 +242,7 @@ export function CoverageView({ coverage, hint }: { coverage: CoveragePayload | n
               key={r.path}
               row={r}
               expanded={expanded.has(r.path)}
+              revision={coverage.revision}
               onToggle={() => toggleRow(r.path)}
             />
           ))}

@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AgentTestRef } from "./diff/relevance.js";
-import type { GitExec } from "./coverage/gitdiff.js";
+import type { CoverageLoadFailure, GitExec } from "./coverage/index.js";
 import type { TestResult, TestStatus } from "./types.js";
 export declare const RESULT_EXTS: string[];
 export declare function looksLikeResults(xml: unknown): boolean;
@@ -11,6 +11,7 @@ export interface ResultsServerOptions {
     resultsDir?: string;
     coverageFile?: string;
     coverageDir?: string;
+    projectRoot?: string;
     title?: string;
     port?: number;
     watch?: boolean;
@@ -41,6 +42,7 @@ export interface SeedInput {
     resultsDir?: string;
     coverageFile?: string;
     coverageDir?: string;
+    projectRoot?: string;
 }
 export type ResultsServerHandle = Awaited<ReturnType<typeof createResultsServer>>;
 export declare function createResultsServer(options?: ResultsServerOptions): Promise<{
@@ -55,8 +57,9 @@ export declare function createResultsServer(options?: ResultsServerOptions): Pro
     clearResults(): void;
     loadNamed(name: string): boolean;
     loadInput(input?: SeedInput): string | null;
-    getCoverage: () => import("./coverage/payload.js").CoveragePayload | null;
+    getCoverage: () => import("./coverage/index.js").CoveragePayload | null;
     coveragePath: () => string | null;
+    coverageError: () => CoverageLoadFailure | null;
     projectRoot: () => string | undefined;
     markImpacted(refs: readonly AgentTestRef[]): {
         matched: number;

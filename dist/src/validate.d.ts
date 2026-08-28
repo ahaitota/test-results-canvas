@@ -11,4 +11,5 @@ export declare function asOpenInput(input: {
     resultsDir?: string;
     coverageFile?: string;
     coverageDir?: string;
+    projectRoot?: string;
 };

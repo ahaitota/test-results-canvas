@@ -53,17 +53,18 @@ test("asResultInput passes status through untouched for the server to normalize"
   assert.equal(asResultInput({ name: "t1", status: 3 })?.status, 3);
 });
 
-const NOTHING = { resultsFile: undefined, resultsDir: undefined, coverageFile: undefined, coverageDir: undefined };
+const NOTHING = { resultsFile: undefined, resultsDir: undefined, coverageFile: undefined, coverageDir: undefined, projectRoot: undefined };
 
 test("asOpenInput extracts string paths", () => {
   assert.deepEqual(asOpenInput({ resultsFile: "/a/r.trx" }), { ...NOTHING, resultsFile: "/a/r.trx" });
   assert.deepEqual(asOpenInput({ resultsDir: "/a" }), { ...NOTHING, resultsDir: "/a" });
   assert.deepEqual(asOpenInput({ coverageFile: "/a/cov.xml" }), { ...NOTHING, coverageFile: "/a/cov.xml" });
   assert.deepEqual(asOpenInput({ coverageDir: "/a/coverage" }), { ...NOTHING, coverageDir: "/a/coverage" });
+  assert.deepEqual(asOpenInput({ projectRoot: "/a" }), { ...NOTHING, projectRoot: "/a" });
 });
 
 test("asOpenInput drops non-string paths so they never reach the filesystem", () => {
-  assert.deepEqual(asOpenInput({ resultsFile: ["/a/r.trx"], resultsDir: 5, coverageFile: {}, coverageDir: true }), NOTHING);
+  assert.deepEqual(asOpenInput({ resultsFile: ["/a/r.trx"], resultsDir: 5, coverageFile: {}, coverageDir: true, projectRoot: 0 }), NOTHING);
 });
 
 test("asOpenInput tolerates a missing input object", () => {
