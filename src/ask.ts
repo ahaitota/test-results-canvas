@@ -183,3 +183,34 @@ export function composeEnableCoveragePrompt(command: string, ecosystem: string):
     "If that command is not right for this project, use the equivalent that produces a Cobertura, LCOV or JaCoCo report.",
   ].join("\n\n");
 }
+
+// --- Diff mode ---
+//
+// "Which tests does this change affect?" The canvas can only pair names; the
+// agent can read the diff, so this hands it the question and asks for the
+// answer back as canvas tags rather than prose.
+
+// Enough to characterise the change without turning the message into a diff.
+const MAX_LISTED_FILES = 30;
+
+export interface ImpactRequest {
+  // What git compared, e.g. "uncommitted changes".
+  against: string;
+  files: readonly string[];
+  changedFiles: number;
+  // Tests in the run the panel is showing.
+  totalTests: number;
+}
+
+export function composeImpactPrompt(req: ImpactRequest): string {
+  const shown = req.files.slice(0, MAX_LISTED_FILES).map((f) => `- ${label(f)}`);
+  const rest = req.changedFiles - shown.length;
+  if (rest > 0) shown.push(`- and ${rest} more file${rest === 1 ? "" : "s"}`);
+
+  return [
+    `Work out which of this project's tests are affected by the ${label(req.against)}, then tag them in the Test Results canvas.`,
+    `Changed files:\n${shown.join("\n")}`,
+    `Read the changed code, follow it into whatever calls it, and decide which of the ${req.totalTests} tests in the current run could plausibly change behaviour or start failing because of it. Include tests that cover the changed code indirectly; leave out tests the change cannot reach.`,
+    `Report the answer by invoking the "set_impacted_tests" action on the "Test Results" canvas (canvasId "example-canvas"), passing each test as { "name", "className", "reason" } with the reason naming the changed code it depends on. Use the exact names from the run — call "get_results" first if you need them. Don't print the list as chat text instead; the panel is where it is useful.`,
+  ].join("\n\n");
+}

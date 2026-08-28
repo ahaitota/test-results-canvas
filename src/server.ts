@@ -12,7 +12,11 @@ import { serializeTrx, parseTrx } from "./parsers/trx.js";
 import { parseJUnit } from "./parsers/junit.js";
 import { labelForPath } from "./labels.js";
 import { readHead } from "./head.js";
-import { composeAskPrompt, composeCoveragePrompt, composePatchCoveragePrompt, composeEnableCoveragePrompt } from "./ask.js";
+import { composeAskPrompt, composeCoveragePrompt, composePatchCoveragePrompt, composeEnableCoveragePrompt, composeImpactPrompt } from "./ask.js";
+import { computeRelevance, identitiesOf, matchAgentTests } from "./diff/relevance.js";
+import type { AgentTestRef } from "./diff/relevance.js";
+import type { DiffPayload } from "./diff/payload.js";
+import { rowIdentity } from "./rowkey.js";
 import {
     loadCoverageFile,
     discoverCoverageFor,
@@ -21,8 +25,10 @@ import {
     suggestCoverageCommand,
     readSourceView,
     hasCoverageExt,
+    changedLines,
+    isGeneratedPath,
 } from "./coverage/index.js";
-import type { LoadedCoverage, CoverageSuggestion, CoverageLoadFailure, GitExec } from "./coverage/index.js";
+import type { LoadedCoverage, CoverageSuggestion, CoverageLoadFailure, GitExec, DiffResult } from "./coverage/index.js";
 import { randomBytes } from "node:crypto";
 import type { TestResult, TestStatus } from "./types.js";
 
@@ -193,6 +199,8 @@ export interface AskRequest {
     prompt: string;
     test?: TestResult;
     coverage?: { scope: "file" | "patch" | "enable"; path?: string };
+    // Raised from diff mode: "which tests does this change affect?".
+    diff?: { scope: "impact" };
 }
 
 // A single result as accepted from SDK actions before its status is normalized.
@@ -289,6 +297,20 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
     let resultsAbsPath: string | null = null;
     let resultsTarget: PathTarget | null = null;
 
+    // --- Diff mode (issue #8) ---
+    //
+    // `baseline`: identities of the previous run, so a test appearing out of
+    // nowhere is new. Carried across only when the *same* file reloads.
+    // `agentImpact`: keyed by identity, not index, so the agent's answer
+    // survives the re-run it usually triggers.
+    let diff: DiffPayload | null = null;
+    let baseline: Set<string> | null = null;
+    let agentImpact: Map<string, string> | null = null;
+    // The raw diff behind `diff`. Off the wire, but the impact prompt uses it.
+    let lastChanges: DiffResult | null = null;
+    // Tracked separately from resultsAbsPath, which only exists with coverage on.
+    let loadedResultsPath: string | null = null;
+
     const loadOptions = () => ({
         projectRoot,
         skipGit: options.gitExec === null,
@@ -299,6 +321,53 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         coverageHint = coverageEnabled ? suggestCoverageCommand(projectRoot, resultsAbsPath ?? undefined) : null;
     }
 
+    // The agent's tags, mapped from identities back to current row indexes.
+    // A test it named that this run no longer has drops out.
+    function agentIndexes(): Map<number, string> | null {
+        if (!agentImpact?.size) return null;
+        const out = new Map<number, string>();
+        for (let i = 0; i < results.length; i++) {
+            const reason = agentImpact.get(rowIdentity(results[i]));
+            if (reason) out.set(i, reason);
+        }
+        return out.size ? out : null;
+    }
+
+    // Re-tag the loaded run from the diff already read. Cheap: no subprocess.
+    function retag(): void {
+        diff = computeRelevance({ results, baseline, changes: lastChanges, agent: agentIndexes() });
+    }
+
+    // Ask git what changed, then re-tag. Once per results load, never per row.
+    function refreshDiff(): void {
+        if (options.gitExec === null) {
+            diff = null;
+            lastChanges = null;
+            return;
+        }
+        const root = projectRoot ?? (loadedResultsPath ? findProjectRoot(dirname(loadedResultsPath)) : undefined);
+        // includeTests: an edited test file is the whole point here.
+        const raw = root
+            ? changedLines(root, { includeTests: true, ...(options.gitExec ? { exec: options.gitExec } : {}) })
+            : null;
+        // Build output is not a change anyone can test, and a repo that commits
+        // its dist/ would otherwise bury the real edits in the count and prompt.
+        lastChanges = raw ? { ...raw, files: raw.files.filter((f) => !isGeneratedPath(f.path)) } : null;
+        retag();
+    }
+
+    // Swap in a new run. Reloading the same `fromPath` hands its identities on
+    // as the baseline; switching files starts clean.
+    function applyResults(next: TestResult[], fromPath: string | null): void {
+        const continues = Boolean(fromPath) && fromPath === loadedResultsPath;
+        baseline = continues && results.length ? identitiesOf(results) : null;
+        // The agent's conclusions were about the run that just went away.
+        if (!continues) agentImpact = null;
+        loadedResultsPath = fromPath;
+        results = next;
+        refreshDiff();
+    }
+
     function statePayload() {
         return JSON.stringify({
             title,
@@ -307,6 +376,7 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
             files: listResultFiles(discovered),
             coverage: coverage ? { ...coverage.payload, revision: coverageRevision } : null,
             coverageHint,
+            diff,
             coverageError,
         });
     }
@@ -538,7 +608,7 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         const label = labelForPath(abs, discovered, listLocalNames());
         discovered.set(label, abs);
         file = label;
-        results = loadFile(label, discovered);
+        applyResults(loadFile(label, discovered), abs);
         // Re-derive so a moved report (dotnet's per-run guid folder) is picked
         // up rather than going stale.
         attachCoverage(abs);
@@ -584,7 +654,7 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         const label = labelForPath(abs, discovered, listLocalNames());
         discovered.set(label, abs);
         file = label;
-        results = loadFile(label, discovered);
+        applyResults(loadFile(label, discovered), abs);
         if (watchEnabled) watchDir(dirname(abs));
         if (!explicitCoverage) attachCoverage(abs);
         return abs;
@@ -640,7 +710,7 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
     }
 
     if (!seed({ resultsFile, resultsDir, coverageFile: options.coverageFile, coverageDir: options.coverageDir })) {
-        results = loadFile(file, discovered);
+        applyResults(loadFile(file, discovered), null);
         // No results file resolved, but an explicit coverage report may still
         // have been given, and the hint needs a project root either way.
         if (coverageEnabled && !coverage) refreshCoverageHint();
@@ -766,6 +836,32 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         return sendJson(res, 200, { ok: true });
     }
 
+    // "Which tests does this change affect?" Same rule as /ask: the page names
+    // the scope, the prompt is composed here, and the answer comes back as
+    // canvas tags through set_impacted_tests rather than as text.
+    async function handleAskImpact(req: IncomingMessage, res: ServerResponse) {
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, error: "POST required" });
+        if (!onAsk) return sendJson(res, 501, { ok: false, error: "asking the agent is not available" });
+        if (bearerToken(req) !== askToken) return sendJson(res, 403, { ok: false, error: "bad token" });
+        if (!lastChanges || !lastChanges.files.length) {
+            return sendJson(res, 404, { ok: false, error: "no changes to analyse" });
+        }
+
+        const prompt = composeImpactPrompt({
+            against: lastChanges.against,
+            files: lastChanges.files.map((f) => f.path),
+            changedFiles: lastChanges.files.length,
+            totalTests: results.length,
+        });
+        try {
+            await onAsk({ prompt, diff: { scope: "impact" } });
+        } catch (err) {
+            console.error("[server] onAsk (impact) failed:", err instanceof Error ? err.message : err);
+            return sendJson(res, 502, { ok: false, error: "could not reach the session" });
+        }
+        return sendJson(res, 200, { ok: true });
+    }
+
     // Source text plus per-line hits for one file in the loaded report.
     function handleSource(url: string, res: ServerResponse) {
         const u = new URL(url, "http://localhost");
@@ -826,7 +922,7 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
                 return;
             }
             file = name;
-            results = loadFile(name, discovered);
+            applyResults(loadFile(name, discovered), abs);
             // Picking a different run means a different coverage report.
             attachCoverage(abs);
             broadcast();
@@ -840,6 +936,10 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         }
         if (url === "/ask-coverage" || url.startsWith("/ask-coverage?")) {
             await handleAskCoverage(req, res);
+            return;
+        }
+        if (url === "/ask-impact" || url.startsWith("/ask-impact?")) {
+            await handleAskImpact(req, res);
             return;
         }
         if (url.startsWith("/source")) {
@@ -890,19 +990,21 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         currentFile: () => file,
         getResults: () => results,
         setResults(list: ResultInput[]) {
-            results = (list || []).map((t) => ({ name: t.name, status: normalizeStatus(t.status), durationMs: t.durationMs, message: t.message }));
+            applyResults((list || []).map((t) => ({ name: t.name, status: normalizeStatus(t.status), durationMs: t.durationMs, message: t.message })), null);
             persist(results, file, discovered);
             broadcast();
             return results.length;
         },
         addResult(t: ResultInput) {
             results.push({ name: t.name, status: normalizeStatus(t.status), durationMs: t.durationMs, message: t.message });
+            // Extending the run, not replacing it: baseline and agent tags hold.
+            retag();
             persist(results, file, discovered);
             broadcast();
             return results.length;
         },
         clearResults() {
-            results = [];
+            applyResults([], null);
             persist(results, file, discovered);
             broadcast();
         },
@@ -910,7 +1012,7 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
             const abs = resolveResultPath(name, discovered);
             if (!abs) return false;
             file = name;
-            results = loadFile(name, discovered);
+            applyResults(loadFile(name, discovered), abs);
             attachCoverage(abs);
             broadcast();
             return true;
@@ -928,6 +1030,24 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         coveragePath: () => coverage?.path ?? null,
         coverageError: () => coverageError,
         projectRoot: () => projectRoot,
+        // --- Diff mode ---
+        // set_impacted_tests: the agent read the diff and named these tests.
+        // Stored by identity so the answer survives the re-run it leads to;
+        // unmatched names are reported back.
+        markImpacted(refs: readonly AgentTestRef[]) {
+            const { tags, unmatched } = matchAgentTests(results, refs);
+            const next = agentImpact ?? new Map<string, string>();
+            for (const [i, reason] of tags) next.set(rowIdentity(results[i]), reason);
+            agentImpact = next.size ? next : null;
+            retag();
+            broadcast();
+            return { matched: tags.size, unmatched };
+        },
+        clearImpacted() {
+            agentImpact = null;
+            retag();
+            broadcast();
+        },
         loadCoverage(path: string) {
             // A caller naming a file directly: it replaces whatever the panel
             // was showing, and is remembered like any other named report.

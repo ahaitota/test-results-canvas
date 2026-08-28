@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { AgentTestRef } from "./diff/relevance.js";
 import type { CoverageLoadFailure, GitExec } from "./coverage/index.js";
 import type { TestResult, TestStatus } from "./types.js";
 export declare const RESULT_EXTS: string[];
@@ -25,6 +26,9 @@ export interface AskRequest {
     coverage?: {
         scope: "file" | "patch" | "enable";
         path?: string;
+    };
+    diff?: {
+        scope: "impact";
     };
 }
 export interface ResultInput {
@@ -57,6 +61,11 @@ export declare function createResultsServer(options?: ResultsServerOptions): Pro
     coveragePath: () => string | null;
     coverageError: () => CoverageLoadFailure | null;
     projectRoot: () => string | undefined;
+    markImpacted(refs: readonly AgentTestRef[]): {
+        matched: number;
+        unmatched: string[];
+    };
+    clearImpacted(): void;
     loadCoverage(path: string): boolean;
     broadcast: () => void;
     reload: () => void;

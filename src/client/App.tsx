@@ -17,6 +17,7 @@ import { ResultsList } from "./ResultsList";
 import { ViewTabs } from "./ViewTabs";
 import type { ViewTab } from "./ViewTabs";
 import { CoverageView } from "./CoverageView";
+import { DiffBar } from "./DiffBar";
 import { headlinePercent } from "./coverageDerive";
 
 // Add or remove one member, leaving the previous set untouched.
@@ -38,6 +39,7 @@ export function App() {
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [expandedSecondary, setExpandedSecondary] = useState<Set<string>>(new Set());
   const [tab, setTab] = useState<ViewTab>("tests");
+  const [relevantOnly, setRelevantOnly] = useState(false);
 
   // A new payload can retire rows; drop their expansion rather than let it
   // transfer to whichever row happens to take their place.
@@ -58,9 +60,15 @@ export function App() {
   const haystacks = useMemo(() => buildHaystacks(all), [all]);
   const rows = useMemo(() => buildRows(all, state.keys), [all, state.keys]);
   const query = searchText.trim().toLowerCase();
+  // Diff mode narrows the list only while it has something to narrow to: a
+  // payload that arrives without tags leaves the switch on but inert, rather
+  // than emptying the panel. Row badges follow the switch -- they explain why a
+  // row survived the filter, and would only be noise across the whole run.
+  const tags = state.diff?.tags ?? null;
+  const narrowing = relevantOnly && state.diff && state.diff.counts.relevant > 0 ? tags : null;
   const filtered = useMemo(
-    () => filterRows(rows, haystacks, filterStatuses, query),
-    [rows, haystacks, filterStatuses, query],
+    () => filterRows(rows, haystacks, filterStatuses, query, narrowing),
+    [rows, haystacks, filterStatuses, query, narrowing],
   );
   const view = useMemo(() => sortView(filtered, sortBy), [filtered, sortBy]);
   const groups = useMemo(() => buildGroups(view, groupBy), [view, groupBy]);
@@ -128,6 +136,7 @@ export function App() {
         ? <CoverageView coverage={state.coverage} hint={state.coverageHint} error={state.coverageError} run={state.file} />
         : (
           <>
+            <DiffBar diff={state.diff} relevantOnly={relevantOnly} onRelevantOnly={setRelevantOnly} />
             <Toolbar
               visible={all.length > 0}
               searchText={searchText}
@@ -148,6 +157,7 @@ export function App() {
               collapsedGroups={collapsedGroups}
               expandedRows={expandedRows}
               expandedSecondary={expandedSecondary}
+              relevance={relevantOnly ? tags : null}
               onToggleGroup={(k) => toggleIn(setCollapsedGroups, k)}
               onToggleRow={(k) => toggleIn(setExpandedRows, k)}
               onToggleSecondary={(k) => toggleIn(setExpandedSecondary, k)}

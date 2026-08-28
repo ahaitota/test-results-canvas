@@ -20,6 +20,10 @@ Supported report formats: `.trx` (VSTest/`dotnet test --logger trx`) and JUnit
 It also shows **code coverage** when the run produced a report (Cobertura, LCOV
 or JaCoCo), in a **Coverage** tab beside **Tests**.
 
+Inside a git repository it also offers **diff mode**: a strip above the list tags
+the tests your current change touches — added, edited, or likely affected by the
+production code you edited — and can narrow the run to just those rows.
+
 
 ## Install (once, per user — works in every project)
 ### Step 1:
@@ -93,6 +97,9 @@ src/
     suggest.ts           the coverage command for the detected ecosystem
     source.ts            allow-listed source reads behind /source
     load.ts              loads + derives one report end to end
+  diff/                  diff mode: which tests the current change makes relevant
+    payload.ts           the SSE wire contract, shared with the client (host-free)
+    relevance.ts         the tagging rules: new / modified / maybe impacted
   client/                Preact app, bundled by esbuild to dist/client/app.js
     App.tsx              cross-cutting state; Tests / Coverage branch
     ViewTabs.tsx         the Tests | Coverage switcher
@@ -100,6 +107,7 @@ src/
     SourceView.tsx       gutter-annotated source for one file
     CoverageEmpty.tsx    the no-coverage state and its ask-agent button
     coverageDerive.ts    merges report + patch + hotspots into one row per file
+    DiffBar.tsx          the diff-mode strip: scope, counts, "relevant only"
     (Summary, Toolbar, ResultsList, TestRow, derive, ...)  the results view
 test/
   trx.test.ts            unit tests for the TRX parser
@@ -113,6 +121,7 @@ test/
   coverage-discover.test.ts  discovery, path resolution, project roots
   coverage-merge.test.ts     merging the unit, browser and server LCOV reports
   coverage-server.test.ts    coverage state following the loaded results file
+  diff-relevance.test.ts     diff mode: the tagging rules and the agent matcher
 e2e/                     Playwright browser tests (load the compiled dist server)
   coverage-collect.ts    picks the client bundle out of the browser's V8 coverage
 coverage-sample/         fixture sources the coverage reports point at. They are
