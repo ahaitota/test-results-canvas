@@ -210,6 +210,9 @@ function emitCase(attrs, inner, ctx, results) {
         return;
     const className = attr(attrs, "classname");
     const durationMs = timeToMs(attr(attrs, "time"));
+    // Optional, and only some runners write it, but when it is there it is the
+    // only unambiguous link from a test to a source path.
+    const file = attr(attrs, "file");
     let status = "pass";
     let message;
     // A <failure> or <error> child marks the test as failing.
@@ -237,6 +240,7 @@ function emitCase(attrs, inner, ctx, results) {
         className: className || undefined,
         method: name,
         suite: ctx.suiteName,
+        file: file || undefined,
         startTime: ctx.suiteTime,
         computerName: ctx.suiteHost,
     });

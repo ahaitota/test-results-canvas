@@ -114,6 +114,26 @@ test("discoverCoverageFor returns null when the project has no report", () => {
   }
 });
 
+test("the last-resort walk skips coverage fixtures under a test folder", () => {
+  // A repo's own e2e fixtures are not the run's output; attaching one showed
+  // every changed file as "not measured".
+  const repo = mkdtempSync(join(tmpdir(), "cov-fixture-"));
+  try {
+    mkdirSync(join(repo, "e2e", "fixtures", "coverage"), { recursive: true });
+    writeFileSync(join(repo, "e2e", "fixtures", "coverage", "sample.cobertura.xml"), coberturaFor("Hostile.cs", [[1, 0]]));
+    writeFileSync(join(repo, "results.trx"), "<TestRun/>");
+    assert.equal(discoverCoverageFor(join(repo, "results.trx"), repo), null);
+
+    // A real report still wins from the same walk.
+    mkdirSync(join(repo, "src", "reports"), { recursive: true });
+    const real = join(repo, "src", "reports", "coverage.cobertura.xml");
+    writeFileSync(real, coberturaFor("Calc.cs", [[1, 1]]));
+    assert.equal(discoverCoverageFor(join(repo, "results.trx"), repo), resolvePath(real));
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test("discoverCoverageFor finds a monorepo report inside packages/", () => {
   // A workspace's packages/ folder is source, not a package-manager cache.
   // Skipping it leaves a monorepo with no coverage at all.

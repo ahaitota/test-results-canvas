@@ -1,9 +1,35 @@
 // One test row: header, optional failure preview, and the expandable details
 // grid (primary fields always, secondary behind "Show more").
 import type { TestResult, TestStatus } from "../types";
+import type { TestRelevance } from "../diff/payload";
 import { useState, useEffect } from "preact/hooks";
 import { STATUS_WORD, STATUS_LABEL, fmtDur, fmtTime } from "./format";
 import { askAgent } from "./askAgent";
+
+// Short enough to sit in a row header without pushing the name out.
+const REL_LABEL: Record<TestRelevance["kind"], string> = {
+  new: "NEW",
+  modified: "MODIFIED",
+  impacted: "MAYBE",
+};
+
+// Why this row is in the diff. The tooltip carries the evidence -- which file
+// changed -- because the badge itself has room for a word.
+function RelevanceBadge({ relevance }: { relevance: TestRelevance }) {
+  const title = relevance.fromAgent
+    ? `${relevance.reason} (agent's assessment)`
+    : relevance.reason;
+  return (
+    <span
+      class={"rel rel-" + relevance.kind + (relevance.fromAgent ? " rel-agent" : "")}
+      data-testid="relevance"
+      data-relevance={relevance.kind}
+      title={title}
+    >
+      {REL_LABEL[relevance.kind]}
+    </span>
+  );
+}
 
 // One labelled value shown in the details grid, e.g. "Duration" -> "1.2s".
 interface TestResultPropertyProps {
@@ -78,6 +104,8 @@ export interface RowProps {
   t: TestResult;
   // Position in the payload the server broadcast; identifies the row to /ask.
   index: number;
+  // Set when diff mode found a reason this row matters; absent otherwise.
+  relevance?: TestRelevance;
   expanded: boolean;
   secondaryOpen: boolean;
   onToggle: () => void;
@@ -128,7 +156,7 @@ function RowDetails({ t, index, secondaryOpen, onToggleMore }: Pick<RowProps, "t
   );
 }
 
-export function TestRow({ t, index, expanded, secondaryOpen, onToggle, onToggleMore, innerRef }: RowProps) {
+export function TestRow({ t, index, relevance, expanded, secondaryOpen, onToggle, onToggleMore, innerRef }: RowProps) {
   const preview = t.status === "fail" && t.message && !expanded ? (
     <div class="msg-preview" data-testid="msg-preview" title="Click for full details" onClick={onToggle}>
       {t.message.split(/\r?\n/)[0]}
@@ -140,6 +168,7 @@ export function TestRow({ t, index, expanded, secondaryOpen, onToggle, onToggleM
       <div class="row-head" data-testid="row-header" onClick={onToggle}>
         <span class="label">{STATUS_LABEL[t.status]}</span>
         <span class="name" data-testid="test-name" title={t.name}>{t.name}</span>
+        {relevance && <RelevanceBadge relevance={relevance} />}
         {t.durationMs != null && <span class="dur">{fmtDur(t.durationMs)}</span>}
         <button class="toggle" data-testid="row-toggle" type="button" aria-expanded={expanded ? "true" : "false"} aria-label="Toggle details">{"\u25B6"}</button>
       </div>

@@ -12,6 +12,11 @@ export interface TestResult {
   className?: string;
   method?: string;
   suite?: string;
+  // Source file the test was declared in, as the runner spelled it (pytest,
+  // jest-junit and friends put it on <testcase>). The one field that links a
+  // test to a path without guessing, so diff mode uses it first; see
+  // src/diff/relevance.ts.
+  file?: string;
   framework?: string;
   adapter?: string;
   storage?: string;

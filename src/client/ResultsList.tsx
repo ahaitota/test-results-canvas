@@ -7,6 +7,7 @@ import type { VNode } from "preact";
 import type { GroupBy } from "./format";
 import type { Counts, Group } from "./derive";
 import type { VItem, VirtualList } from "./virtual";
+import type { RelevanceTags } from "../diff/payload";
 import { TestRow } from "./TestRow";
 
 function MiniCounts({ c }: { c: Counts }) {
@@ -36,6 +37,9 @@ export interface ResultsListProps {
   collapsedGroups: Set<string>;
   expandedRows: Set<string>;
   expandedSecondary: Set<string>;
+  // Diff-mode tags for this payload, keyed by the row's payload index. Null
+  // when there is no diff to show.
+  relevance: RelevanceTags | null;
   onToggleGroup: (key: string) => void;
   onToggleRow: (key: string) => void;
   onToggleSecondary: (key: string) => void;
@@ -52,6 +56,7 @@ export function ResultsList(props: ResultsListProps) {
       key={item.key}
       t={item.row.t}
       index={item.row.i}
+      relevance={props.relevance ? props.relevance[item.row.i] : undefined}
       expanded={expandedRows.has(item.row.k)}
       secondaryOpen={expandedSecondary.has(item.row.k)}
       onToggle={() => props.onToggleRow(item.row.k)}

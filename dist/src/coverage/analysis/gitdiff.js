@@ -11,7 +11,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { normalizeSlashes } from "../sources/paths.js";
-import { isProductionSource } from "../sources/classify.js";
+import { isProductionSource, isTestPath } from "../sources/classify.js";
 const GIT_TIMEOUT_MS = 5000;
 const MAX_BUFFER = 16 * 1024 * 1024;
 // Past this a file is generated or vendored, and its length says nothing.
@@ -217,7 +217,8 @@ export function changedLines(root, options = {}) {
     const workingFiles = [...files, ...toFileChanges(base, workingChanges, false)];
     // Only let the working tree win when it actually contains code, so editing
     // a README beside committed work does not hide that work.
-    if (workingFiles.some((f) => isProductionSource(f.path))) {
+    const holdsCode = (f) => isProductionSource(f.path) || (options.includeTests === true && isTestPath(f.path));
+    if (workingFiles.some(holdsCode)) {
         return { root: base, against: "uncommitted changes", files: workingFiles };
     }
     // Clean tree: compare the branch against where it forked from.

@@ -34,6 +34,12 @@ export { findProjectRoot } from "./sources/resolve.js";
 
 export { toRanges } from "./analysis/patch.js";
 
+// Diff mode reads the same change set the coverage tab does.
+export { changedLines } from "./analysis/gitdiff.js";
+export type { DiffResult } from "./analysis/gitdiff.js";
+
+export { isGeneratedPath } from "./sources/classify.js";
+
 // Injection point for git, so tests can run without a repository.
 export type { GitExec } from "./analysis/gitdiff.js";
 

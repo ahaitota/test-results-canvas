@@ -2,7 +2,7 @@
 // helpers narrow `unknown` for the compiler and cover schema/handler drift.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { asString, asNumber, asResultInput, asOpenInput, asStringArray, asFilesInput, MAX_SOURCE_PATHS } from "../src/validate.js";
+import { asString, asNumber, asResultInput, asOpenInput, asStringArray, asFilesInput, asAgentTestRef, MAX_SOURCE_PATHS } from "../src/validate.js";
 
 test("asString keeps non-empty strings and rejects everything else", () => {
   assert.equal(asString("results.trx"), "results.trx");
@@ -128,4 +128,26 @@ test("asFilesInput always yields a files array so a handler can reject it plainl
   assert.deepEqual(asFilesInput(undefined), { name: undefined, files: [] });
   assert.deepEqual(asFilesInput({ files: "/a.trx" }), { name: undefined, files: [] });
   assert.deepEqual(asFilesInput({ name: 5, files: [] }), { name: undefined, files: [] });
+});
+
+test("asAgentTestRef keeps a well-formed impacted-test reference", () => {
+  assert.deepEqual(asAgentTestRef({ name: "adds", className: "CalcTests", reason: "calls the new helper" }), {
+    name: "adds",
+    className: "CalcTests",
+    reason: "calls the new helper",
+  });
+});
+
+test("asAgentTestRef requires a name and drops unusable extras", () => {
+  // Without a name there is nothing to match a row against.
+  assert.equal(asAgentTestRef({ className: "CalcTests" }), null);
+  assert.equal(asAgentTestRef({ name: "" }), null);
+  assert.equal(asAgentTestRef("adds"), null);
+  assert.equal(asAgentTestRef(["adds"]), null);
+  assert.equal(asAgentTestRef(null), null);
+  assert.deepEqual(asAgentTestRef({ name: "adds", className: 7, reason: {} }), {
+    name: "adds",
+    className: undefined,
+    reason: undefined,
+  });
 });

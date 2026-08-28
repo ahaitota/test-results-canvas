@@ -4,9 +4,10 @@
 // coverage/lcov.info for vitest/jest/c8, target/site/jacoco/jacoco.xml for
 // maven, coverage.xml for coverage.py. Bounded like the results scan.
 import { readdirSync, statSync, existsSync } from "node:fs";
-import { dirname, join, resolve as resolvePath } from "node:path";
+import { dirname, join, relative, resolve as resolvePath } from "node:path";
 import { readHead } from "../head.js";
 import { hasCoverageExt, looksLikeCoverage, nameScore } from "./formats/detect.js";
+import { isTestPath } from "./sources/classify.js";
 // Only package-manager caches and tool metadata. A workspace's own packages/
 // folder is real source and holds the report in a monorepo, so it is walked;
 // the depth and entry budgets below are what bound the scan.
@@ -168,8 +169,9 @@ export function discoverCoverageFor(resultsFile, projectRoot) {
             if (hit)
                 return hit;
         }
-        // 3. Last resort: a bounded walk of the project.
-        return fromRun(findCoverageFiles(projectRoot));
+        // 3. Last resort: a bounded walk of the project. Reports under a test
+        //    folder are fixtures, not this run's output.
+        return fromRun(findCoverageFiles(projectRoot).filter((c) => !isTestPath(relative(projectRoot, c.path))));
     }
     return null;
 }
