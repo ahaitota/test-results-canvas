@@ -131,6 +131,30 @@ test("discoverCoverageFor finds a monorepo report inside packages/", () => {
   }
 });
 
+test("discovery ignores a stale report sitting beside the results file", () => {
+  // Proximity was trusted on its own here, so a report left in TestResults/ by
+  // a run weeks ago was served as this run's. That is the reading the whole
+  // panel rests on -- "is the new code covered" answered from old measurements.
+  const dir = mkdtempSync(join(tmpdir(), "cov-stale-sibling-"));
+  try {
+    mkdirSync(join(dir, "TestResults"), { recursive: true });
+    const trx = join(dir, "TestResults", "run.trx");
+    writeFileSync(trx, "<TestRun/>");
+    const report = join(dir, "TestResults", "coverage.cobertura.xml");
+    writeFileSync(report, '<coverage><packages><package><classes><class filename="a.ts"><lines><line number="1" hits="1"/></lines></class></classes></package></packages></coverage>');
+    const weeksAgo = new Date(Date.now() - 21 * 24 * 60 * 60 * 1000);
+    utimesSync(report, weeksAgo, weeksAgo);
+    assert.equal(discoverCoverageFor(trx, dir), null, "an old neighbour is still an old report");
+
+    // Written by this run, it is exactly the report being looked for.
+    const now = new Date();
+    utimesSync(report, now, now);
+    assert.equal(discoverCoverageFor(trx, dir), resolvePath(report));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("discovery ignores a report an older run left behind", () => {
   // A report from hours ago measured different code. Offering it as this run's
   // reports coverage for lines the run never ran.

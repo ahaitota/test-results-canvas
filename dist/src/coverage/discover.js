@@ -130,9 +130,9 @@ function coverageCandidatesIn(dir) {
 }
 // Locate the report that belongs with `resultsFile`. Nearest first, because
 // closeness beats recency: a stale report elsewhere in the repo could easily be
-// newer than the one just written. Only the results file's own folder is
-// trusted on location alone; every wider search must also line up in time with
-// the run, so a report an older run left behind is not offered as this one's.
+// newer than the one just written. Location alone is never enough though --
+// every candidate must also line up in time with the run, so a report an older
+// run left behind is not offered as this one's.
 export function discoverCoverageFor(resultsFile, projectRoot) {
     const startDir = dirname(resolvePath(resultsFile));
     const runMtime = mtimeOf(resolvePath(resultsFile));
@@ -141,7 +141,7 @@ export function discoverCoverageFor(resultsFile, projectRoot) {
     const fromRun = (candidates) => pickBest(runMtime === null ? candidates : candidates.filter((c) => Math.abs(c.mtimeMs - runMtime) <= MAX_RUN_SKEW_MS));
     // 1. Next to the results file, then in its parent -- `dotnet test` writes
     //    TestResults/<guid>/coverage.cobertura.xml beside TestResults/*.trx.
-    const sibling = newestCoverageFileIn(startDir);
+    const sibling = fromRun(coverageCandidatesIn(startDir));
     if (sibling)
         return sibling;
     const nearby = fromRun(findCoverageFiles(startDir, { maxDepth: 2 }));

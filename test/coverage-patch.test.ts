@@ -680,6 +680,10 @@ test("classify reads a qualified .NET test project as tests, whatever qualifies 
   assert.equal(isTestPath("src/App.IntegrationTests/Fixture.cs"), true);
   assert.equal(isTestPath("App.FunctionalTests/Setup.cs"), true);
   assert.equal(isTestPath("src/App.ApiSpecs/Given.cs"), true);
+  // The company and product usually sit in front of it, so the qualifier is not
+  // one segment but however many the team uses.
+  assert.equal(isTestPath("src/Contoso.App.UnitTests/Usings.cs"), true);
+  assert.equal(isTestPath("Contoso.Billing.Api.IntegrationTests/Setup.cs"), true);
   // The same boundary rule as above: a qualifier that merely ends in the word
   // is not one. Lower case is what separates them, so it has to stay.
   assert.equal(isTestPath("src/Contoso.Protests/Entry.cs"), false);
