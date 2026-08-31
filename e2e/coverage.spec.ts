@@ -509,6 +509,7 @@ test.describe("no coverage", () => {
     // The state most users hit first, so it has to teach rather than be blank.
     await expect(page.getByTestId("coverage-empty")).toBeVisible();
     await expect(page.getByTestId("coverage-command")).toContainText("XPlat Code Coverage");
+    await expect(page.getByTestId("coverage-command-alt")).toContainText("--coverage-output-format cobertura");
     await expect(page.getByTestId("coverage-ask-enable")).toBeVisible();
   });
 

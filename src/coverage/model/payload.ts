@@ -105,6 +105,10 @@ export interface CoverageSuggestion {
     ecosystem: string;
     command: string;
     outputHint: string;
+    // A second, non-interchangeable way to collect coverage in the same
+    // ecosystem -- .NET splits into VSTest and Microsoft.Testing.Platform, and
+    // the command for one fails on the other.
+    alternative?: Omit<CoverageSuggestion, "alternative">;
 }
 
 // Why a report could not be loaded. Sent to the panel so it can explain a file

@@ -9,11 +9,38 @@ import type { CoverageSuggestion } from "./model/payload.js";
 
 export type { CoverageSuggestion } from "./model/payload.js";
 
-const DOTNET = {
-    ecosystem: ".NET",
+const VSTEST = {
+    ecosystem: ".NET (VSTest)",
     command: 'dotnet test --collect:"XPlat Code Coverage"',
     outputHint: "TestResults/<guid>/coverage.cobertura.xml",
 };
+
+const TESTING_PLATFORM = {
+    ecosystem: ".NET (Microsoft.Testing.Platform)",
+    command: "dotnet test --coverage --coverage-output-format cobertura",
+    outputHint: "TestResults/*.cobertura.xml",
+};
+
+// Naming what the project actually uses, since the collector command is
+// rejected by Microsoft.Testing.Platform and vice versa.
+const TESTING_PLATFORM_MARKER = /UseMicrosoftTestingPlatform|MSTest\.Sdk|Microsoft\.Testing\.|TUnit|xunit\.v3/i;
+
+function usesTestingPlatform(root: string | undefined): boolean {
+    if (!root) return false;
+    try {
+        return readdirSync(root)
+            .filter((n) => /\.(csproj|fsproj|props)$/i.test(n))
+            .some((n) => TESTING_PLATFORM_MARKER.test(readFileSync(join(root, n), "utf8")));
+    } catch {
+        return false;
+    }
+}
+
+function dotnet(root: string | undefined): CoverageSuggestion {
+    return usesTestingPlatform(root)
+        ? { ...TESTING_PLATFORM, alternative: VSTEST }
+        : { ...VSTEST, alternative: TESTING_PLATFORM };
+}
 
 const FALLBACK: CoverageSuggestion = {
     ecosystem: "your test runner",
@@ -41,10 +68,10 @@ function readPackageJson(root: string): string {
 // Pick the command for a project. The results file is a tie-breaker: a .trx can
 // only have come from the .NET toolchain.
 export function suggestCoverageCommand(projectRoot: string | undefined, resultsFile?: string): CoverageSuggestion {
-    if (resultsFile && resultsFile.toLowerCase().endsWith(".trx")) return DOTNET;
+    if (resultsFile && resultsFile.toLowerCase().endsWith(".trx")) return dotnet(projectRoot);
     if (!projectRoot || !existsSync(projectRoot)) return FALLBACK;
 
-    if (hasFileMatching(projectRoot, /\.(sln|csproj|fsproj)$/i)) return DOTNET;
+    if (hasFileMatching(projectRoot, /\.(sln|csproj|fsproj)$/i)) return dotnet(projectRoot);
 
     if (existsSync(join(projectRoot, "pom.xml"))) {
         return {

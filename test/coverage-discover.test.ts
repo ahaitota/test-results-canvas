@@ -654,10 +654,24 @@ test("suggestCoverageCommand names the right command for the project in front of
   try {
     writeFileSync(join(dotnet, "App.csproj"), "<Project />");
     const hint = suggestCoverageCommand(dotnet);
-    assert.equal(hint.ecosystem, ".NET");
+    assert.equal(hint.ecosystem, ".NET (VSTest)");
     assert.match(hint.command, /dotnet test/);
+    // The collector command is rejected by Microsoft.Testing.Platform, so the
+    // panel must not present it as the only way to collect coverage.
+    assert.equal(hint.alternative?.ecosystem, ".NET (Microsoft.Testing.Platform)");
   } finally {
     rmSync(dotnet, { recursive: true, force: true });
+  }
+
+  const mtp = mkdtempSync(join(tmpdir(), "cov-mtp-"));
+  try {
+    writeFileSync(join(mtp, "App.csproj"), '<Project Sdk="MSTest.Sdk/3.6.0" />');
+    const hint = suggestCoverageCommand(mtp);
+    assert.equal(hint.ecosystem, ".NET (Microsoft.Testing.Platform)");
+    assert.match(hint.command, /--coverage/);
+    assert.equal(hint.alternative?.ecosystem, ".NET (VSTest)");
+  } finally {
+    rmSync(mtp, { recursive: true, force: true });
   }
 });
 

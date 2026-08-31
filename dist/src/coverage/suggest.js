@@ -4,11 +4,36 @@
 // exact command for the project in front of it. Detection is by marker file.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-const DOTNET = {
-    ecosystem: ".NET",
+const VSTEST = {
+    ecosystem: ".NET (VSTest)",
     command: 'dotnet test --collect:"XPlat Code Coverage"',
     outputHint: "TestResults/<guid>/coverage.cobertura.xml",
 };
+const TESTING_PLATFORM = {
+    ecosystem: ".NET (Microsoft.Testing.Platform)",
+    command: "dotnet test --coverage --coverage-output-format cobertura",
+    outputHint: "TestResults/*.cobertura.xml",
+};
+// Naming what the project actually uses, since the collector command is
+// rejected by Microsoft.Testing.Platform and vice versa.
+const TESTING_PLATFORM_MARKER = /UseMicrosoftTestingPlatform|MSTest\.Sdk|Microsoft\.Testing\.|TUnit|xunit\.v3/i;
+function usesTestingPlatform(root) {
+    if (!root)
+        return false;
+    try {
+        return readdirSync(root)
+            .filter((n) => /\.(csproj|fsproj|props)$/i.test(n))
+            .some((n) => TESTING_PLATFORM_MARKER.test(readFileSync(join(root, n), "utf8")));
+    }
+    catch {
+        return false;
+    }
+}
+function dotnet(root) {
+    return usesTestingPlatform(root)
+        ? { ...TESTING_PLATFORM, alternative: VSTEST }
+        : { ...VSTEST, alternative: TESTING_PLATFORM };
+}
 const FALLBACK = {
     ecosystem: "your test runner",
     command: "re-run the tests with coverage enabled",
@@ -35,11 +60,11 @@ function readPackageJson(root) {
 // only have come from the .NET toolchain.
 export function suggestCoverageCommand(projectRoot, resultsFile) {
     if (resultsFile && resultsFile.toLowerCase().endsWith(".trx"))
-        return DOTNET;
+        return dotnet(projectRoot);
     if (!projectRoot || !existsSync(projectRoot))
         return FALLBACK;
     if (hasFileMatching(projectRoot, /\.(sln|csproj|fsproj)$/i))
-        return DOTNET;
+        return dotnet(projectRoot);
     if (existsSync(join(projectRoot, "pom.xml"))) {
         return {
             ecosystem: "Maven",
