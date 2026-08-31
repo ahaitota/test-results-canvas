@@ -179,9 +179,9 @@ function registerSamples(discovered) {
 // `windowsHide` must stay off: it reaches the child as SW_HIDE in its
 // STARTUPINFO, and Explorer applies that to the folder window it opens, which
 // then exists but is invisible.
-function spawnLaunch({ command, args }) {
+function spawnLaunch({ command, args, verbatim }) {
     return new Promise((resolve, reject) => {
-        const child = spawn(command, args, { detached: true, stdio: "ignore" });
+        const child = spawn(command, args, { detached: true, stdio: "ignore", windowsVerbatimArguments: verbatim });
         child.once("error", reject);
         child.once("spawn", () => {
             child.unref();
@@ -648,6 +648,10 @@ export async function createResultsServer(options = {}) {
     // backs the rows on screen -- results the agent reported, or a report
     // deleted since it was loaded.
     function revealTarget() {
+        // An action replaces the rows without touching the sources, so the file
+        // they came from is no longer what is on screen.
+        if (!loadedResultsPath)
+            return null;
         const paths = entries.map((e) => e.source.path);
         if (!paths.length)
             return null;

@@ -44,8 +44,12 @@ export function launchFor(mode, target, platform) {
             // opener, so an unhandled type raises "Open with" rather than failing
             // in silence. Exit codes stay unreliable either way (explorer.exe
             // reports failure on success), so only a failure to spawn counts.
+            //
+            // `/select,` must sit against the quoted path with no space between,
+            // which argv quoting cannot produce -- hence the raw command line.
+            // A Windows filename cannot contain a quote, so the pair always closes.
             if (select)
-                return { command: "explorer.exe", args: [`/select,${target.path}`] };
+                return { command: "explorer.exe", args: [`/select,"${target.path}"`], verbatim: true };
             return target.kind === "dir"
                 ? { command: "explorer.exe", args: [target.path] }
                 : { command: "rundll32.exe", args: ["shell32.dll,ShellExec_RunDLL", target.path] };

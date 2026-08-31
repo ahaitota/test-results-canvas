@@ -60,7 +60,7 @@ async function withServer(run: (ctx: {
 
 test("each platform gets its own reveal and open commands", () => {
   const file = { kind: "file", path: "/tmp/runs/report.xml" } as const;
-  assert.deepEqual(launchFor("reveal", file, "win32"), { command: "explorer.exe", args: [`/select,${file.path}`] });
+  assert.deepEqual(launchFor("reveal", file, "win32"), { command: "explorer.exe", args: [`/select,"${file.path}"`], verbatim: true });
   // Not explorer.exe: handed a file it has no handler for, that opens nothing
   // and says nothing. The shell's own opener at least offers "Open with".
   assert.deepEqual(launchFor("open", file, "win32"), { command: "rundll32.exe", args: ["shell32.dll,ShellExec_RunDLL", file.path] });
@@ -70,6 +70,16 @@ test("each platform gets its own reveal and open commands", () => {
   assert.deepEqual(launchFor("reveal", file, "linux"), { command: "xdg-open", args: [dirname(file.path)] });
   assert.deepEqual(launchFor("open", file, "linux"), { command: "xdg-open", args: [file.path] });
   assert.equal(launchFor("open", file, "aix"), null);
+});
+
+// Explorer reads the comma as a field separator only outside quotes, and argv
+// quoting would put a space after it, which selects nothing -- measured: the
+// window does not even open.
+test("a Windows reveal keeps /select, against the quoted path", () => {
+  const path = "C:\\Test Results\\run.trx";
+  const launch = launchFor("reveal", { kind: "file", path }, "win32")!;
+  assert.deepEqual(launch.args, [`/select,"${path}"`]);
+  assert.equal(launch.verbatim, true, "a raw command line is the only way to spell it");
 });
 
 // A folder is where the run is; there is nothing inside it to single out.
@@ -219,6 +229,27 @@ test("results the agent reported have nothing to reveal", async () => {
     assert.equal(res.status, 404);
   } finally {
     await handle.close();
+  }
+});
+
+// An action replaces the rows but leaves the sources loaded, so the file is
+// still there to be found -- it just no longer describes what is on screen.
+test("an action replacing a loaded run leaves nothing to reveal", async () => {
+  const root = mkdtempSync(join(tmpdir(), "reveal-"));
+  const path = write(join(root, REPORT));
+  const handle = await createResultsServer({ port: 0, watch: false, coverage: false, resultsFile: path, launch: () => {} });
+  try {
+    assert.deepEqual(handle.revealTarget(), { kind: "file", path });
+    handle.setResults([{ name: "reported by an action", status: "pass" }]);
+    assert.equal(handle.revealTarget(), null, "set_results replaced the run");
+
+    handle.loadNamed(handle.currentFile());
+    assert.deepEqual(handle.revealTarget(), { kind: "file", path }, "reloading the file restores it");
+    handle.clearResults();
+    assert.equal(handle.revealTarget(), null, "clear_all replaced the run too");
+  } finally {
+    await handle.close();
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
