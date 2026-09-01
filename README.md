@@ -24,6 +24,14 @@ Inside a git repository it also offers **diff mode**: a strip above the list tag
 the tests your current change touches — added, edited, or likely affected by the
 production code you edited — and can narrow the run to just those rows.
 
+Beside the report picker, **Reveal** shows the run in your file manager
+(Explorer, Finder, or the desktop's folder opener on Linux — where selecting the
+file itself isn't portable, so the containing folder opens) and **Open** launches
+it with its default application. A merged run has no single file, so it gets one
+**Open folder** button pointing at the folder its reports share. They act only on
+what the panel currently holds, are disabled when the results came from the
+agent's actions and no file backs them, and report a failed launch in the panel.
+
 
 ## Install (once, per user — works in every project)
 ### Step 1:
@@ -64,6 +72,8 @@ src/
   view.ts                HTML shell + CSS served to the panel (no result rendering)
   server.ts              SDK-free HTTP/SSE server, file loading + watching
   ask.ts                 server-side composition of the "ask agent" prompts
+  reveal.ts              the shell command that reveals/opens the run, and the
+                         folder a merged run resolves to
   validate.ts            narrows untrusted agent input at the action/open boundary
   labels.ts              file-picker label disambiguation
   rowkey.ts              stable row identity across live payloads
@@ -115,6 +125,7 @@ test/
   labels.test.ts         unit tests for the label generator
   rowkey.test.ts         unit tests for row identity
   ask.test.ts            unit tests for prompt composition
+  reveal.test.ts         unit tests for path authorization + platform commands
   validate.test.ts       unit tests for the input-validation boundary
   coverage-parsers.test.ts   the three coverage parsers + format detection
   coverage-patch.test.ts     diff parsing, patch intersection, ranking, /source

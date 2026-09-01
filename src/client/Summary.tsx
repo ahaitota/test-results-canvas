@@ -1,9 +1,12 @@
 // Headline area: the file picker, the run title, the pass/fail banner, and the
 // clickable status chips that drive filtering.
+import { useState } from "preact/hooks";
 import type { TestStatus } from "../types";
 import type { Summary as SummaryCounts } from "./derive";
 import type { GroupSource } from "./useResultsStream";
 import { fmtDur } from "./format";
+import { revealReport } from "./askAgent";
+import type { RevealMode } from "./askAgent";
 
 // Shown only for a merged run, where "6 tests" on its own hides the fact that
 // they came from three different projects and one of them may be missing.
@@ -31,17 +34,50 @@ export function GroupSummary({ name, sources, total }: {
   );
 }
 
-export function FilePicker({ files, file, onPick, onFocus }: {
+export function FilePicker({ files, file, reveal, onPick, onFocus }: {
   files: string[];
   file: string;
+  // Null disables both actions: the rows on screen have no file behind them.
+  reveal: { kind: "file" | "dir"; path: string } | null;
   onPick: (e: Event) => void;
   onFocus: () => void;
 }) {
+  const [error, setError] = useState<string | null>(null);
+  const run = async (mode: RevealMode) => setError(await revealReport(mode));
+  // A merged run points at a folder, where revealing and opening are one act.
+  // Two buttons doing it would only invite the question of how they differ.
+  const folder = reveal?.kind === "dir";
+  const disabled = !reveal;
+  const nothing = "This run has no report file on disk";
+
   return (
     <div class="controls">
+      {error && <span class="reveal-error" data-testid="reveal-error">{error}</span>}
       <select id="file-select" data-testid="file-select" title="Choose which results file to display" value={file} onChange={onPick} onFocus={onFocus}>
         {(files || []).map((f) => <option value={f} key={f}>{f}</option>)}
       </select>
+      <button
+        class="link-btn"
+        data-testid="reveal-report"
+        type="button"
+        disabled={disabled}
+        title={reveal ? `Show ${reveal.path} in the file manager` : nothing}
+        onClick={() => run("reveal")}
+      >
+        {folder ? "Open folder" : "Reveal"}
+      </button>
+      {!folder && (
+        <button
+          class="link-btn"
+          data-testid="open-report"
+          type="button"
+          disabled={disabled}
+          title={reveal ? `Open ${reveal.path} in its default application` : nothing}
+          onClick={() => run("open")}
+        >
+          Open
+        </button>
+      )}
     </div>
   );
 }

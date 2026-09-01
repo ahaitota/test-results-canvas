@@ -13,7 +13,9 @@ import { composeAskPrompt, composeCoveragePrompt, composePatchCoveragePrompt, co
 import { computeRelevance, identitiesOf, matchAgentTests } from "./diff/relevance.js";
 import { rowIdentity } from "./rowkey.js";
 import { loadCoverageFile, discoverCoverageFor, newestCoverageFileIn, findProjectRoot, suggestCoverageCommand, readSourceView, hasCoverageExt, changedLines, isGeneratedPath, } from "./coverage/index.js";
+import { launchFor, commonParent } from "./reveal.js";
 import { randomBytes } from "node:crypto";
+import { spawn } from "node:child_process";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const VIEW_PATH = join(__dirname, "view.js");
 const CLIENT_BUNDLE = join(__dirname, "..", "client", "app.js");
@@ -169,10 +171,29 @@ function registerSamples(discovered) {
     }
     catch { /* no samples bundled */ }
 }
+// Hand the run to the desktop shell. Detached and argv-based: no shell parses
+// the path, and the launched app outlives this server. Exit codes are ignored on
+// purpose (explorer.exe reports failure on success); only a failure to spawn --
+// no opener installed -- is an error.
+//
+// `windowsHide` must stay off: it reaches the child as SW_HIDE in its
+// STARTUPINFO, and Explorer applies that to the folder window it opens, which
+// then exists but is invisible.
+function spawnLaunch({ command, args, verbatim }) {
+    return new Promise((resolve, reject) => {
+        const child = spawn(command, args, { detached: true, stdio: "ignore", windowsVerbatimArguments: verbatim });
+        child.once("error", reject);
+        child.once("spawn", () => {
+            child.unref();
+            resolve();
+        });
+    });
+}
 export async function createResultsServer(options = {}) {
     // watch=false disables the results-dir watcher.
     const { resultsFile, resultsDir, title = "Test Results", port = 0, watch: watchEnabled = true, onAsk } = options;
     const coverageEnabled = options.coverage !== false;
+    const launch = options.launch ?? spawnLaunch;
     // The server listens on a fixed, guessable port, so /ask -- which can drive
     // the user's agent -- is gated on a secret minted per instance and handed
     // only to the page this server rendered.
@@ -320,6 +341,7 @@ export async function createResultsServer(options = {}) {
             results,
             file,
             files: selectableFiles(),
+            reveal: revealTarget(),
             // Null for the classic single-file case, so a one-file panel renders
             // exactly as it did. Only what the header shows: a path would be
             // payload the UI never reads.
@@ -620,6 +642,26 @@ export async function createResultsServer(options = {}) {
         const list = listResultFiles(discovered);
         const name = groupDef?.name;
         return name && !list.includes(name) ? [name, ...list] : list;
+    }
+    // What /reveal acts on. A single run is its file; a merged run has no single
+    // file, so it is the folder its sources share. Null when nothing on disk
+    // backs the rows on screen -- results the agent reported, or a report
+    // deleted since it was loaded.
+    function revealTarget() {
+        // An action replaces the rows without touching the sources, so the file
+        // they came from is no longer what is on screen.
+        if (!loadedResultsPath)
+            return null;
+        const paths = entries.map((e) => e.source.path);
+        if (!paths.length)
+            return null;
+        const target = paths.length === 1
+            ? { kind: "file", path: paths[0] }
+            : (() => {
+                const dir = commonParent(paths, process.platform);
+                return dir ? { kind: "dir", path: dir } : null;
+            })();
+        return target && existsSync(target.path) ? target : null;
     }
     function buildEntry(abs) {
         const rows = parseResultsFile(abs);
@@ -1097,6 +1139,40 @@ export async function createResultsServer(options = {}) {
         }
         return sendJson(res, 200, { ok: true });
     }
+    // Reveal or open the run through the desktop shell. The page chooses the
+    // action, never the path: that comes from this server's own source set, so a
+    // page cannot name an unrelated file. Token-gated exactly like /ask.
+    async function handleReveal(req, res) {
+        if (req.method !== "POST")
+            return sendJson(res, 405, { ok: false, error: "POST required" });
+        if (bearerToken(req) !== askToken)
+            return sendJson(res, 403, { ok: false, error: "bad token" });
+        let body;
+        try {
+            body = await readJsonBody(req);
+        }
+        catch (err) {
+            return sendJson(res, 400, { ok: false, error: err instanceof Error ? err.message : "bad request" });
+        }
+        const mode = body?.mode;
+        if (mode !== "reveal" && mode !== "open") {
+            return sendJson(res, 400, { ok: false, error: "mode must be 'reveal' or 'open'" });
+        }
+        const target = revealTarget();
+        if (!target)
+            return sendJson(res, 404, { ok: false, error: "this run has no report file on disk" });
+        const command = launchFor(mode, target, process.platform);
+        if (!command)
+            return sendJson(res, 501, { ok: false, error: `${process.platform} has no known file manager` });
+        try {
+            await launch(command);
+        }
+        catch (err) {
+            console.error("[server] launch failed:", err instanceof Error ? err.message : err);
+            return sendJson(res, 502, { ok: false, error: mode === "reveal" ? "could not open the file manager" : "could not open the report" });
+        }
+        return sendJson(res, 200, { ok: true });
+    }
     // Source text plus per-line hits for one file in the loaded report.
     function handleSource(url, res) {
         const u = new URL(url, "http://localhost");
@@ -1196,6 +1272,10 @@ export async function createResultsServer(options = {}) {
             handleSource(url, res);
             return;
         }
+        if (url === "/reveal" || url.startsWith("/reveal?")) {
+            await handleReveal(req, res);
+            return;
+        }
         if (url === "/client.js" || url.startsWith("/client.js?")) {
             try {
                 const js = readFileSync(CLIENT_BUNDLE);
@@ -1238,6 +1318,7 @@ export async function createResultsServer(options = {}) {
         // Exposed so tests can post to /ask without scraping it out of the HTML.
         askToken,
         currentFile: () => file,
+        revealTarget,
         getResults: () => results,
         setResults(list) {
             const denied = denyWrite();

@@ -156,6 +156,8 @@ export function renderShell(title: string, askToken = ""): string {
   .msg-preview:hover { border-color:var(--fgColor-muted); }
   .empty { color:var(--fgColor-muted); font-style:italic; }
   .controls { display:flex; align-items:center; gap:12px; justify-content:flex-end; }
+  /* A failed reveal/open sits at the far left of the picker row. */
+  .reveal-error { margin-right:auto; font-size:12px; color:var(--fgColor-danger); }
   .head { margin-top:10px; }
   .head h1 { margin:0; }
   #file-select {
