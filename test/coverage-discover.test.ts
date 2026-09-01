@@ -675,6 +675,51 @@ test("suggestCoverageCommand names the right command for the project in front of
   }
 });
 
+// The runner a .NET project actually uses, for the configurations a
+// package-name heuristic gets wrong.
+test("suggestCoverageCommand reads the runner settings rather than the package names", () => {
+  const cases: [string, Record<string, string>, string][] = [
+    // MSTest.Sdk defaults to the platform, but can be opted back out.
+    ["MSTest.Sdk", { "App.csproj": '<Project Sdk="MSTest.Sdk/3.6.0" />' }, "mtp"],
+    ["MSTest.Sdk with UseVSTest", { "App.csproj": '<Project Sdk="MSTest.Sdk/3.6.0"><PropertyGroup><UseVSTest>true</UseVSTest></PropertyGroup></Project>' }, "vstest"],
+    // A named property is not an opt-in; only its value is.
+    ["opted out explicitly", { "App.csproj": "<Project><PropertyGroup><UseMicrosoftTestingPlatform>false</UseMicrosoftTestingPlatform></PropertyGroup></Project>" }, "vstest"],
+    // xunit.v3 ships the VSTest adapter too, so the package says nothing.
+    ["xunit.v3 on the VSTest adapter", { "App.csproj": '<Project><ItemGroup><PackageReference Include="xunit.v3" /><PackageReference Include="xunit.runner.visualstudio" /></ItemGroup></Project>' }, "vstest"],
+    ["xunit.v3 opted in", { "App.csproj": '<Project><PropertyGroup><UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner></PropertyGroup><ItemGroup><PackageReference Include="xunit.v3" /></ItemGroup></Project>' }, "mtp"],
+    ["NUnit opted in via Directory.Build.props", { "App.csproj": "<Project />", "Directory.Build.props": "<Project><PropertyGroup><EnableNUnitRunner>true</EnableNUnitRunner></PropertyGroup></Project>" }, "mtp"],
+  ];
+
+  for (const [name, files, expected] of cases) {
+    const dir = mkdtempSync(join(tmpdir(), "cov-runner-"));
+    try {
+      for (const [file, body] of Object.entries(files)) writeFileSync(join(dir, file), body);
+      const hint = suggestCoverageCommand(dir);
+      const got = hint.ecosystem.includes("Microsoft.Testing.Platform") ? "mtp" : "vstest";
+      assert.equal(got, expected, name);
+      // Whichever is primary, the other is always offered.
+      assert.ok(hint.alternative);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
+
+// Before .NET 10, and without the global.json opt-in, `dotnet test` rejects
+// platform options that do not follow `--`.
+test("suggestCoverageCommand picks the dotnet test syntax the project's mode accepts", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cov-mode-"));
+  try {
+    writeFileSync(join(dir, "App.csproj"), '<Project Sdk="MSTest.Sdk/3.6.0" />');
+    assert.match(suggestCoverageCommand(dir).command, /dotnet test -- --coverage/);
+
+    writeFileSync(join(dir, "global.json"), '{ "test": { "runner": "Microsoft.Testing.Platform" } }');
+    assert.match(suggestCoverageCommand(dir).command, /dotnet test --coverage/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("suggestCoverageCommand still returns something usable for an unknown project", () => {
   const bare = mkdtempSync(join(tmpdir(), "cov-unknown-"));
   try {

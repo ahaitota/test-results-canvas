@@ -9,30 +9,68 @@ const VSTEST = {
     command: 'dotnet test --collect:"XPlat Code Coverage"',
     outputHint: "TestResults/<guid>/coverage.cobertura.xml",
 };
-const TESTING_PLATFORM = {
-    ecosystem: ".NET (Microsoft.Testing.Platform)",
-    command: "dotnet test --coverage --coverage-output-format cobertura",
-    outputHint: "TestResults/*.cobertura.xml",
-};
-// Naming what the project actually uses, since the collector command is
-// rejected by Microsoft.Testing.Platform and vice versa.
-const TESTING_PLATFORM_MARKER = /UseMicrosoftTestingPlatform|MSTest\.Sdk|Microsoft\.Testing\.|TUnit|xunit\.v3/i;
-function usesTestingPlatform(root) {
-    if (!root)
-        return false;
+// Before .NET 10 -- and on .NET 10 without the global.json opt-in -- `dotnet
+// test` bridges Microsoft.Testing.Platform through VSTest, which rejects runner
+// options unless they follow `--`.
+function testingPlatform(nativeDotnetTest) {
+    return {
+        ecosystem: ".NET (Microsoft.Testing.Platform)",
+        command: `dotnet test ${nativeDotnetTest ? "" : "-- "}--coverage --coverage-output-format cobertura`,
+        outputHint: "TestResults/*.cobertura.xml",
+    };
+}
+// Properties that turn the platform on, in the framework-specific spellings.
+const RUNNER_PROPS = ["EnableMSTestRunner", "UseMicrosoftTestingPlatformRunner", "EnableNUnitRunner", "UseMicrosoftTestingPlatform"];
+function boolProp(xml, name) {
+    const m = new RegExp(`<${name}\\s*>\\s*(true|false)\\s*</${name}\\s*>`, "i").exec(xml);
+    return m ? m[1].toLowerCase() === "true" : undefined;
+}
+function readProjectXml(root) {
     try {
         return readdirSync(root)
-            .filter((n) => /\.(csproj|fsproj|props)$/i.test(n))
-            .some((n) => TESTING_PLATFORM_MARKER.test(readFileSync(join(root, n), "utf8")));
+            .filter((n) => /\.(csproj|fsproj)$/i.test(n) || /^directory\.build\.props$/i.test(n))
+            .map((n) => {
+            try {
+                return readFileSync(join(root, n), "utf8");
+            }
+            catch {
+                return "";
+            }
+        })
+            .join("\n");
+    }
+    catch {
+        return "";
+    }
+}
+// Which runner `dotnet test` will actually use. Package names cannot answer
+// this: xunit.v3 ships the VSTest adapter too, and MSTest.Sdk -- which defaults
+// to the platform -- can be opted back out. So the settings decide, and only
+// TUnit, which has no VSTest mode, is taken from its package alone.
+function usesTestingPlatform(xml) {
+    if (boolProp(xml, "UseVSTest") === true)
+        return false;
+    const set = RUNNER_PROPS.map((p) => boolProp(xml, p));
+    if (set.some((v) => v === true))
+        return true;
+    if (set.some((v) => v === false))
+        return false;
+    return /Sdk\s*=\s*"MSTest\.Sdk/i.test(xml) || /Include\s*=\s*"TUnit/i.test(xml);
+}
+// .NET 10 only runs the platform natively when global.json asks for it.
+function nativeDotnetTest(root) {
+    try {
+        return /"runner"\s*:\s*"Microsoft\.Testing\.Platform"/i.test(readFileSync(join(root, "global.json"), "utf8"));
     }
     catch {
         return false;
     }
 }
 function dotnet(root) {
-    return usesTestingPlatform(root)
-        ? { ...TESTING_PLATFORM, alternative: VSTEST }
-        : { ...VSTEST, alternative: TESTING_PLATFORM };
+    const platform = testingPlatform(root ? nativeDotnetTest(root) : false);
+    return root && usesTestingPlatform(readProjectXml(root))
+        ? { ...platform, alternative: VSTEST }
+        : { ...VSTEST, alternative: platform };
 }
 const FALLBACK = {
     ecosystem: "your test runner",
