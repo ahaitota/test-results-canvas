@@ -29,26 +29,32 @@ function testingPlatform(nativeDotnetTest: boolean) {
 // Properties that turn the platform on, in the framework-specific spellings.
 const RUNNER_PROPS = ["EnableMSTestRunner", "UseMicrosoftTestingPlatformRunner", "EnableNUnitRunner", "UseMicrosoftTestingPlatform"];
 
+// A repository root often holds only the .sln, with the test project nested
+// under tests/ -- so the search descends, bounded, rather than reading the root.
+const SKIP_DIR = /^(bin|obj|node_modules|TestResults|packages)$|^\./i;
+
 function boolProp(xml: string, name: string): boolean | undefined {
     const m = new RegExp(`<${name}\\s*>\\s*(true|false)\\s*</${name}\\s*>`, "i").exec(xml);
     return m ? m[1].toLowerCase() === "true" : undefined;
 }
 
-function readProjectXml(root: string): string {
+function readProjectXml(dir: string, depth = 3): string {
+    let entries;
     try {
-        return readdirSync(root)
-            .filter((n) => /\.(csproj|fsproj)$/i.test(n) || /^directory\.build\.props$/i.test(n))
-            .map((n) => {
-                try {
-                    return readFileSync(join(root, n), "utf8");
-                } catch {
-                    return "";
-                }
-            })
-            .join("\n");
+        entries = readdirSync(dir, { withFileTypes: true });
     } catch {
         return "";
     }
+    return entries.map((e) => {
+        const p = join(dir, e.name);
+        if (e.isDirectory()) return depth > 0 && !SKIP_DIR.test(e.name) ? readProjectXml(p, depth - 1) : "";
+        if (!/\.(csproj|fsproj)$/i.test(e.name) && !/^directory\.build\.props$/i.test(e.name)) return "";
+        try {
+            return readFileSync(p, "utf8");
+        } catch {
+            return "";
+        }
+    }).join("\n");
 }
 
 // Which runner `dotnet test` will actually use. Package names cannot answer
@@ -60,7 +66,7 @@ function usesTestingPlatform(xml: string): boolean {
     const set = RUNNER_PROPS.map((p) => boolProp(xml, p));
     if (set.some((v) => v === true)) return true;
     if (set.some((v) => v === false)) return false;
-    return /Sdk\s*=\s*"MSTest\.Sdk/i.test(xml) || /Include\s*=\s*"TUnit/i.test(xml);
+    return /(Project\s+Sdk|<Sdk\b[^>]*\bName)\s*=\s*"MSTest\.Sdk/i.test(xml) || /Include\s*=\s*"TUnit/i.test(xml);
 }
 
 // .NET 10 only runs the platform natively when global.json asks for it.

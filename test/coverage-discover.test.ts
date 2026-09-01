@@ -6,7 +6,7 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve as resolvePath } from "node:path";
+import { join, dirname, resolve as resolvePath } from "node:path";
 import { discoverCoverageFor, newestCoverageFileIn, pickBest } from "../src/coverage/discover.js";
 import { findProjectRoot, resolveReportSources } from "../src/coverage/sources/resolve.js";
 import { commonSuffixSegments, findByPath, normalizeSlashes, withinRoot } from "../src/coverage/sources/paths.js";
@@ -688,12 +688,19 @@ test("suggestCoverageCommand reads the runner settings rather than the package n
     ["xunit.v3 on the VSTest adapter", { "App.csproj": '<Project><ItemGroup><PackageReference Include="xunit.v3" /><PackageReference Include="xunit.runner.visualstudio" /></ItemGroup></Project>' }, "vstest"],
     ["xunit.v3 opted in", { "App.csproj": '<Project><PropertyGroup><UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner></PropertyGroup><ItemGroup><PackageReference Include="xunit.v3" /></ItemGroup></Project>' }, "mtp"],
     ["NUnit opted in via Directory.Build.props", { "App.csproj": "<Project />", "Directory.Build.props": "<Project><PropertyGroup><EnableNUnitRunner>true</EnableNUnitRunner></PropertyGroup></Project>" }, "mtp"],
+    // The root of a solution commonly holds no project file at all.
+    ["nested test project", { "App.sln": "", "tests/App.Tests/App.Tests.csproj": '<Project Sdk="MSTest.Sdk/3.6.0" />' }, "mtp"],
+    // MSBuild's other way of spelling the same SDK reference.
+    ["Sdk element", { "App.csproj": '<Project><Sdk Name="MSTest.Sdk" Version="3.6.0" /></Project>' }, "mtp"],
   ];
 
   for (const [name, files, expected] of cases) {
     const dir = mkdtempSync(join(tmpdir(), "cov-runner-"));
     try {
-      for (const [file, body] of Object.entries(files)) writeFileSync(join(dir, file), body);
+      for (const [file, body] of Object.entries(files)) {
+        mkdirSync(dirname(join(dir, file)), { recursive: true });
+        writeFileSync(join(dir, file), body);
+      }
       const hint = suggestCoverageCommand(dir);
       const got = hint.ecosystem.includes("Microsoft.Testing.Platform") ? "mtp" : "vstest";
       assert.equal(got, expected, name);
