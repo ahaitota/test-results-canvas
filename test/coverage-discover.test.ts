@@ -6,7 +6,7 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve as resolvePath } from "node:path";
+import { join, dirname, resolve as resolvePath } from "node:path";
 import { discoverCoverageFor, newestCoverageFileIn, pickBest } from "../src/coverage/discover.js";
 import { findProjectRoot, resolveReportSources } from "../src/coverage/sources/resolve.js";
 import { commonSuffixSegments, findByPath, normalizeSlashes, withinRoot } from "../src/coverage/sources/paths.js";
@@ -654,10 +654,93 @@ test("suggestCoverageCommand names the right command for the project in front of
   try {
     writeFileSync(join(dotnet, "App.csproj"), "<Project />");
     const hint = suggestCoverageCommand(dotnet);
-    assert.equal(hint.ecosystem, ".NET");
+    assert.equal(hint.ecosystem, ".NET (VSTest)");
     assert.match(hint.command, /dotnet test/);
+    // The collector command is rejected by Microsoft.Testing.Platform, so the
+    // panel must not present it as the only way to collect coverage.
+    assert.equal(hint.alternative?.ecosystem, ".NET (Microsoft.Testing.Platform)");
   } finally {
     rmSync(dotnet, { recursive: true, force: true });
+  }
+
+  const mtp = mkdtempSync(join(tmpdir(), "cov-mtp-"));
+  try {
+    writeFileSync(join(mtp, "App.csproj"), '<Project Sdk="MSTest.Sdk/3.6.0" />');
+    const hint = suggestCoverageCommand(mtp);
+    assert.equal(hint.ecosystem, ".NET (Microsoft.Testing.Platform)");
+    assert.match(hint.command, /--coverage/);
+    assert.equal(hint.alternative?.ecosystem, ".NET (VSTest)");
+  } finally {
+    rmSync(mtp, { recursive: true, force: true });
+  }
+});
+
+// The runner a .NET project actually uses, for the configurations a
+// package-name heuristic gets wrong.
+test("suggestCoverageCommand reads the runner settings rather than the package names", () => {
+  const MIXED = {
+    "App.sln": "",
+    "tests/Mtp/Mtp.csproj": '<Project Sdk="MSTest.Sdk/3.6.0" />',
+    "tests/Legacy/Legacy.csproj": "<Project><PropertyGroup><UseVSTest>true</UseVSTest></PropertyGroup></Project>",
+  };
+  const cases: [string, Record<string, string>, string, string?][] = [
+    // MSTest.Sdk defaults to the platform, but can be opted back out.
+    ["MSTest.Sdk", { "App.csproj": '<Project Sdk="MSTest.Sdk/3.6.0" />' }, "mtp"],
+    ["MSTest.Sdk with UseVSTest", { "App.csproj": '<Project Sdk="MSTest.Sdk/3.6.0"><PropertyGroup><UseVSTest>true</UseVSTest></PropertyGroup></Project>' }, "vstest"],
+    // A named property is not an opt-in; only its value is.
+    ["opted out explicitly", { "App.csproj": "<Project><PropertyGroup><UseMicrosoftTestingPlatform>false</UseMicrosoftTestingPlatform></PropertyGroup></Project>" }, "vstest"],
+    // xunit.v3 ships the VSTest adapter too, so the package says nothing.
+    ["xunit.v3 on the VSTest adapter", { "App.csproj": '<Project><ItemGroup><PackageReference Include="xunit.v3" /><PackageReference Include="xunit.runner.visualstudio" /></ItemGroup></Project>' }, "vstest"],
+    ["xunit.v3 opted in", { "App.csproj": '<Project><PropertyGroup><UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner></PropertyGroup><ItemGroup><PackageReference Include="xunit.v3" /></ItemGroup></Project>' }, "mtp"],
+    ["NUnit opted in via Directory.Build.props", { "App.csproj": "<Project />", "Directory.Build.props": "<Project><PropertyGroup><EnableNUnitRunner>true</EnableNUnitRunner></PropertyGroup></Project>" }, "mtp"],
+    // The root of a solution commonly holds no project file at all.
+    ["nested test project", { "App.sln": "", "tests/App.Tests/App.Tests.csproj": '<Project Sdk="MSTest.Sdk/3.6.0" />' }, "mtp"],
+    // MSBuild's other way of spelling the same SDK reference, in either quote.
+    ["Sdk element", { "App.csproj": '<Project><Sdk Name="MSTest.Sdk" Version="3.6.0" /></Project>' }, "mtp"],
+    ["single-quoted Sdk element", { "App.csproj": "<Project><Sdk Name='MSTest.Sdk' Version='3.6.0' /></Project>" }, "mtp"],
+    ["single-quoted Project Sdk", { "App.csproj": "<Project Sdk='MSTest.Sdk/3.6.0' />" }, "mtp"],
+    // A solution can mix runners, so the run decides which project is read.
+    ["mixed runners, run under the platform project", MIXED, "mtp", "tests/Mtp/TestResults/run.trx"],
+    ["mixed runners, run under the VSTest project", MIXED, "vstest", "tests/Legacy/TestResults/run.trx"],
+    // --results-directory centralizes the TRX, so it names no project at all.
+    ["mixed runners, centralized results", MIXED, "unknown", "TestResults/run.trx"],
+    // Directory.Build.props is imported first, so the project's value decides.
+    ["project overrides the inherited props", {
+      "tests/Z.Tests/Directory.Build.props": "<Project><PropertyGroup><UseVSTest>true</UseVSTest></PropertyGroup></Project>",
+      "tests/Z.Tests/Z.Tests.csproj": '<Project Sdk="MSTest.Sdk/3.6.0"><PropertyGroup><UseVSTest>false</UseVSTest></PropertyGroup></Project>',
+    }, "mtp", "tests/Z.Tests/TestResults/run.trx"],
+  ];
+
+  for (const [name, files, expected, results] of cases) {
+    const dir = mkdtempSync(join(tmpdir(), "cov-runner-"));
+    try {
+      for (const [file, body] of Object.entries(files)) {
+        mkdirSync(dirname(join(dir, file)), { recursive: true });
+        writeFileSync(join(dir, file), body);
+      }
+      const hint = suggestCoverageCommand(dir, results && join(dir, results));
+      const got = hint.ecosystem.includes("Microsoft.Testing.Platform") ? "mtp" : hint.ecosystem.includes("VSTest") ? "vstest" : "unknown";
+      assert.equal(got, expected, name);
+      // Whichever is primary, the other is always offered.
+      assert.ok(hint.alternative);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
+
+// Before .NET 10, and without the global.json opt-in, `dotnet test` rejects
+// platform options that do not follow `--`.
+test("suggestCoverageCommand picks the dotnet test syntax the project's mode accepts", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cov-mode-"));
+  try {
+    writeFileSync(join(dir, "App.csproj"), '<Project Sdk="MSTest.Sdk/3.6.0" />');
+    assert.match(suggestCoverageCommand(dir).command, /dotnet test -- --coverage/);
+
+    writeFileSync(join(dir, "global.json"), '{ "test": { "runner": "Microsoft.Testing.Platform" } }');
+    assert.match(suggestCoverageCommand(dir).command, /dotnet test --coverage/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 

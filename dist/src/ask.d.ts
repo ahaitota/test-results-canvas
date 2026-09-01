@@ -9,7 +9,10 @@ export interface UncoveredFile {
 }
 export declare function composeCoveragePrompt(file: UncoveredFile): string;
 export declare function composePatchCoveragePrompt(patch: PatchCoverage): string;
-export declare function composeEnableCoveragePrompt(command: string, ecosystem: string): string;
+export declare function composeEnableCoveragePrompt(command: string, ecosystem: string, alternative?: {
+    ecosystem: string;
+    command: string;
+}): string;
 export interface ImpactRequest {
     against: string;
     files: readonly string[];

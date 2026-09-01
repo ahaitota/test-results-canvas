@@ -1079,7 +1079,7 @@ export async function createResultsServer(options = {}) {
         let prompt;
         if (scope === "enable") {
             const hint = coverageHint ?? suggestCoverageCommand(projectRoot, resultsAbsPath ?? undefined);
-            prompt = composeEnableCoveragePrompt(hint.command, hint.ecosystem);
+            prompt = composeEnableCoveragePrompt(hint.command, hint.ecosystem, hint.alternative);
         }
         else if (scope === "patch") {
             const patch = coverage?.payload.patch;

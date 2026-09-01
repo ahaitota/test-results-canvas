@@ -179,10 +179,11 @@ export function composePatchCoveragePrompt(patch: PatchCoverage): string {
 }
 
 // "This run produced no coverage at all -- re-run collecting it."
-export function composeEnableCoveragePrompt(command: string, ecosystem: string): string {
+export function composeEnableCoveragePrompt(command: string, ecosystem: string, alternative?: { ecosystem: string; command: string }): string {
   return [
     `Re-run this project's tests with code coverage collection enabled, then open the "Test Results" canvas with the coverage report so I can see what is covered.`,
     `Detected toolchain: ${label(ecosystem)}. Suggested command:\n${fenced(label(command))}`,
+    ...(alternative ? [`If the project uses ${label(alternative.ecosystem)} instead, use:\n${fenced(label(alternative.command))}`] : []),
     "If that command is not right for this project, use the equivalent that produces a Cobertura, LCOV or JaCoCo report.",
   ].join("\n\n");
 }

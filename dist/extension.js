@@ -164,7 +164,8 @@ function surfaceIfResults(input) {
         // useful once it can show which code the run actually exercised.
         const suggestion = hasCoverage ? "" : (() => {
             const hint = suggestCoverageCommand(projectRoot, abs);
-            return ` This run produced no code-coverage report. After opening the canvas, offer to re-run the tests with coverage collected (${hint.ecosystem}: \`${hint.command}\`, which writes ${hint.outputHint}) so the panel can also show which code is covered.`;
+            const alt = hint.alternative ? ` or, for ${hint.alternative.ecosystem}, \`${hint.alternative.command}\`` : "";
+            return ` This run produced no code-coverage report. After opening the canvas, offer to re-run the tests with coverage collected (${hint.ecosystem}: \`${hint.command}\`, which writes ${hint.outputHint}${alt}) so the panel can also show which code is covered.`;
         })();
         const headline = merged
             ? `The test run produced ${found.length} results files: ${found.map((f) => `"${f}"`).join(", ")}. ` +

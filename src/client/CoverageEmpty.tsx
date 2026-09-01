@@ -43,6 +43,13 @@ export function CoverageEmpty({ hint, error }: { hint: CoverageSuggestion | null
           </p>
           <pre class="cov-cmd" data-testid="coverage-command">{hint.command}</pre>
           <p class="cov-empty-note">Writes {hint.outputHint}, which this panel picks up automatically.</p>
+          {hint.alternative && (
+            <>
+              <p class="cov-empty-body">If the project uses {hint.alternative.ecosystem} instead:</p>
+              <pre class="cov-cmd" data-testid="coverage-command-alt">{hint.alternative.command}</pre>
+              <p class="cov-empty-note">Writes {hint.alternative.outputHint}.</p>
+            </>
+          )}
         </>
       )}
       <button

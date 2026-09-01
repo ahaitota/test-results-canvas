@@ -71,5 +71,6 @@ export interface CoverageSuggestion {
     ecosystem: string;
     command: string;
     outputHint: string;
+    alternative?: Omit<CoverageSuggestion, "alternative">;
 }
 export type CoverageLoadFailure = "missing" | "unreadable" | "too-large" | "not-coverage";

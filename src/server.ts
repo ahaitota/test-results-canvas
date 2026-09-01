@@ -1174,7 +1174,7 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         let prompt: string;
         if (scope === "enable") {
             const hint = coverageHint ?? suggestCoverageCommand(projectRoot, resultsAbsPath ?? undefined);
-            prompt = composeEnableCoveragePrompt(hint.command, hint.ecosystem);
+            prompt = composeEnableCoveragePrompt(hint.command, hint.ecosystem, hint.alternative);
         } else if (scope === "patch") {
             const patch = coverage?.payload.patch;
             if (!patch) return sendJson(res, 404, { ok: false, error: "no changed-code coverage to ask about" });
