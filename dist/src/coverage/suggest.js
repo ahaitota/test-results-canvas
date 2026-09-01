@@ -24,8 +24,10 @@ const RUNNER_PROPS = ["EnableMSTestRunner", "UseMicrosoftTestingPlatformRunner",
 // A repository root often holds only the .sln, with the test project nested
 // under tests/ -- so the search descends, bounded, rather than reading the root.
 const SKIP_DIR = /^(bin|obj|node_modules|TestResults|packages)$|^\./i;
+// The last match wins: MSBuild imports Directory.Build.props before the
+// project, so a value the project sets itself is the decisive one.
 function boolProp(xml, name) {
-    const m = new RegExp(`<${name}\\s*>\\s*(true|false)\\s*</${name}\\s*>`, "i").exec(xml);
+    const m = [...xml.matchAll(new RegExp(`<${name}\\s*>\\s*(true|false)\\s*</${name}\\s*>`, "gi"))].pop();
     return m ? m[1].toLowerCase() === "true" : undefined;
 }
 function entriesOf(dir) {
@@ -44,35 +46,43 @@ function readText(path) {
         return "";
     }
 }
-const isProjectFile = (n) => /\.(csproj|fsproj)$/i.test(n) || /^directory\.build\.props$/i.test(n);
-// The project that owns the run, plus the props it inherits, gathered from the
-// results file upwards. A solution can mix runners, so reading every project
-// would let one project's opt-out decide another project's command.
+const isProps = (n) => /^directory\.build\.props$/i.test(n);
+const isProject = (n) => /\.(csproj|fsproj)$/i.test(n);
+// The project that owns the run, plus the props it inherits, in MSBuild's
+// evaluation order -- outermost props first, the owning project last. Reading
+// every project instead would let one project's opt-out decide another's run.
 function ownerXml(root, resultsFile) {
-    const parts = [];
-    let project = false;
+    const props = [];
+    let project = "";
     for (let d = dirname(resolvePath(resultsFile)), i = 0; i < 12; d = dirname(d), i++) {
         for (const e of entriesOf(d)) {
-            if (e.isDirectory() || !isProjectFile(e.name))
+            if (e.isDirectory())
                 continue;
-            const own = /\.(csproj|fsproj)$/i.test(e.name);
-            if (own && project)
-                continue;
-            parts.push(readText(join(d, e.name)));
-            project ||= own;
+            if (isProps(e.name))
+                props.unshift(readText(join(d, e.name)));
+            else if (!project && isProject(e.name))
+                project = readText(join(d, e.name));
         }
         if (d === root || dirname(d) === d)
             break;
     }
-    return project ? parts.join("\n") : "";
+    return project ? [...props, project].join("\n") : "";
 }
-function readProjectXml(dir, depth = 3) {
-    return entriesOf(dir).map((e) => {
-        const p = join(dir, e.name);
-        if (e.isDirectory())
-            return depth > 0 && !SKIP_DIR.test(e.name) ? readProjectXml(p, depth - 1) : "";
-        return isProjectFile(e.name) ? readText(p) : "";
-    }).join("\n");
+// The verdict of every project below the root, each read with the props it
+// inherits. Results written to a central folder name no project, so a solution
+// whose projects disagree has to stay undecided rather than pick one of them.
+function scanRunners(dir, inherited, depth, found) {
+    const entries = entriesOf(dir);
+    const here = [inherited, ...entries.filter((e) => !e.isDirectory() && isProps(e.name)).map((e) => readText(join(dir, e.name)))].join("\n");
+    for (const e of entries) {
+        if (e.isDirectory()) {
+            if (depth > 0 && !SKIP_DIR.test(e.name))
+                scanRunners(join(dir, e.name), here, depth - 1, found);
+        }
+        else if (isProject(e.name)) {
+            found.add(usesTestingPlatform([here, readText(join(dir, e.name))].join("\n")));
+        }
+    }
 }
 // Which runner `dotnet test` will actually use. Package names cannot answer
 // this: xunit.v3 ships the VSTest adapter too, and MSTest.Sdk -- which defaults
@@ -94,10 +104,20 @@ function nativeDotnetTest(root) {
 }
 function dotnet(root, resultsFile) {
     const platform = testingPlatform(root ? nativeDotnetTest(root) : false);
-    const xml = root ? (resultsFile && ownerXml(root, resultsFile)) || readProjectXml(root) : "";
-    return usesTestingPlatform(xml)
-        ? { ...platform, alternative: VSTEST }
-        : { ...VSTEST, alternative: platform };
+    const owner = root && resultsFile ? ownerXml(root, resultsFile) : "";
+    let mtp;
+    if (owner) {
+        mtp = usesTestingPlatform(owner);
+    }
+    else if (root) {
+        const found = new Set();
+        scanRunners(root, "", 3, found);
+        mtp = found.size === 1 ? [...found][0] : undefined;
+    }
+    if (mtp === true)
+        return { ...platform, alternative: VSTEST };
+    // Undecided: offer both without claiming either is the one in use.
+    return { ...VSTEST, ecosystem: mtp === false ? VSTEST.ecosystem : ".NET (runner not detected)", alternative: platform };
 }
 const FALLBACK = {
     ecosystem: "your test runner",

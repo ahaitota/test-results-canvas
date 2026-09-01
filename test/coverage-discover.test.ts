@@ -702,6 +702,13 @@ test("suggestCoverageCommand reads the runner settings rather than the package n
     // A solution can mix runners, so the run decides which project is read.
     ["mixed runners, run under the platform project", MIXED, "mtp", "tests/Mtp/TestResults/run.trx"],
     ["mixed runners, run under the VSTest project", MIXED, "vstest", "tests/Legacy/TestResults/run.trx"],
+    // --results-directory centralizes the TRX, so it names no project at all.
+    ["mixed runners, centralized results", MIXED, "unknown", "TestResults/run.trx"],
+    // Directory.Build.props is imported first, so the project's value decides.
+    ["project overrides the inherited props", {
+      "tests/Z.Tests/Directory.Build.props": "<Project><PropertyGroup><UseVSTest>true</UseVSTest></PropertyGroup></Project>",
+      "tests/Z.Tests/Z.Tests.csproj": '<Project Sdk="MSTest.Sdk/3.6.0"><PropertyGroup><UseVSTest>false</UseVSTest></PropertyGroup></Project>',
+    }, "mtp", "tests/Z.Tests/TestResults/run.trx"],
   ];
 
   for (const [name, files, expected, results] of cases) {
@@ -712,7 +719,7 @@ test("suggestCoverageCommand reads the runner settings rather than the package n
         writeFileSync(join(dir, file), body);
       }
       const hint = suggestCoverageCommand(dir, results && join(dir, results));
-      const got = hint.ecosystem.includes("Microsoft.Testing.Platform") ? "mtp" : "vstest";
+      const got = hint.ecosystem.includes("Microsoft.Testing.Platform") ? "mtp" : hint.ecosystem.includes("VSTest") ? "vstest" : "unknown";
       assert.equal(got, expected, name);
       // Whichever is primary, the other is always offered.
       assert.ok(hint.alternative);
