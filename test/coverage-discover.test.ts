@@ -678,7 +678,12 @@ test("suggestCoverageCommand names the right command for the project in front of
 // The runner a .NET project actually uses, for the configurations a
 // package-name heuristic gets wrong.
 test("suggestCoverageCommand reads the runner settings rather than the package names", () => {
-  const cases: [string, Record<string, string>, string][] = [
+  const MIXED = {
+    "App.sln": "",
+    "tests/Mtp/Mtp.csproj": '<Project Sdk="MSTest.Sdk/3.6.0" />',
+    "tests/Legacy/Legacy.csproj": "<Project><PropertyGroup><UseVSTest>true</UseVSTest></PropertyGroup></Project>",
+  };
+  const cases: [string, Record<string, string>, string, string?][] = [
     // MSTest.Sdk defaults to the platform, but can be opted back out.
     ["MSTest.Sdk", { "App.csproj": '<Project Sdk="MSTest.Sdk/3.6.0" />' }, "mtp"],
     ["MSTest.Sdk with UseVSTest", { "App.csproj": '<Project Sdk="MSTest.Sdk/3.6.0"><PropertyGroup><UseVSTest>true</UseVSTest></PropertyGroup></Project>' }, "vstest"],
@@ -690,18 +695,23 @@ test("suggestCoverageCommand reads the runner settings rather than the package n
     ["NUnit opted in via Directory.Build.props", { "App.csproj": "<Project />", "Directory.Build.props": "<Project><PropertyGroup><EnableNUnitRunner>true</EnableNUnitRunner></PropertyGroup></Project>" }, "mtp"],
     // The root of a solution commonly holds no project file at all.
     ["nested test project", { "App.sln": "", "tests/App.Tests/App.Tests.csproj": '<Project Sdk="MSTest.Sdk/3.6.0" />' }, "mtp"],
-    // MSBuild's other way of spelling the same SDK reference.
+    // MSBuild's other way of spelling the same SDK reference, in either quote.
     ["Sdk element", { "App.csproj": '<Project><Sdk Name="MSTest.Sdk" Version="3.6.0" /></Project>' }, "mtp"],
+    ["single-quoted Sdk element", { "App.csproj": "<Project><Sdk Name='MSTest.Sdk' Version='3.6.0' /></Project>" }, "mtp"],
+    ["single-quoted Project Sdk", { "App.csproj": "<Project Sdk='MSTest.Sdk/3.6.0' />" }, "mtp"],
+    // A solution can mix runners, so the run decides which project is read.
+    ["mixed runners, run under the platform project", MIXED, "mtp", "tests/Mtp/TestResults/run.trx"],
+    ["mixed runners, run under the VSTest project", MIXED, "vstest", "tests/Legacy/TestResults/run.trx"],
   ];
 
-  for (const [name, files, expected] of cases) {
+  for (const [name, files, expected, results] of cases) {
     const dir = mkdtempSync(join(tmpdir(), "cov-runner-"));
     try {
       for (const [file, body] of Object.entries(files)) {
         mkdirSync(dirname(join(dir, file)), { recursive: true });
         writeFileSync(join(dir, file), body);
       }
-      const hint = suggestCoverageCommand(dir);
+      const hint = suggestCoverageCommand(dir, results && join(dir, results));
       const got = hint.ecosystem.includes("Microsoft.Testing.Platform") ? "mtp" : "vstest";
       assert.equal(got, expected, name);
       // Whichever is primary, the other is always offered.

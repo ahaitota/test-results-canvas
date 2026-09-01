@@ -3,7 +3,7 @@
 // coverage unless asked. Rather than show an empty panel, the canvas names the
 // exact command for the project in front of it. Detection is by marker file.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, resolve as resolvePath } from "node:path";
 const VSTEST = {
     ecosystem: ".NET (VSTest)",
     command: 'dotnet test --collect:"XPlat Code Coverage"',
@@ -28,26 +28,50 @@ function boolProp(xml, name) {
     const m = new RegExp(`<${name}\\s*>\\s*(true|false)\\s*</${name}\\s*>`, "i").exec(xml);
     return m ? m[1].toLowerCase() === "true" : undefined;
 }
-function readProjectXml(dir, depth = 3) {
-    let entries;
+function entriesOf(dir) {
     try {
-        entries = readdirSync(dir, { withFileTypes: true });
+        return readdirSync(dir, { withFileTypes: true });
+    }
+    catch {
+        return [];
+    }
+}
+function readText(path) {
+    try {
+        return readFileSync(path, "utf8");
     }
     catch {
         return "";
     }
-    return entries.map((e) => {
+}
+const isProjectFile = (n) => /\.(csproj|fsproj)$/i.test(n) || /^directory\.build\.props$/i.test(n);
+// The project that owns the run, plus the props it inherits, gathered from the
+// results file upwards. A solution can mix runners, so reading every project
+// would let one project's opt-out decide another project's command.
+function ownerXml(root, resultsFile) {
+    const parts = [];
+    let project = false;
+    for (let d = dirname(resolvePath(resultsFile)), i = 0; i < 12; d = dirname(d), i++) {
+        for (const e of entriesOf(d)) {
+            if (e.isDirectory() || !isProjectFile(e.name))
+                continue;
+            const own = /\.(csproj|fsproj)$/i.test(e.name);
+            if (own && project)
+                continue;
+            parts.push(readText(join(d, e.name)));
+            project ||= own;
+        }
+        if (d === root || dirname(d) === d)
+            break;
+    }
+    return project ? parts.join("\n") : "";
+}
+function readProjectXml(dir, depth = 3) {
+    return entriesOf(dir).map((e) => {
         const p = join(dir, e.name);
         if (e.isDirectory())
             return depth > 0 && !SKIP_DIR.test(e.name) ? readProjectXml(p, depth - 1) : "";
-        if (!/\.(csproj|fsproj)$/i.test(e.name) && !/^directory\.build\.props$/i.test(e.name))
-            return "";
-        try {
-            return readFileSync(p, "utf8");
-        }
-        catch {
-            return "";
-        }
+        return isProjectFile(e.name) ? readText(p) : "";
     }).join("\n");
 }
 // Which runner `dotnet test` will actually use. Package names cannot answer
@@ -62,20 +86,16 @@ function usesTestingPlatform(xml) {
         return true;
     if (set.some((v) => v === false))
         return false;
-    return /(Project\s+Sdk|<Sdk\b[^>]*\bName)\s*=\s*"MSTest\.Sdk/i.test(xml) || /Include\s*=\s*"TUnit/i.test(xml);
+    return /(Project\s+Sdk|<Sdk\b[^>]*\bName)\s*=\s*["']MSTest\.Sdk/i.test(xml) || /Include\s*=\s*["']TUnit/i.test(xml);
 }
 // .NET 10 only runs the platform natively when global.json asks for it.
 function nativeDotnetTest(root) {
-    try {
-        return /"runner"\s*:\s*"Microsoft\.Testing\.Platform"/i.test(readFileSync(join(root, "global.json"), "utf8"));
-    }
-    catch {
-        return false;
-    }
+    return /"runner"\s*:\s*"Microsoft\.Testing\.Platform"/i.test(readText(join(root, "global.json")));
 }
-function dotnet(root) {
+function dotnet(root, resultsFile) {
     const platform = testingPlatform(root ? nativeDotnetTest(root) : false);
-    return root && usesTestingPlatform(readProjectXml(root))
+    const xml = root ? (resultsFile && ownerXml(root, resultsFile)) || readProjectXml(root) : "";
+    return usesTestingPlatform(xml)
         ? { ...platform, alternative: VSTEST }
         : { ...VSTEST, alternative: platform };
 }
@@ -105,11 +125,11 @@ function readPackageJson(root) {
 // only have come from the .NET toolchain.
 export function suggestCoverageCommand(projectRoot, resultsFile) {
     if (resultsFile && resultsFile.toLowerCase().endsWith(".trx"))
-        return dotnet(projectRoot);
+        return dotnet(projectRoot, resultsFile);
     if (!projectRoot || !existsSync(projectRoot))
         return FALLBACK;
     if (hasFileMatching(projectRoot, /\.(sln|csproj|fsproj)$/i))
-        return dotnet(projectRoot);
+        return dotnet(projectRoot, resultsFile);
     if (existsSync(join(projectRoot, "pom.xml"))) {
         return {
             ecosystem: "Maven",
