@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AgentTestRef } from "./diff/relevance.js";
 import type { CoverageLoadFailure, GitExec } from "./coverage/index.js";
+import type { Launch, RevealTarget } from "./reveal.js";
 import type { TestResult, TestStatus } from "./types.js";
 export declare const RESULT_EXTS: string[];
 export declare function looksLikeResults(xml: unknown): boolean;
@@ -25,6 +26,7 @@ export interface ResultsServerOptions {
     coverage?: boolean;
     gitExec?: GitExec | null;
     onAsk?: (req: AskRequest) => void | Promise<void>;
+    launch?: (launch: Launch) => void | Promise<void>;
 }
 export interface AskRequest {
     prompt: string;
@@ -74,6 +76,7 @@ export declare function createResultsServer(options?: ResultsServerOptions): Pro
     port: number;
     askToken: string;
     currentFile: () => string;
+    revealTarget: () => RevealTarget | null;
     getResults: () => TestResult[];
     setResults(list: ResultInput[]): WriteResult;
     addResult(t: ResultInput): WriteResult;
