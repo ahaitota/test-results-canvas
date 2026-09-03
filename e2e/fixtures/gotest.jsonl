@@ -1,0 +1,5 @@
+{"Time":"2024-01-01T10:00:00Z","Action":"run","Package":"example/calc","Test":"TestAddsTwoNumbers"}
+{"Time":"2024-01-01T10:00:01Z","Action":"pass","Package":"example/calc","Test":"TestAddsTwoNumbers","Elapsed":0.042}
+{"Time":"2024-01-01T10:00:01Z","Action":"output","Package":"example/calc","Test":"TestSubtractsTwoNumbers","Output":"    calc_test.go:12: want 1 got 2\n"}
+{"Time":"2024-01-01T10:00:01Z","Action":"fail","Package":"example/calc","Test":"TestSubtractsTwoNumbers","Elapsed":0.015}
+{"Time":"2024-01-01T10:00:01Z","Action":"fail","Package":"example/calc","Elapsed":0.1}
