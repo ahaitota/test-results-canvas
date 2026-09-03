@@ -1,10 +1,10 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { looksLikeResults, RESULT_EXTS } from "./parsers/registry.js";
 import type { AgentTestRef } from "./diff/relevance.js";
 import type { CoverageLoadFailure, GitExec } from "./coverage/index.js";
 import type { Launch, RevealTarget } from "./reveal.js";
 import type { TestResult, TestStatus } from "./types.js";
-export declare const RESULT_EXTS: string[];
-export declare function looksLikeResults(xml: unknown): boolean;
+export { RESULT_EXTS, looksLikeResults };
 export declare function newestResultsFileIn(dir: string): string | null;
 export declare function normalizeStatus(raw: unknown): TestStatus;
 export interface SkippedPath {

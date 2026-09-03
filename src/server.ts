@@ -8,8 +8,8 @@ import type { FSWatcher } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, basename, relative, isAbsolute, resolve as resolvePath } from "node:path";
 import { watch, readFileSync, writeFileSync, existsSync, readdirSync, statSync } from "node:fs";
-import { serializeTrx, parseTrx } from "./parsers/trx.js";
-import { parseJUnit } from "./parsers/junit.js";
+import { serializeTrx } from "./parsers/trx.js";
+import { looksLikeResults, parseResultsAt, RESULT_EXTS } from "./parsers/registry.js";
 import { labelForPath } from "./labels.js";
 import { mergeSources } from "./sources.js";
 import type { Source } from "./sources.js";
@@ -71,13 +71,9 @@ const EXTENSION_ROOT = findExtensionRoot(__dirname);
 const SAMPLES_DIR = join(EXTENSION_ROOT, "samples");
 const DEFAULT_FILE = "results.trx";
 
-export const RESULT_EXTS = [".trx", ".xml"];
-
-// Cheap content check so we only treat genuine test-results XML as results.
-export function looksLikeResults(xml: unknown): boolean {
-    const head = String(xml || "").slice(0, 8192);
-    return /<testsuites?[\s>]/i.test(head) || /<TestRun[\s>]/i.test(head) || /<UnitTestResult[\s>]/i.test(head);
-}
+// Re-exported so the extension entry point keeps one import site for what counts
+// as a results file.
+export { RESULT_EXTS, looksLikeResults };
 
 // Newest results file directly inside a directory (non-recursive).
 export function newestResultsFileIn(dir: string): string | null {
@@ -109,9 +105,21 @@ export function normalizeStatus(raw: unknown): TestStatus {
     return "skip";
 }
 
+// Reports sitting in the extension folder itself. Content-checked, not just
+// name-checked: the formats now include .json, and the extension folder holds a
+// package.json that must never reach the picker.
 function listLocalNames(): string[] {
     try {
-        return readdirSync(EXTENSION_ROOT).filter((f) => RESULT_EXTS.some((e) => f.toLowerCase().endsWith(e)));
+        return readdirSync(EXTENSION_ROOT)
+            .filter((f) => RESULT_EXTS.some((e) => f.toLowerCase().endsWith(e)))
+            .filter((f) => {
+                try {
+                    return looksLikeResults(readHead(join(EXTENSION_ROOT, f)));
+                } catch {
+                    return false;
+                }
+            })
+            .sort();
     } catch {
         return [];
     }
@@ -119,12 +127,7 @@ function listLocalNames(): string[] {
 
 // Selectable files = local extension-folder reports + discovered project files.
 function listResultFiles(discovered: Map<string, string>): string[] {
-    let local: string[] = [];
-    try {
-        local = readdirSync(EXTENSION_ROOT).filter((f) => RESULT_EXTS.some((e) => f.toLowerCase().endsWith(e))).sort();
-    } catch {
-        local = [];
-    }
+    const local = listLocalNames();
     const extras = [...discovered.keys()].filter((l) => !local.includes(l)).sort();
     return [...local, ...extras];
 }
@@ -143,25 +146,10 @@ function resolveResultPath(name: unknown, discovered: Map<string, string>): stri
     return existsSync(full) ? full : null;
 }
 
-// Parse a named file, auto-detecting TRX vs JUnit by content.
+// Parse a named file, letting the registry pick the format from its content.
 function loadFile(name: string, discovered: Map<string, string>): TestResult[] {
     const full = resolveResultPath(name, discovered);
-    if (!full) return [];
-    try {
-        const xml = readFileSync(full, "utf8");
-        return /<testsuites?[\s>]/i.test(xml) ? parseJUnit(xml) : parseTrx(xml);
-    } catch { return []; }
-}
-
-// Parse an absolute path, or null when it is missing, unreadable, or not a
-// results file at all. Distinct from loadFile()'s empty array: a source set has
-// to tell "this file reported no tests" from "this path is not a report".
-function parseResultsFile(abs: string): TestResult[] | null {
-    try {
-        const xml = readFileSync(abs, "utf8");
-        if (!looksLikeResults(xml)) return null;
-        return /<testsuites?[\s>]/i.test(xml) ? parseJUnit(xml) : parseTrx(xml);
-    } catch { return null; }
+    return (full && parseResultsAt(full)) || [];
 }
 
 // One file in the active set, with its parsed rows cached so a change re-parses
@@ -348,9 +336,10 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
     // One watcher per directory the sources live in.
     const watchers = new Map<string, FSWatcher>();
     // Held at this level so closing the server can cancel a reload that was
-    // already queued. Keyed by absolute path, so two sources in one folder
-    // debounce independently.
+    // already queued. Keyed by watched folder, alongside the file names that
+    // changed in it since the last refresh.
     const resultsTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    const pendingNames = new Map<string, Set<string>>();
 
     // `coverageWatcher` follows the report's folder so a re-run refreshes the
     // panel the same way results already do.
@@ -495,6 +484,7 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         // this server has stopped watching.
         for (const t of resultsTimers.values()) clearTimeout(t);
         resultsTimers.clear();
+        pendingNames.clear();
         for (const w of watchers.values()) {
             try {
                 w.close();
@@ -782,7 +772,7 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
     }
 
     function buildEntry(abs: string): SourceEntry | null {
-        const rows = parseResultsFile(abs);
+        const rows = parseResultsAt(abs);
         if (rows === null) return null;
         const label = labelForPath(abs, discovered, listLocalNames());
         discovered.set(label, abs);
@@ -846,7 +836,7 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
     // Re-read one source in place. False when nothing usable came back, so a
     // half-written file keeps showing the rows it already had.
     function reparse(entry: SourceEntry, abs: string): boolean {
-        const rows = parseResultsFile(abs);
+        const rows = parseResultsAt(abs);
         if (rows === null) return false;
         const label = abs === entry.source.path ? entry.source.label : labelForPath(abs, discovered, listLocalNames());
         if (abs !== entry.source.path) discovered.set(label, abs);
@@ -857,7 +847,7 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
 
     // Only the sources living in `dir` are touched: a five-project group must
     // not re-read four untouched files because the fifth was rewritten.
-    function refreshDir(dir: string, changedName: string): void {
+    function refreshDir(dir: string, changedNames: ReadonlySet<string>): void {
         const here = entries.filter((e) => dirname(e.source.path) === dir);
         let changed = false, moved = false;
         if (here.length === 1) {
@@ -874,7 +864,7 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
             changed = reparse(here[0], abs);
         } else {
             for (const entry of here) {
-                if (basename(entry.source.path) === changedName && reparse(entry, entry.source.path)) changed = true;
+                if (changedNames.has(basename(entry.source.path)) && reparse(entry, entry.source.path)) changed = true;
             }
         }
         if (!changed) return;
@@ -891,14 +881,19 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
                 if (!filename) return;
                 const name = String(filename);
                 if (!RESULT_EXTS.some((e) => name.toLowerCase().endsWith(e))) return;
-                // Keyed by absolute path rather than bare name: two watched
-                // folders can each hold a `results.trx`, and they must not
-                // cancel one another's pending reload.
-                const abs = resolvePath(dir, name);
-                clearTimeout(resultsTimers.get(abs));
-                resultsTimers.set(abs, setTimeout(() => {
-                    resultsTimers.delete(abs);
-                    refreshDir(dir, name);
+                // Debounced per watched folder, collecting the names that moved
+                // in it. Keying by folder rather than by file is what keeps a
+                // burst -- an Allure run writes one JSON per test -- to a single
+                // refresh, and the key is absolute, so two watched folders that
+                // each hold a `results.trx` never cancel one another.
+                const pending = pendingNames.get(dir) ?? new Set<string>();
+                pendingNames.set(dir, pending);
+                pending.add(name);
+                clearTimeout(resultsTimers.get(dir));
+                resultsTimers.set(dir, setTimeout(() => {
+                    resultsTimers.delete(dir);
+                    pendingNames.delete(dir);
+                    refreshDir(dir, pending);
                 }, 400));
             });
             w.on("error", (err) => console.error("[server] watcher error:", err?.message || err));

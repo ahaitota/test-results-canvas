@@ -1,21 +1,22 @@
 # Test Results canvas (Copilot extension)
 
 A GitHub Copilot **canvas extension** that shows your test runs as a live UI panel
-inside the Copilot app. It renders **.NET TRX** and **JUnit XML** reports with
-pass/fail/skip status, per-test duration, failure messages, filtering/search, and
-a summary — and it updates live over SSE every time you re-run the tests.
+inside the Copilot app. It renders test reports from most language ecosystems
+(TRX, JUnit/NUnit/xUnit/TestNG/CTest XML, TAP, CTRF, Allure, and the native JSON
+streams of `go test`, Dart and Rust) with pass/fail/skip status, per-test
+duration, failure messages, filtering/search, and a summary — and it updates live
+over SSE every time you re-run the tests.
 
 Once installed, you don't have to do anything special. In **any** project:
 
 1. You write code and ask Copilot to run the tests (`dotnet test`, `mvn test`,
-   `pytest --junitxml=...`, `npm test`, etc.).
-2. A tool hook notices the run, finds the fresh `.trx`/`.xml` report in your
-   working directory, and tells the agent to open this canvas with that file.
+   `pytest --junitxml=...`, `npm test`, `go test -json`, etc.).
+2. A tool hook notices the run, finds the fresh report in your working directory,
+   and tells the agent to open this canvas with that file.
 3. The **Test Results** panel appears automatically and then live-refreshes on
    every subsequent run — no reopening.
 
-Supported report formats: `.trx` (VSTest/`dotnet test --logger trx`) and JUnit
-`.xml` (Maven Surefire, Gradle, pytest, jest-junit, etc.).
+See [Supported report formats](#supported-report-formats) for the full list.
 
 It also shows **code coverage** when the run produced a report (Cobertura, LCOV
 or JaCoCo), in a **Coverage** tab beside **Tests**.
@@ -32,6 +33,34 @@ it with its default application. A merged run has no single file, so it gets one
 what the panel currently holds, are disabled when the results came from the
 agent's actions and no file backs them, and report a failed launch in the panel.
 
+
+## Supported report formats
+
+The format is detected from the file's **content**, never from its name, so a
+report can be called anything; the extensions below are only what a folder scan
+looks at. A file no parser claims — or one that claims a format but is malformed
+— is ignored rather than shown as an empty passing run.
+
+| Format | Runners | How to produce it | Scanned as | Known limitations |
+| --- | --- | --- | --- | --- |
+| TRX | VSTest, `dotnet test` | `dotnet test --logger trx` | `.trx`, `.xml` | — |
+| JUnit XML | Surefire, Gradle, pytest, jest-junit, go-junit-report, … | `pytest --junitxml=report.xml` | `.xml` | — |
+| NUnit 3 (and 2) | NUnit console/engine | `nunit3-console --result=nunit.xml` | `.xml` | properties and attachments are not shown |
+| xUnit.net | xUnit v2/v3 | `dotnet test --logger "xunit;LogFilePath=xunit.xml"` | `.xml` | — |
+| TestNG | TestNG, Maven | `test-output/testng-results.xml` | `.xml` | `is-config` setup/teardown methods are dropped |
+| CTest | CMake / CTest | `ctest -T Test` → `Testing/<tag>/Test.xml` | `.xml` | one row per test binary, not per assertion |
+| TAP 13/14 | node:test, prove, pytest-tap, tap.py, Catch2, … | `node --test --test-reporter=tap > run.tap` | `.tap` | only `message`/`error`/`duration_ms` are read out of the YAML block |
+| CTRF JSON | any runner with a CTRF reporter (JS/TS, Python, Java, Go, .NET) | the reporter writes `ctrf-report.json` | `.json` | — |
+| Allure 2 | Allure adapters | `allure-results/<uuid>-result.json` | `.json` | the whole results folder is merged in name order; steps, attachments and containers are ignored |
+| `go test -json` | Go | `go test -json ./... > run.jsonl` | `.json`, `.jsonl`, `.ndjson` | package-level events are dropped; the failure text is the test's raw output |
+| Dart test JSON | `dart test`, `flutter test` | `dart test --reporter=json > run.jsonl` | `.json`, `.jsonl`, `.ndjson` | hidden loading/compiling entries are dropped |
+| Rust libtest JSON | libtest, `cargo nextest` | `cargo nextest run --message-format libtest-json > run.jsonl` | `.json`, `.jsonl`, `.ndjson` | durations need `--report-time` (or nextest) |
+
+Not yet supported: Apple XCTest `.xcresult` exports and Bazel Build Event
+Protocol JSON.
+
+Adding a format is one module in `src/parsers/` plus one entry in
+`src/parsers/registry.ts`.
 
 ## Install (once, per user — works in every project)
 ### Step 1:
@@ -88,8 +117,21 @@ src/
     virtual.ts           windowing: flattens the list and tracks row heights
     useResultsStream.ts  SSE subscription that drives live refresh
   parsers/
+    registry.ts          every format, matched on content; the only place the
+                         server asks "what is this file?"
     trx.ts               .NET TRX parser
     junit.ts             JUnit XML parser
+    nunit.ts             NUnit 3/2 XML parser
+    xunit.ts             xUnit.net XML parser
+    testng.ts            TestNG XML parser
+    ctest.ts             CTest XML parser
+    tap.ts               TAP 13/14 parser
+    ctrf.ts              CTRF JSON parser
+    allure.ts            Allure 2 result JSON (merges the results folder)
+    gotest.ts            `go test -json` event stream
+    dart.ts              Dart/Flutter test JSON event stream
+    rust.ts              Rust libtest/nextest JSON event stream
+    json.ts              shared JSON/JSONL helpers
   coverage/
     payload.ts           the SSE wire contract, shared with the client (host-free)
     types.ts             CoverageReport / CoverageFile model + tallying
@@ -122,6 +164,8 @@ src/
 test/
   trx.test.ts            unit tests for the TRX parser
   junit.test.ts          unit tests for the JUnit parser
+  formats.test.ts        unit tests for the other ten report formats
+  registry.test.ts       format detection, malformed input, multi-file runs
   labels.test.ts         unit tests for the label generator
   rowkey.test.ts         unit tests for row identity
   ask.test.ts            unit tests for prompt composition

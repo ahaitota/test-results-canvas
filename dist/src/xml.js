@@ -88,6 +88,69 @@ function tagEnd(text, from) {
     return -1;
 }
 const NAME_END = /[\s/>]/;
+// Text content with CDATA sections taken literally and the rest unescaped.
+export function decodeText(raw) {
+    let out = "";
+    let i = 0;
+    while (i < raw.length) {
+        const open = raw.indexOf("<![CDATA[", i);
+        if (open < 0)
+            return out + xmlUnescape(raw.slice(i));
+        out += xmlUnescape(raw.slice(i, open));
+        const close = raw.indexOf("]]>", open + 9);
+        if (close < 0)
+            return out + raw.slice(open + 9);
+        out += raw.slice(open + 9, close);
+        i = close + 3;
+    }
+    return out;
+}
+// Build a tree. The result parsers for NUnit/xUnit/TestNG/CTest read nested
+// elements rather than a flat tag stream, and a tree keeps them free of
+// format-specific scanning; TRX and JUnit stay streaming for size.
+export function parseXml(xml) {
+    const text = String(xml || "");
+    const root = { name: "#root", attrs: "", text: "", children: [] };
+    const stack = [root];
+    let pos = 0;
+    for (const tag of scanTags(text)) {
+        const top = stack[stack.length - 1];
+        top.text += decodeText(text.slice(pos, tag.start));
+        pos = tag.end;
+        if (tag.closing) {
+            // Close the nearest open element of that name; an unmatched end tag
+            // is ignored rather than unwinding the whole document.
+            for (let i = stack.length - 1; i > 0; i--) {
+                if (stack[i].name !== tag.name)
+                    continue;
+                stack.length = i;
+                break;
+            }
+            continue;
+        }
+        const el = { name: tag.name, attrs: tag.attrs, text: "", children: [] };
+        top.children.push(el);
+        if (!tag.selfClosing)
+            stack.push(el);
+    }
+    stack[stack.length - 1].text += decodeText(text.slice(pos));
+    return root;
+}
+export function child(el, name) {
+    return el?.children.find((c) => c.name === name);
+}
+// Trimmed text of the first child with that name, or undefined when absent/empty.
+export function childText(el, name) {
+    return child(el, name)?.text.trim() || undefined;
+}
+// Every descendant with the given name, in document order.
+export function* findAll(el, name) {
+    for (const c of el.children) {
+        if (c.name === name)
+            yield c;
+        yield* findAll(c, name);
+    }
+}
 // Walk every element tag in document order.
 export function* scanTags(xml) {
     const text = String(xml || "");
