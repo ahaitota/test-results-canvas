@@ -55,10 +55,10 @@ rather than shown as an empty or partly green passing run.
 | TestNG | TestNG, Maven | `test-output/testng-results.xml` | `.xml` | successful `is-config` setup/teardown methods are dropped; a failed one is kept, since it is the run's real failure |
 | CTest | CMake / CTest | `ctest -T Test` → `Testing/<tag>/Test.xml` | `.xml` | one row per test binary, not per assertion |
 | TAP 13/14 | node:test, prove, pytest-tap, tap.py, Catch2, … | `node --test --test-reporter=tap > run.tap` | `.tap` | the YAML block contributes `error`/`message`, `stack` and `duration_ms`; a stream must declare one `1..N` plan and number its points in order within it, and a `Bail out!` or any breach of that becomes a failed row |
-| CTRF JSON | any runner with a CTRF reporter (JS/TS, Python, Java, Go, .NET) | the reporter writes `ctrf-report.json` | `.json` | — |
+| CTRF JSON | any runner with a CTRF reporter (JS/TS, Python, Java, Go, .NET) | the reporter writes `ctrf-report.json` | `.json` | every test needs a name and a schema status, and the parsed count must match `results.summary.tests` when the report declares one |
 | Allure 2 | Allure adapters | `allure-results/<uuid>-result.json` | `.json` | the whole results folder is merged in name order; steps, attachments and containers are ignored, and one unreadable result rejects the folder rather than showing the rest as the run |
 | `go test -json` | Go | `go test -json ./... > run.jsonl` | `.json`, `.jsonl`, `.ndjson` | the failure text is the test's raw output; a package that fails with no test to blame (a build or `TestMain` failure) becomes a row of its own |
-| Dart test JSON | `dart test`, `flutter test` | `dart test --reporter=json > run.jsonl` | `.json`, `.jsonl`, `.ndjson` | hidden loading/compiling entries are dropped |
+| Dart test JSON | `dart test`, `flutter test` | `dart test --reporter=json > run.jsonl` | `.json`, `.jsonl`, `.ndjson` | hidden loading/compiling entries are dropped; an error reported after a test finished still fails it, and a run the runner calls failed gets a row when no test does |
 | Rust libtest JSON | libtest, `cargo nextest` | `cargo nextest run --message-format libtest-json > run.jsonl` | `.json`, `.jsonl`, `.ndjson` | durations need `--report-time` (or nextest) |
 
 Not yet supported: Apple XCTest `.xcresult` exports and Bazel Build Event
@@ -66,6 +66,9 @@ Protocol JSON.
 
 Adding a format is one module in `src/parsers/` plus one entry in
 `src/parsers/registry.ts`.
+
+A run opened from several reports is seeded all or nothing: if any of the named
+files cannot be read, none of them replace what the panel already shows.
 
 ## Install (once, per user — works in every project)
 ### Step 1:

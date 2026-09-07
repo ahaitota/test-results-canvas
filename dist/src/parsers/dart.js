@@ -1,5 +1,9 @@
 // Dart/Flutter `test --reporter=json`: a JSONL event stream where a test is a
 // testStart/error*/testDone triple keyed by test id.
+//
+// The protocol allows an asynchronous `error` to arrive AFTER a test's
+// testDone, with no second testDone behind it, so a test stays addressable by
+// its id until the run's own `done` event and its rows are only finalised then.
 import { jsonLines, rec, str, num, joinMessage } from "./json.js";
 function status(result, skipped) {
     if (skipped === true)
@@ -8,15 +12,20 @@ function status(result, skipped) {
 }
 export function parseDart(text) {
     const suites = new Map();
-    const pending = new Map();
-    const out = [];
+    const tests = new Map();
+    // testDone order, which is the order the runner reported them in.
+    const finished = [];
     let events = 0;
     let sawDone = false;
+    let failedRun = false;
     for (const event of jsonLines(text)) {
         events++;
         const type = str(event, "type");
-        if (type === "done")
+        if (type === "done") {
             sawDone = true;
+            failedRun = event.success === false;
+            continue;
+        }
         if (type === "suite") {
             const suite = rec(event.suite);
             const id = num(suite, "id");
@@ -33,15 +42,16 @@ export function parseDart(text) {
                 continue;
             const suiteId = num(test, "suiteID");
             const path = suiteId == null ? undefined : suites.get(suiteId);
-            pending.set(id, {
+            tests.set(id, {
                 row: { name, status: "pass", suite: path, file: path, framework: "dart test" },
                 startedAt: num(event, "time"),
                 errors: [],
+                done: false,
             });
             continue;
         }
         if (type === "error") {
-            const entry = pending.get(num(event, "testID") ?? -1);
+            const entry = tests.get(num(event, "testID") ?? -1);
             if (entry)
                 entry.errors.push(joinMessage(str(event, "error"), str(event, "stackTrace")) ?? "");
             continue;
@@ -49,29 +59,43 @@ export function parseDart(text) {
         if (type !== "testDone")
             continue;
         const id = num(event, "testID") ?? -1;
-        const entry = pending.get(id);
+        const entry = tests.get(id);
         if (!entry)
             continue;
-        // Cleared whichever way it goes, so what is left at the end is only the
-        // tests the stream never finished reporting.
-        pending.delete(id);
+        entry.done = true;
         // Hidden entries are the runner's own loading/compiling steps.
-        if (event.hidden === true)
+        if (event.hidden === true) {
+            tests.delete(id);
             continue;
-        const done = num(event, "time");
+        }
+        const at = num(event, "time");
         entry.row.status = status(str(event, "result"), event.skipped);
-        entry.row.durationMs = done != null && entry.startedAt != null ? done - entry.startedAt : undefined;
-        entry.row.message = joinMessage(...entry.errors);
-        out.push(entry.row);
+        entry.row.durationMs = at != null && entry.startedAt != null ? at - entry.startedAt : undefined;
+        finished.push(entry);
     }
     // A test that started and never finished means the report was read
     // mid-write; the tests that did finish are not the whole run.
-    if (pending.size)
-        throw new SyntaxError("dart test stream ends with a test still running");
+    for (const entry of tests.values()) {
+        if (!entry.done)
+            throw new SyntaxError("dart test stream ends with a test still running");
+    }
     // Dart closes a run with a "done" event, so a stream without one was read
     // between two tests however tidy the tests themselves look.
     if (events && !sawDone)
         throw new SyntaxError("dart test stream has no done event");
+    const out = finished.map((entry) => {
+        // An error reported after the test passed still failed it: it is the
+        // whole reason the protocol allows a late one.
+        if (entry.errors.length)
+            entry.row.status = "fail";
+        entry.row.message = joinMessage(...entry.errors);
+        return entry.row;
+    });
+    // The runner says the run failed and no test admits to it -- a teardown or
+    // an unhandled error outside any test. Reporting it beats a green run.
+    if (failedRun && !out.some((r) => r.status === "fail")) {
+        out.push({ name: "dart test run failed", status: "fail", message: "the runner reported the run as failed with no failing test", framework: "dart test" });
+    }
     return out;
 }
 //# sourceMappingURL=dart.js.map

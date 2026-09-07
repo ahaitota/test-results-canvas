@@ -4,6 +4,10 @@
 import type { TestResult, TestStatus } from "../types.js";
 import { rec, str, num, arr, joinMessage } from "./json.js";
 
+// The statuses the CTRF schema defines; a record outside them is not a result
+// this report can be read without.
+const STATUS = new Set(["passed", "failed", "skipped", "pending", "other"]);
+
 function status(raw: string | undefined): TestStatus {
     const s = String(raw || "").toLowerCase();
     if (s === "passed") return "pass";
@@ -23,10 +27,15 @@ export function parseCtrf(text: string): TestResult[] {
     for (const entry of arr(results, "tests")) {
         const t = rec(entry);
         const name = str(t, "name");
-        if (!name) continue;
+        const outcome = str(t, "status");
+        // Identity and status are required by the schema: a record without them
+        // would contribute no row, turning a failure into a shorter green run.
+        if (!t || !name || !outcome || !STATUS.has(outcome.toLowerCase())) {
+            throw new SyntaxError("ctrf test is missing its name or a known status");
+        }
         out.push({
             name,
-            status: status(str(t, "status")),
+            status: status(outcome),
             durationMs: num(t, "duration"),
             message: joinMessage(str(t, "message"), str(t, "trace")),
             suite: str(t, "suite"),
@@ -35,6 +44,12 @@ export function parseCtrf(text: string): TestResult[] {
             startTime: iso(num(t, "start")),
             endTime: iso(num(t, "stop")),
         });
+    }
+    // The report counts itself, so a mismatch means rows went missing between
+    // the runner writing the summary and this file being read.
+    const declared = num(rec(results?.summary), "tests");
+    if (declared != null && declared !== out.length) {
+        throw new SyntaxError(`ctrf summary declared ${declared} tests, found ${out.length}`);
     }
     return out;
 }

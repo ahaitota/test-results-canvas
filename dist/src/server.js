@@ -831,7 +831,13 @@ export async function createResultsServer(options = {}) {
         const files = input.resultsFiles ?? [];
         if (files.length) {
             const built = collectSources(files);
-            if (built.entries.length) {
+            // All or nothing. A seed has no receipt to hand back the way the
+            // open_files action does, so a partial merge would quietly show
+            // fewer tests than were asked for with nothing on screen to say so.
+            if (built.skipped.length) {
+                console.error(`[server] not seeding a partial merge: ${built.skipped.map((s) => `${s.path} (${s.reason})`).join(", ")}`);
+            }
+            else if (built.entries.length) {
                 applySources(built.entries, groupNameFor(input.name, built.entries.length));
                 loaded = true;
             }

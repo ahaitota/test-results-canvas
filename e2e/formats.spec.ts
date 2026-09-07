@@ -91,4 +91,24 @@ test.describe("cross-language report formats", () => {
 
     await expect(page.getByTestId("test-row")).toHaveCount(2);
   });
+
+  test("does not seed a merge when one of the requested reports cannot be read", async ({ page, makeServer }, testInfo) => {
+    // A seed has no receipt to hand back, so a partial merge would show fewer
+    // tests than were asked for with nothing on screen to say so.
+    const dir = testInfo.outputPath("partial-seed");
+    mkdirSync(dir, { recursive: true });
+    const good = join(dir, "good.xml");
+    const broken = join(dir, "broken.xml");
+    writeFileSync(good, `<testsuites><testsuite name="s"><testcase name="adds" /></testsuite></testsuites>`, "utf8");
+    writeFileSync(broken, `<testsuites><testsuite name="s"><testcase name="subtracts"`, "utf8");
+
+    const s = await makeServer({ name: "Solution", resultsFiles: [good, broken], watch: false });
+    await openCanvas(page, s);
+
+    // The readable half must not stand in for the run that was asked for. (An
+    // unseeded panel falls back to whatever local report exists, as it always
+    // has -- what matters is that it is not this half-loaded merge.)
+    await expect(page.getByTestId("group-counts")).toHaveCount(0);
+    await expect(page.getByTestId("test-name").filter({ hasText: "adds" })).toHaveCount(0);
+  });
 });

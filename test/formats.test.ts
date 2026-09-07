@@ -398,6 +398,18 @@ test("parseCtrf maps tests, tool name and epoch timestamps", () => {
   assert.equal(rows[1].message, "Expected 1 got 2\nat calc.test.ts:5");
 });
 
+test("parseCtrf rejects a test record without a name or a known status", () => {
+  // A failed record missing its name would silently drop out, so a report
+  // declaring one pass and one failure would render only the pass.
+  const report = (tests: string) => `{"reportFormat":"CTRF","results":{"tool":{"name":"jest"},"tests":[${tests}]}}`;
+  assert.throws(() => parseCtrf(report(`{"name":"adds","status":"passed"},{"status":"failed","message":"boom"}`)));
+  assert.throws(() => parseCtrf(report(`{"name":"adds","status":"exploded"}`)));
+});
+
+test("parseCtrf rejects a report whose summary counts more tests than it holds", () => {
+  assert.throws(() => parseCtrf(`{"reportFormat":"CTRF","results":{"tool":{"name":"jest"},"summary":{"tests":2,"passed":1,"failed":1},"tests":[{"name":"adds","status":"passed"}]}}`));
+});
+
 test("parseCtrf returns nothing for a report with no tests", () => {
   assert.deepEqual(parseCtrf(`{"reportFormat":"CTRF","results":{"tests":[]}}`), []);
 });
@@ -599,6 +611,29 @@ test("parseRustJson reads test events and splits the module path", () => {
   assert.equal(rows[0].className, "calc");
   assert.equal(rows[0].method, "adds");
   assert.equal(rows[1].message, "assertion failed: 1 == 2\n");
+});
+
+test("parseDart fails a test whose error arrives after it was reported done", () => {
+  // The protocol allows an asynchronous error with no second testDone behind
+  // it, so the run's own failure would otherwise be reported as green.
+  const rows = parseDart([
+    { type: "suite", suite: { id: 0, path: "test/calc_test.dart" } },
+    { type: "testStart", test: { id: 1, name: "adds", suiteID: 0 }, time: 1 },
+    { type: "testDone", testID: 1, result: "success", hidden: false, time: 5 },
+    { type: "error", testID: 1, error: "Bad state: stream closed", stackTrace: "calc_test.dart 9:3", time: 6 },
+    { type: "done", success: false, time: 7 },
+  ].map((e) => JSON.stringify(e)).join("\n"));
+  assert.deepEqual(rows.map((r) => [r.name, r.status]), [["adds", "fail"]]);
+  assert.equal(rows[0].message, "Bad state: stream closed\ncalc_test.dart 9:3");
+});
+
+test("parseDart reports a failed run that no test admits to", () => {
+  const rows = parseDart([
+    { type: "testStart", test: { id: 1, name: "adds", suiteID: 0 }, time: 1 },
+    { type: "testDone", testID: 1, result: "success", hidden: false, time: 5 },
+    { type: "done", success: false, time: 6 },
+  ].map((e) => JSON.stringify(e)).join("\n"));
+  assert.deepEqual(rows.map((r) => [r.name, r.status]), [["adds", "pass"], ["dart test run failed", "fail"]]);
 });
 
 test("parseDart rejects a stream that ends with a test still running", () => {
