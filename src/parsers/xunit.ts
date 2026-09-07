@@ -17,8 +17,11 @@ function emit(el: XmlElement, assembly: XmlElement, collection: string | undefin
     if (!name) return;
     const failure = child(el, "failure");
     const time = parseFloat(attr(el.attrs, "time") ?? "");
+    // v3 timestamps each test; v2 only dated the assembly, so that is the
+    // fallback rather than the source.
     const date = attr(assembly.attrs, "run-date");
     const clock = attr(assembly.attrs, "run-time");
+    const assemblyStart = date && clock ? `${date}T${clock}` : undefined;
     out.push({
         name,
         status: status(attr(el.attrs, "result")),
@@ -27,9 +30,13 @@ function emit(el: XmlElement, assembly: XmlElement, collection: string | undefin
         className: attr(el.attrs, "type"),
         method: attr(el.attrs, "method") ?? name,
         suite: collection,
+        // The one field that links a test to a path without guessing, which is
+        // what diff mode wants first.
+        file: attr(el.attrs, "source-file"),
         framework: "xUnit.net",
         storage: attr(assembly.attrs, "name"),
-        startTime: date && clock ? `${date}T${clock}` : undefined,
+        startTime: attr(el.attrs, "start-rtf") ?? assemblyStart,
+        endTime: attr(el.attrs, "finish-rtf"),
     });
 }
 

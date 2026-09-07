@@ -145,11 +145,22 @@ export function parseResultsAt(abs: string): TestResult[] | null {
 // True when this path's format takes in its whole directory, so any qualifying
 // sibling is part of the same source.
 export function expandsDirectory(abs: string): boolean {
+    return detectAt(abs)?.expand !== undefined;
+}
+
+// The parser that claims the file at `abs`, read from its head alone.
+function detectAt(abs: string): Parser | undefined {
     try {
-        return detectParser(readHead(abs))?.expand !== undefined;
+        return detectParser(readHead(abs));
     } catch {
-        return false;
+        return undefined;
     }
+}
+
+// Which format a file on disk is, or undefined when nothing claims it. Lets a
+// caller keep a source on the kind of report it started as.
+export function formatIdAt(abs: string): string | undefined {
+    return detectAt(abs)?.id;
 }
 
 // What makes two paths the same run. A format that expands around a file covers

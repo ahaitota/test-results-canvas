@@ -92,6 +92,27 @@ test.describe("cross-language report formats", () => {
     await expect(page.getByTestId("test-row")).toHaveCount(2);
   });
 
+  test("a rewritten source is not replaced by a newer report beside it", async ({ page, makeServer }, testInfo) => {
+    // Re-deriving to the folder's newest report is how a single named .trx
+    // follows `dotnet test`'s per-run filenames -- but it must not fire when
+    // the source itself was the thing that changed.
+    const dir = testInfo.outputPath("newer-sibling");
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, "junit.report");
+    const suite = (cases: string) => `<testsuites><testsuite name="s">${cases}</testsuite></testsuites>`;
+    writeFileSync(file, suite(`<testcase name="adds" />`), "utf8");
+    writeFileSync(join(dir, "unrelated.xml"), suite(`<testcase name="unrelated" />`), "utf8");
+
+    const s = await makeServer({ resultsFile: file, watch: true });
+    await openCanvas(page, s);
+    await expect(page.getByTestId("test-row")).toHaveCount(1);
+
+    writeFileSync(file, suite(`<testcase name="adds" /><testcase name="subtracts" />`), "utf8");
+
+    await expect(page.getByTestId("test-name").filter({ hasText: "subtracts" })).toBeVisible();
+    await expect(page.getByTestId("test-name").filter({ hasText: "unrelated" })).toHaveCount(0);
+  });
+
   test("does not seed a merge when one of the requested reports cannot be read", async ({ page, makeServer }, testInfo) => {
     // A seed has no receipt to hand back, so a partial merge would show fewer
     // tests than were asked for with nothing on screen to say so.

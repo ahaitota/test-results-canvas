@@ -21,9 +21,11 @@ export function parseTestNG(xml) {
                     continue;
                 const outcome = status(attr(method.attrs, "status"));
                 // @BeforeMethod/@AfterMethod and the like are setup, not tests --
-                // until one fails, when it IS the run's failure and the tests it
-                // guarded are only reported as skipped.
-                if (attr(method.attrs, "is-config") === "true" && outcome === "pass")
+                // until one FAILS, when it is the run's real failure and the
+                // tests it guarded only report as skipped. TestNG also skips the
+                // rest of a fixture's config after one fails, and those would
+                // only inflate the counts.
+                if (attr(method.attrs, "is-config") === "true" && outcome !== "fail")
                     continue;
                 const ms = Number(attr(method.attrs, "duration-ms"));
                 const ex = child(method, "exception");

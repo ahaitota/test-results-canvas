@@ -33,8 +33,19 @@ function emit(el, suite, out) {
         endTime: attr(el.attrs, "end-time"),
     });
 }
-// Rows for one element, returning how many of them failed: a suite that failed
-// on its own reports that only when nothing beneath it already does.
+// A suite that failed in its own right rather than because something under it
+// did. NUnit records where the failure happened in `site`: "Child" is the
+// aggregate roll-up, while SetUp/TearDown is the suite's own fixture code and
+// carries diagnostics no case will ever show.
+function ownFailure(el) {
+    const site = attr(el.attrs, "site");
+    if (!site || site === "Child")
+        return false;
+    const failure = child(el, "failure");
+    return Boolean(childText(failure, "message") || childText(failure, "stack-trace"));
+}
+// Rows for one element, returning how many of them failed: a suite reports its
+// own failure, but an aggregate one only when nothing beneath it already does.
 function walk(el, suite, out) {
     let failures = 0;
     for (const c of el.children) {
@@ -49,12 +60,12 @@ function walk(el, suite, out) {
             continue;
         }
         const inner = walk(c, attr(c.attrs, "name") ?? suite, out);
-        // A fixture that blows up in OneTimeSetUp, or an assembly that fails to
-        // load, carries its <failure> on the suite and has no case to show it.
-        if (!inner && status(attr(c.attrs, "result")) === "fail") {
+        // OneTimeTearDown can fail independently of a test that already failed,
+        // and a fixture that blows up in OneTimeSetUp -- or an assembly that
+        // fails to load -- has no case to carry its failure at all.
+        if (ownFailure(c) || (!inner && status(attr(c.attrs, "result")) === "fail")) {
             emit(c, suite, out);
             failures++;
-            continue;
         }
         failures += inner;
     }

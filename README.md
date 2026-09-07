@@ -50,9 +50,9 @@ rather than shown as an empty or partly green passing run.
 | --- | --- | --- | --- | --- |
 | TRX | VSTest, `dotnet test` | `dotnet test --logger trx` | `.trx`, `.xml` | — |
 | JUnit XML | Surefire, Gradle, pytest, jest-junit, go-junit-report, … | `pytest --junitxml=report.xml` | `.xml` | — |
-| NUnit 3 (and 2) | NUnit console/engine | `nunit3-console --result=nunit.xml` | `.xml` | properties and attachments are not shown; a fixture that fails in `OneTimeSetUp` is reported as the suite, since it has no case to carry it |
-| xUnit.net | xUnit v2/v3 | `dotnet test --logger "xunit;LogFilePath=xunit.xml"` | `.xml` | assembly-level `<errors>` (fixture and cleanup failures) are reported as failing rows |
-| TestNG | TestNG, Maven | `test-output/testng-results.xml` | `.xml` | successful `is-config` setup/teardown methods are dropped; a failed one is kept, since it is the run's real failure |
+| NUnit 3 (and 2) | NUnit console/engine | `nunit3-console --result=nunit.xml` | `.xml` | properties and attachments are not shown; a suite that fails in its own `OneTimeSetUp`/`OneTimeTearDown` is reported alongside its cases, while NUnit's aggregate roll-up (`site="Child"`) is not |
+| xUnit.net | xUnit v2/v3 | `dotnet test --logger "xunit;LogFilePath=xunit.xml"` | `.xml` | assembly-level `<errors>` (fixture and cleanup failures) are reported as failing rows; v3's per-test `source-file`/`start-rtf`/`finish-rtf` are used when present, falling back to the assembly's `run-date`/`run-time` |
+| TestNG | TestNG, Maven | `test-output/testng-results.xml` | `.xml` | `is-config` setup/teardown methods are dropped unless they failed, since a failed one is the run's real failure |
 | CTest | CMake / CTest | `ctest -T Test` → `Testing/<tag>/Test.xml` | `.xml` | one row per test binary, not per assertion |
 | TAP 13/14 | node:test, prove, pytest-tap, tap.py, Catch2, … | `node --test --test-reporter=tap > run.tap` | `.tap` | the YAML block contributes `error`/`message`, `stack` and `duration_ms`; a stream must declare one `1..N` plan and number its points in order within it, and a `Bail out!` or any breach of that becomes a failed row |
 | CTRF JSON | any runner with a CTRF reporter (JS/TS, Python, Java, Go, .NET) | the reporter writes `ctrf-report.json` | `.json` | every test needs a name and a schema status, and the parsed count must match `results.summary.tests` when the report declares one |

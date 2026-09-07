@@ -67,9 +67,26 @@ test("parseNUnit reports a suite that failed with no case to show it", () => {
   assert.equal(rows[0].suite, "Sample.dll");
 });
 
-test("parseNUnit does not repeat a suite failure its cases already report", () => {
+test("parseNUnit reports a teardown failure alongside the case that already failed", () => {
+  // OneTimeTearDown fails independently of the test, and its diagnostics exist
+  // nowhere else in the report.
   const rows = parseNUnit(`<test-run id="1" result="Failed">
-  <test-suite type="TestFixture" name="CalcTests" result="Failed">
+  <test-suite type="TestFixture" name="CalcTests" result="Failed" site="TearDown">
+    <failure>
+      <message><![CDATA[OneTimeTearDown: the connection was already closed]]></message>
+    </failure>
+    <test-case name="Subtracts" result="Failed"><failure><message>assertion</message></failure></test-case>
+  </test-suite>
+</test-run>`);
+  assert.deepEqual(rows.map((r) => [r.name, r.status]), [["Subtracts", "fail"], ["CalcTests", "fail"]]);
+  assert.equal(rows[1].message, "OneTimeTearDown: the connection was already closed");
+});
+
+test("parseNUnit does not repeat a suite failure its cases already report", () => {
+  // site="Child" is NUnit's aggregate roll-up: the cases beneath already say it.
+  const rows = parseNUnit(`<test-run id="1" result="Failed">
+  <test-suite type="TestFixture" name="CalcTests" result="Failed" site="Child">
+    <failure><message>One or more child tests had errors</message></failure>
     <test-case name="Subtracts" result="Failed"><failure><message>boom</message></failure></test-case>
   </test-suite>
 </test-run>`);
@@ -118,6 +135,26 @@ test("parseXunit maps outcomes and carries assembly/collection context", () => {
   assert.equal(rows[0].startTime, "2024-01-01T10:00:00");
   assert.equal(rows[1].message, "Assert.Equal() Failure\nat Ns.CalcTests.Subtracts()");
   assert.equal(rows[2].message, "not ready");
+});
+
+test("parseXunit reads the v3 per-test source path and timestamps", () => {
+  const rows = parseXunit(`<assemblies>
+  <assembly name="/src/Sample.dll" run-date="2024-01-01" run-time="10:00:00">
+    <collection name="c">
+      <test name="Ns.CalcTests.Adds" type="Ns.CalcTests" method="Adds" time="0.042" result="Pass"
+            source-file="/src/CalcTests.cs" source-line="12"
+            start-rtf="2024-01-01T10:00:05.0000000+00:00" finish-rtf="2024-01-01T10:00:05.0420000+00:00" />
+      <test name="Ns.CalcTests.Legacy" type="Ns.CalcTests" method="Legacy" time="0.01" result="Pass" />
+    </collection>
+  </assembly>
+</assemblies>`);
+  assert.equal(rows[0].file, "/src/CalcTests.cs");
+  assert.equal(rows[0].startTime, "2024-01-01T10:00:05.0000000+00:00");
+  assert.equal(rows[0].endTime, "2024-01-01T10:00:05.0420000+00:00");
+  // v2 wrote no per-test times, so the assembly's stay the fallback.
+  assert.equal(rows[1].startTime, "2024-01-01T10:00:00");
+  assert.equal(rows[1].endTime, undefined);
+  assert.equal(rows[1].file, undefined);
 });
 
 test("parseXunit reports assembly-level errors, which no collection holds", () => {
@@ -186,11 +223,14 @@ test("parseTestNG keeps a failed configuration method, which is the run's real f
             <message><![CDATA[setup failed]]></message>
           </exception>
         </test-method>
+        <test-method status="SKIP" is-config="true" name="tearDown" duration-ms="0" />
         <test-method status="SKIP" name="adds" duration-ms="0" />
       </class>
     </test>
   </suite>
 </testng-results>`);
+  // The skipped teardown is configuration TestNG abandoned after the setup
+  // failed; counting it would inflate the run.
   assert.deepEqual(rows.map((r) => [r.name, r.status]), [["setUp", "fail"], ["adds", "skip"]]);
   assert.equal(rows[0].message, "java.lang.IllegalStateException\nsetup failed");
 });

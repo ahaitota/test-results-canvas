@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, basename, relative, isAbsolute, resolve as resolvePath } from "node:path";
 import { watch, readFileSync, writeFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { serializeTrx } from "./parsers/trx.js";
-import { looksLikeResults, parseResultsAt, runKey, expandsDirectory, RESULT_EXTS } from "./parsers/registry.js";
+import { looksLikeResults, parseResultsAt, runKey, expandsDirectory, formatIdAt, RESULT_EXTS } from "./parsers/registry.js";
 import { labelForPath } from "./labels.js";
 import { mergeSources } from "./sources.js";
 import type { Source } from "./sources.js";
@@ -161,6 +161,9 @@ interface SourceEntry {
     // Set when the format reads the source's whole folder (Allure), so the
     // watcher knows a brand-new sibling is a change to this entry.
     expands: boolean;
+    // The format it was read as, remembered so a re-derive can stay on that
+    // kind of report even once the file it was read from is gone.
+    format?: string;
 }
 
 // A path the caller named that did not become a source, and why.
@@ -780,7 +783,7 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         if (rows === null) return null;
         const label = labelForPath(abs, discovered, listLocalNames());
         discovered.set(label, abs);
-        return { source: { label, path: abs, count: rows.length }, rows, expands: expandsDirectory(abs) };
+        return { source: { label, path: abs, count: rows.length }, rows, expands: expandsDirectory(abs), format: formatIdAt(abs) };
     }
 
     // Resolve named files into sources, reporting what fell out so the caller
@@ -850,7 +853,15 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         entry.rows = rows;
         entry.source = { label, path: abs, count: rows.length };
         entry.expands = expandsDirectory(abs);
+        entry.format = formatIdAt(abs) ?? entry.format;
         return true;
+    }
+
+    // Accepts only reports of the format a source was read as, so re-deriving
+    // keeps it on the kind of report it started as -- and still works once the
+    // file it was read from has been deleted by a re-run.
+    function sameFormat(want: string | undefined): (candidate: string) => boolean {
+        return (candidate) => want !== undefined && formatIdAt(candidate) === want;
     }
 
     // Only the sources living in `dir` are touched: a five-project group must
@@ -859,17 +870,27 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         const here = entries.filter((e) => dirname(e.source.path) === dir);
         let changed = false, moved = false;
         if (here.length === 1) {
-            // Alone in its folder, a source follows that folder's newest report:
-            // `dotnet test` writes a fresh <machine>_<user>_<timestamp>.trx per
-            // run instead of overwriting, and re-deriving is how a single named
-            // file has always stayed live.
+            const entry = here[0];
+            // The file the source names was itself rewritten: that IS the
+            // update. Re-deriving here would hand the panel whatever else in
+            // the folder happens to be newer, which is how an explicitly named
+            // report gets replaced by an unrelated one beside it.
+            const rewritten = changedNames.has(basename(entry.source.path)) && existsSync(entry.source.path);
+            // Otherwise a source alone in its folder follows that folder's
+            // newest report: `dotnet test` writes a fresh
+            // <machine>_<user>_<timestamp>.trx per run instead of overwriting,
+            // and re-deriving is how a single named file has always stayed
+            // live. Constrained to the format it already is, so a Cobertura
+            // sibling or another runner's report cannot capture it.
             //
-            // Sources that SHARE a folder must not do this. They would all
-            // re-resolve onto the same newest file and quietly collapse into one,
+            // Sources that SHARE a folder never re-derive at all. They would all
+            // resolve onto the same newest file and quietly collapse into one,
             // losing the rest of the merge — so they re-parse their own path.
-            const abs = newestResultsFileIn(dir) ?? here[0].source.path;
-            moved = abs !== here[0].source.path;
-            changed = reparse(here[0], abs);
+            const abs = rewritten
+                ? entry.source.path
+                : newestResultsFileIn(dir, sameFormat(entry.format)) ?? entry.source.path;
+            moved = abs !== entry.source.path;
+            changed = reparse(entry, abs);
         } else {
             for (const entry of here) {
                 // A folder-expanding source (Allure) reads every result beside
