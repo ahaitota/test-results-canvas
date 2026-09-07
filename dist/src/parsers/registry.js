@@ -4,7 +4,10 @@
 // Order is specificity, not preference: the first parser whose signature appears
 // in the file's head wins, so add narrower dialects above broader ones.
 import { readFileSync } from "node:fs";
-import { HEAD_BYTES } from "../head.js";
+import { dirname } from "node:path";
+import { HEAD_BYTES, readHead } from "../head.js";
+import { attr, rootTag, hasElement, isWellFormed } from "../xml.js";
+import { topLevelFields } from "./json.js";
 import { parseTrx } from "./trx.js";
 import { parseJUnit } from "./junit.js";
 import { parseNUnit } from "./nunit.js";
@@ -17,20 +20,39 @@ import { parseGoTest } from "./gotest.js";
 import { parseDart } from "./dart.js";
 import { parseRustJson } from "./rust.js";
 import { parseTap } from "./tap.js";
-const XML = [".xml"];
+// Shared by the XML dialects: same extension, same structural gate.
+const XML = { exts: [".xml"], wellFormed: isWellFormed };
 const JSONL = [".json", ".jsonl", ".ndjson"];
+// The document's opening element, lowercased. Everything else in the file --
+// text, attributes, comments, CDATA -- is content, and content must never be
+// able to name a parser.
+function root(head, ...names) {
+    const name = rootTag(head)?.name.toLowerCase();
+    return name !== undefined && names.includes(name);
+}
+const ALLURE_STATUS = new Set(["passed", "failed", "broken", "skipped", "unknown"]);
+// An Allure *result*: its own status and name at the top level. A container
+// (`*-container.json`) has a uuid and a name too, but its statuses belong to the
+// fixtures nested inside it.
+function isAllureResult(head) {
+    const top = topLevelFields(head);
+    if (!top.has("uuid") || !ALLURE_STATUS.has(top.get("status") ?? ""))
+        return false;
+    return top.has("name") || top.has("fullName");
+}
 export const PARSERS = [
-    { id: "trx", exts: [".trx", ".xml"], detect: (h) => /<TestRun[\s>]/i.test(h) || /<UnitTestResult[\s>]/i.test(h), parse: parseTrx },
-    { id: "junit", exts: XML, detect: (h) => /<testsuites?[\s>]/i.test(h), parse: parseJUnit },
-    { id: "nunit", exts: XML, detect: (h) => /<test-(run|results|suite)[\s>]/i.test(h), parse: parseNUnit },
-    { id: "xunit", exts: XML, detect: (h) => /<assemblies[\s>]/i.test(h) || /<assembly[^>]*\stest-framework=/i.test(h), parse: parseXunit },
-    { id: "testng", exts: XML, detect: (h) => /<testng-results[\s>]/i.test(h), parse: parseTestNG },
-    { id: "ctest", exts: XML, detect: (h) => /<Testing[\s>]/.test(h), parse: parseCTest },
-    // Both JSON predicates need a marker the format actually owns: Playwright's
-    // report nests "results"/"tests" too, and Jest/Vitest --json carry
-    // "fullName" with an Allure-shaped "status".
+    { id: "trx", ...XML, exts: [".trx", ".xml"], detect: (h) => root(h, "testrun", "unittestresult"), parse: parseTrx },
+    { id: "junit", ...XML, detect: (h) => root(h, "testsuites", "testsuite"), parse: parseJUnit },
+    { id: "nunit", ...XML, detect: (h) => root(h, "test-run", "test-results", "test-suite"), parse: parseNUnit },
+    { id: "xunit", ...XML, detect: (h) => root(h, "assemblies") || (root(h, "assembly") && attr(rootTag(h)?.attrs, "test-framework") !== undefined), parse: parseXunit },
+    { id: "testng", ...XML, detect: (h) => root(h, "testng-results"), parse: parseTestNG },
+    // <Site> is also the root of CTest's Build.xml and Coverage.xml, so the
+    // testing section has to be there as well.
+    { id: "ctest", ...XML, detect: (h) => root(h, "site") && hasElement(h, "Testing"), parse: parseCTest },
+    // CTRF needs a marker it owns: Playwright's JSON report nests "results" and
+    // "tests" too.
     { id: "ctrf", exts: [".json"], detect: (h) => /"reportFormat"\s*:\s*"CTRF"/i.test(h) || (/"tool"\s*:\s*\{/.test(h) && /"tests"\s*:\s*\[/.test(h)), parse: parseCtrf },
-    { id: "allure", exts: [".json"], detect: (h) => /"uuid"\s*:/.test(h) && /"status"\s*:\s*"(passed|failed|broken|skipped|unknown)"/.test(h), parse: parseAllure, expand: expandAllure },
+    { id: "allure", exts: [".json"], detect: isAllureResult, parse: parseAllure, expand: expandAllure },
     { id: "gotest", exts: JSONL, detect: (h) => /"Action"\s*:\s*"(run|output|pass|fail|skip)"/.test(h), parse: parseGoTest },
     { id: "dart", exts: JSONL, detect: (h) => /"type"\s*:\s*"(testStart|testDone)"/.test(h) || /"protocolVersion"\s*:/.test(h), parse: parseDart },
     { id: "rust", exts: JSONL, detect: (h) => /"type"\s*:\s*"(suite|test)"\s*,\s*"event"\s*:/.test(h), parse: parseRustJson },
@@ -54,6 +76,8 @@ export function parseResults(text) {
     const parser = detectParser(text);
     if (!parser)
         return null;
+    if (parser.wellFormed && !parser.wellFormed(text))
+        return null;
     try {
         return parser.parse(text);
     }
@@ -73,6 +97,8 @@ export function parseResultsAt(abs) {
     const parser = detectParser(text);
     if (!parser)
         return null;
+    if (parser.wellFormed && !parser.wellFormed(text))
+        return null;
     try {
         if (!parser.expand)
             return parser.parse(text);
@@ -90,5 +116,28 @@ export function parseResultsAt(abs) {
     catch {
         return null;
     }
+}
+// What makes two paths the same run. A format that expands around a file covers
+// its whole folder, so every result in an Allure directory shares one key:
+// adding them as separate sources would parse the set once per member and merge
+// N copies of every row.
+export function runKey(abs) {
+    let parser;
+    try {
+        parser = detectParser(readHead(abs));
+    }
+    catch { /* unreadable: it is only ever its own run */ }
+    return parser?.expand ? `${parser.id}\u0000${dirname(abs)}` : abs;
+}
+// The paths that name distinct runs, in the order given.
+export function canonicalResultPaths(paths) {
+    const seen = new Set();
+    return paths.filter((abs) => {
+        const key = runKey(abs);
+        if (seen.has(key))
+            return false;
+        seen.add(key);
+        return true;
+    });
 }
 //# sourceMappingURL=registry.js.map

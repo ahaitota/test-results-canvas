@@ -13,6 +13,7 @@ import { basename, dirname, join, resolve as resolvePath } from "node:path";
 import { watchFile, existsSync, readdirSync, statSync } from "node:fs";
 import { joinSession, createCanvas } from "@github/copilot-sdk/extension";
 import { createResultsServer, looksLikeResults, RESULT_EXTS } from "./src/server.js";
+import { canonicalResultPaths } from "./src/parsers/registry.js";
 import { readHead } from "./src/head.js";
 import { discoverCoverageFor, findProjectRoot, suggestCoverageCommand } from "./src/coverage/index.js";
 // Action/open input reaches handlers typed as `unknown`; narrow it here first.
@@ -95,10 +96,12 @@ function scanForRecentResults(rootDir, sinceMs) {
 }
 // Newest first, then by path: directory iteration order is not guaranteed, and
 // the guidance (and the dedupe key built from it) has to be stable across runs.
+// Collapsed to one path per run, so an Allure folder is surfaced once rather
+// than once per test it wrote.
 function ordered(found) {
-    return found
+    return canonicalResultPaths(found
         .sort((a, b) => b.mtimeMs - a.mtimeMs || a.path.localeCompare(b.path))
-        .map((f) => f.path);
+        .map((f) => f.path));
 }
 // Tool hook body (shared by success + failure): if the tool was a test run and a
 // fresh results file exists in the working dir, return guidance telling the agent

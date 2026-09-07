@@ -87,6 +87,13 @@ export function parseTap(text) {
             stack.push({ indent, name: sub[1].trim() });
             continue;
         }
+        // "Bail out!" abandons the run: everything after it is unreached, and a
+        // run that stopped early is a failure however many points preceded it.
+        const bail = /^Bail out!\s*(.*)$/i.exec(line);
+        if (bail) {
+            out.push({ name: "Bail out!", status: "fail", message: bail[1].trim() || undefined, framework: "TAP" });
+            break;
+        }
         const point = POINT.exec(line);
         if (!point)
             continue;

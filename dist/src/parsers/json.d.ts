@@ -5,3 +5,4 @@ export declare function num(from: Rec | undefined, key: string): number | undefi
 export declare function arr(from: Rec | undefined, key: string): unknown[];
 export declare function jsonLines(text: string): Rec[];
 export declare function joinMessage(...parts: (string | undefined)[]): string | undefined;
+export declare function topLevelFields(text: string): Map<string, string | null>;

@@ -230,6 +230,16 @@ not ok 1 - subtracts two numbers
   assert.equal(rows[0].message, "Expected values to be strictly equal:\n\n1 !== 2\nTestContext.<anonymous> (calc.test.js:5:3)");
 });
 
+test("parseTap reports a bail out as a failure and stops reading points", () => {
+  const rows = parseTap(`TAP version 13
+ok 1 - connected
+Bail out! database unavailable
+ok 2 - never ran
+`);
+  assert.deepEqual(rows.map((r) => [r.name, r.status]), [["connected", "pass"], ["Bail out!", "fail"]]);
+  assert.equal(rows[1].message, "database unavailable");
+});
+
 test("parseTap returns nothing for a plan with no points", () => {
   assert.deepEqual(parseTap("TAP version 13\n1..0 # no tests\n"), []);
 });

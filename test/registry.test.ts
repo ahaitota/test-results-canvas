@@ -5,7 +5,7 @@ import { mkdtempSync, writeFileSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { detectParser, looksLikeResults, parseResults, parseResultsAt, RESULT_EXTS } from "../src/parsers/registry.js";
+import { detectParser, looksLikeResults, parseResults, parseResultsAt, canonicalResultPaths, RESULT_EXTS } from "../src/parsers/registry.js";
 
 const id = (text: string) => detectParser(text)?.id;
 
@@ -69,6 +69,60 @@ test("parseResultsAt skips an Allure sibling caught mid-write instead of droppin
   writeFileSync(one, `{"uuid":"aaa","name":"adds","status":"passed"}`, "utf8");
   writeFileSync(join(dir, "bbb-result.json"), `{"uuid":"bbb","name":"subt`, "utf8");
   assert.deepEqual(parseResultsAt(one)?.map((r) => r.name), ["adds"]);
+});
+
+test("detection reads the root element, so report content cannot pick the parser", () => {
+  // A failure message that quotes markup is still just text. Searching raw bytes
+  // for "<testsuite>" would hand this NUnit report to the JUnit parser, which
+  // finds nothing in it.
+  const nunit = `<?xml version="1.0"?>
+<test-run id="1">
+  <test-suite type="TestFixture" name="Markup">
+    <test-case name="Reports" result="Failed" duration="0.01">
+      <failure><message><![CDATA[expected no <testsuite> element]]></message></failure>
+    </test-case>
+  </test-suite>
+</test-run>`;
+  assert.equal(id(nunit), "nunit");
+  assert.deepEqual(parseResults(nunit)?.map((r) => [r.name, r.status]), [["Reports", "fail"]]);
+  // Same for a TRX whose captured output mentions a JUnit document.
+  assert.equal(id(`<TestRun id="1"><Output>wrote <testsuites></Output></TestRun>`), "trx");
+});
+
+test("CTest is not confused with the other documents rooted at <Site>", () => {
+  assert.equal(id(`<Site Name="ci"><Build><Log>ok</Log></Build></Site>`), undefined);
+});
+
+test("parseResults rejects XML that was caught half-written", () => {
+  // Truncated mid-document: parseXml is deliberately lenient, so without a
+  // structural check these would replace a finished run with a shorter one.
+  assert.equal(parseResults(`<test-run><test-suite name="s">`), null);
+  assert.equal(parseResults(`<test-run><test-suite name="s"><test-case name="a" result="Passed" />`), null);
+  assert.equal(parseResults(`<testsuites><testsuite name="s"><testcase name="a" /><!-- cut`), null);
+  // The complete document is still accepted.
+  assert.deepEqual(parseResults(`<test-run><test-suite name="s"><test-case name="a" result="Passed" /></test-suite></test-run>`)?.length, 1);
+});
+
+test("looksLikeResults rejects an Allure container, which carries no status of its own", () => {
+  // Containers sit in the results folder and are newer than the results they
+  // group, so claiming one would blank the run.
+  assert.equal(looksLikeResults(`{"uuid":"c","children":["r"],"name":"suite","befores":[{"name":"setup","status":"passed"}]}`), false);
+  assert.equal(looksLikeResults(`{"uuid":"r","name":"adds","status":"passed"}`), true);
+});
+
+test("canonicalResultPaths collapses an Allure folder to a single run", () => {
+  const dir = mkdtempSync(join(tmpdir(), "allure-canon-"));
+  const one = join(dir, "aaa-result.json");
+  const two = join(dir, "bbb-result.json");
+  writeFileSync(one, `{"uuid":"aaa","name":"adds","status":"passed"}`, "utf8");
+  writeFileSync(two, `{"uuid":"bbb","name":"subtracts","status":"failed"}`, "utf8");
+  const junit = join(dir, "junit.xml");
+  writeFileSync(junit, `<testsuites><testsuite name="s"><testcase name="c" /></testsuite></testsuites>`, "utf8");
+
+  // Both result files expand to the same set, so keeping both would merge every
+  // row twice and parse the folder once per member.
+  assert.deepEqual(canonicalResultPaths([one, two, junit]), [one, junit]);
+  assert.deepEqual(parseResultsAt(one)?.length, 2);
 });
 
 test("parseResults rejects a file whose declared format is malformed", () => {

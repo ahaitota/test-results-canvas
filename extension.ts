@@ -15,6 +15,7 @@ import { watchFile, existsSync, readdirSync, statSync } from "node:fs";
 import type { Dirent } from "node:fs";
 import { joinSession, createCanvas } from "@github/copilot-sdk/extension";
 import { createResultsServer, looksLikeResults, RESULT_EXTS } from "./src/server.js";
+import { canonicalResultPaths } from "./src/parsers/registry.js";
 import { readHead } from "./src/head.js";
 import type { ResultsServerHandle, ResultInput } from "./src/server.js";
 import type { AgentTestRef } from "./src/diff/relevance.js";
@@ -102,10 +103,12 @@ function scanForRecentResults(rootDir: string, sinceMs: number): string[] {
 
 // Newest first, then by path: directory iteration order is not guaranteed, and
 // the guidance (and the dedupe key built from it) has to be stable across runs.
+// Collapsed to one path per run, so an Allure folder is surfaced once rather
+// than once per test it wrote.
 function ordered(found: { path: string; mtimeMs: number }[]): string[] {
-    return found
+    return canonicalResultPaths(found
         .sort((a, b) => b.mtimeMs - a.mtimeMs || a.path.localeCompare(b.path))
-        .map((f) => f.path);
+        .map((f) => f.path));
 }
 
 // Tool hook body (shared by success + failure): if the tool was a test run and a

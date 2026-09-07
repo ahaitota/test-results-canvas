@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, basename, relative, isAbsolute, resolve as resolvePath } from "node:path";
 import { watch, readFileSync, writeFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { serializeTrx } from "./parsers/trx.js";
-import { looksLikeResults, parseResultsAt, RESULT_EXTS } from "./parsers/registry.js";
+import { looksLikeResults, parseResultsAt, runKey, RESULT_EXTS } from "./parsers/registry.js";
 import { labelForPath } from "./labels.js";
 import { mergeSources } from "./sources.js";
 import type { Source } from "./sources.js";
@@ -787,11 +787,14 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         const seen = new Set<string>();
         for (const raw of files) {
             const abs = resolvePath(raw);
-            if (seen.has(abs)) {
+            // Keyed by run, not by path: an Allure folder is one source however
+            // many of its result files the caller happened to name.
+            const key = runKey(abs);
+            if (seen.has(key)) {
                 skipped.push({ path: raw, reason: "duplicate of another source" });
                 continue;
             }
-            seen.add(abs);
+            seen.add(key);
             if (!existsSync(abs)) {
                 skipped.push({ path: raw, reason: "no such file" });
                 continue;

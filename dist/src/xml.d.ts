@@ -20,4 +20,7 @@ export declare function parseXml(xml: string): XmlElement;
 export declare function child(el: XmlElement | undefined, name: string): XmlElement | undefined;
 export declare function childText(el: XmlElement | undefined, name: string): string | undefined;
 export declare function findAll(el: XmlElement, name: string): Generator<XmlElement>;
-export declare function scanTags(xml: string): Generator<XmlTag>;
+export declare function rootTag(xml: string): XmlTag | undefined;
+export declare function hasElement(xml: string, name: string): boolean;
+export declare function isWellFormed(xml: string): boolean;
+export declare function scanTags(xml: string): Generator<XmlTag, boolean>;

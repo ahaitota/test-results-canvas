@@ -62,11 +62,6 @@ export function numAttr(attrs, name) {
     const n = Number(raw);
     return Number.isFinite(n) ? n : undefined;
 }
-// Index just past `marker`, or end of string.
-function skipPast(text, from, marker) {
-    const idx = text.indexOf(marker, from);
-    return idx < 0 ? text.length : idx + marker.length;
-}
 // Index of the ">" that ends the tag opened at `from`, ignoring any ">" that
 // sits inside a quoted attribute value. -1 when the tag is unterminated.
 function tagEnd(text, from) {
@@ -151,25 +146,76 @@ export function* findAll(el, name) {
         yield* findAll(c, name);
     }
 }
-// Walk every element tag in document order.
+// The document's opening element, or undefined for a document with none. Read
+// through the tag scanner, so a name that only appears inside CDATA, a comment,
+// an attribute value or text is not markup and cannot pass for the root -- an
+// NUnit failure message quoting "<testsuite>" must not make the file JUnit.
+export function rootTag(xml) {
+    for (const tag of scanTags(xml)) {
+        if (!tag.closing)
+            return tag;
+    }
+    return undefined;
+}
+// True when an element with that name appears as real markup anywhere.
+export function hasElement(xml, name) {
+    for (const tag of scanTags(xml)) {
+        if (!tag.closing && tag.name === name)
+            return true;
+    }
+    return false;
+}
+// True when every element that opened also closed, in order, and no construct
+// was left unterminated. A half-written report is structurally incomplete long
+// before it is obviously wrong, and parseXml() is deliberately lenient -- so
+// this is what stops a truncated file from replacing a finished run with the
+// handful of rows that happened to be flushed.
+export function isWellFormed(xml) {
+    const stack = [];
+    const tags = scanTags(xml);
+    for (;;) {
+        const next = tags.next();
+        if (next.done)
+            return next.value && stack.length === 0;
+        if (next.value.selfClosing)
+            continue;
+        if (!next.value.closing) {
+            stack.push(next.value.name);
+        }
+        else if (stack.pop() !== next.value.name) {
+            return false;
+        }
+    }
+}
+// Walk every element tag in document order. Returns false when the document ran
+// out mid-construct (an unterminated tag, comment or CDATA) -- `for...of`
+// discards that, so only callers that care about structure read it.
 export function* scanTags(xml) {
     const text = String(xml || "");
     let i = 0;
     while (i < text.length) {
         const lt = text.indexOf("<", i);
         if (lt < 0)
-            return;
+            return true;
         if (text.startsWith("<!--", lt)) {
-            i = skipPast(text, lt + 4, "-->");
+            const end = text.indexOf("-->", lt + 4);
+            if (end < 0)
+                return false;
+            i = end + 3;
             continue;
         }
         if (text.startsWith("<![CDATA[", lt)) {
-            i = skipPast(text, lt + 9, "]]>");
+            const end = text.indexOf("]]>", lt + 9);
+            if (end < 0)
+                return false;
+            i = end + 3;
             continue;
         }
         if (text.startsWith("<?", lt) || text.startsWith("<!", lt)) {
             const gt = text.indexOf(">", lt);
-            i = gt < 0 ? text.length : gt + 1;
+            if (gt < 0)
+                return false;
+            i = gt + 1;
             continue;
         }
         const closing = text[lt + 1] === "/";
@@ -184,7 +230,7 @@ export function* scanTags(xml) {
         }
         const gt = tagEnd(text, j);
         if (gt < 0)
-            return;
+            return false;
         let raw = text.slice(j, gt);
         const selfClosing = raw.trimEnd().endsWith("/");
         if (selfClosing)
@@ -192,5 +238,6 @@ export function* scanTags(xml) {
         yield { name, attrs: raw, closing, selfClosing, start: lt, end: gt + 1 };
         i = gt + 1;
     }
+    return true;
 }
 //# sourceMappingURL=xml.js.map

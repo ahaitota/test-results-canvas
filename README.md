@@ -38,8 +38,10 @@ agent's actions and no file backs them, and report a failed launch in the panel.
 
 The format is detected from the file's **content**, never from its name, so a
 report can be called anything; the extensions below are only what a folder scan
-looks at. A file no parser claims — or one that claims a format but is malformed
-— is ignored rather than shown as an empty passing run.
+looks at. XML dialects are told apart by their root element, so a failure message
+quoting `<testsuite>` cannot send an NUnit report to the JUnit parser. A file no
+parser claims — or one that claims a format but is malformed or half-written — is
+ignored rather than shown as an empty passing run.
 
 | Format | Runners | How to produce it | Scanned as | Known limitations |
 | --- | --- | --- | --- | --- |
@@ -49,7 +51,7 @@ looks at. A file no parser claims — or one that claims a format but is malform
 | xUnit.net | xUnit v2/v3 | `dotnet test --logger "xunit;LogFilePath=xunit.xml"` | `.xml` | — |
 | TestNG | TestNG, Maven | `test-output/testng-results.xml` | `.xml` | `is-config` setup/teardown methods are dropped |
 | CTest | CMake / CTest | `ctest -T Test` → `Testing/<tag>/Test.xml` | `.xml` | one row per test binary, not per assertion |
-| TAP 13/14 | node:test, prove, pytest-tap, tap.py, Catch2, … | `node --test --test-reporter=tap > run.tap` | `.tap` | only `message`/`error`/`duration_ms` are read out of the YAML block |
+| TAP 13/14 | node:test, prove, pytest-tap, tap.py, Catch2, … | `node --test --test-reporter=tap > run.tap` | `.tap` | the YAML block contributes `error`/`message`, `stack` and `duration_ms`; a `Bail out!` ends the run as a failed row |
 | CTRF JSON | any runner with a CTRF reporter (JS/TS, Python, Java, Go, .NET) | the reporter writes `ctrf-report.json` | `.json` | — |
 | Allure 2 | Allure adapters | `allure-results/<uuid>-result.json` | `.json` | the whole results folder is merged in name order; steps, attachments and containers are ignored |
 | `go test -json` | Go | `go test -json ./... > run.jsonl` | `.json`, `.jsonl`, `.ndjson` | package-level events are dropped; the failure text is the test's raw output |
