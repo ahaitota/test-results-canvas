@@ -12,13 +12,19 @@ function status(event) {
 }
 export function parseRustJson(text) {
     const out = [];
+    const running = new Set();
     for (const event of jsonLines(text)) {
         if (str(event, "type") !== "test")
             continue;
         const name = str(event, "name");
-        const outcome = status(str(event, "event") ?? "");
-        if (!name || !outcome)
+        if (!name)
             continue;
+        const outcome = status(str(event, "event") ?? "");
+        if (!outcome) {
+            running.add(name);
+            continue;
+        }
+        running.delete(name);
         const secs = num(event, "exec_time");
         const path = name.split("::");
         out.push({
@@ -32,6 +38,10 @@ export function parseRustJson(text) {
             framework: "libtest",
         });
     }
+    // A test that started and never reported an outcome means the stream stops
+    // mid-run, so what it does hold is not the whole run.
+    if (running.size)
+        throw new SyntaxError("libtest stream ends with a test still running");
     return out;
 }
 //# sourceMappingURL=rust.js.map

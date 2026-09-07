@@ -73,6 +73,13 @@ export function parseGoTest(text: string): TestResult[] {
         row.message = (output.get(key) ?? []).join("").trim() || undefined;
     }
 
+    // A test that started and never reached a terminal event means the stream
+    // stops mid-run. Returning the tests that did finish would show a green
+    // subset of a run whose outcome is not known yet.
+    for (const key of started.keys()) {
+        if (!rows.has(key)) throw new SyntaxError("go test stream ends with a test still running");
+    }
+
     // Only when no test in that package already carries the failure: a package
     // fails whenever one of its tests does, and a second row would double-count
     // an outcome the run already shows.

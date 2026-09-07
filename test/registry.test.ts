@@ -63,12 +63,15 @@ test("looksLikeResults rejects reports from runners this canvas does not parse",
   for (const text of lookalikes) assert.equal(looksLikeResults(text), false, text.slice(0, 30));
 });
 
-test("parseResultsAt skips an Allure sibling caught mid-write instead of dropping the run", () => {
+test("parseResultsAt rejects an Allure folder holding a sibling caught mid-write", () => {
+  // The run is the whole folder, so the readable subset is not the run: showing
+  // it would report an outcome that is not known yet as green. Failing here
+  // leaves the last complete run on screen.
   const dir = mkdtempSync(join(tmpdir(), "allure-partial-"));
   const one = join(dir, "aaa-result.json");
   writeFileSync(one, `{"uuid":"aaa","name":"adds","status":"passed"}`, "utf8");
   writeFileSync(join(dir, "bbb-result.json"), `{"uuid":"bbb","name":"subt`, "utf8");
-  assert.deepEqual(parseResultsAt(one)?.map((r) => r.name), ["adds"]);
+  assert.equal(parseResultsAt(one), null);
 });
 
 test("detection reads the root element, so report content cannot pick the parser", () => {
@@ -123,8 +126,12 @@ test("parseResults rejects XML that is not well formed", () => {
   // Only whitespace, comments, PIs and a doctype may sit outside the root.
   assert.equal(parseResults(`garbage<testsuites><testcase name="x" /></testsuites>`), null);
   assert.equal(parseResults(`<testsuites><testcase name="x" /></testsuites>tail`), null);
+  // "<>" is not a tag, and a bare "<" in text must be escaped.
+  assert.equal(parseResults(`<testsuites><><testcase name="x" /></testsuites>`), null);
+  // CDATA is not allowed outside the document element.
+  assert.equal(parseResults(`<![CDATA[garbage]]><testsuites><testcase name="x" /></testsuites>`), null);
   // The declaration, a doctype and comments around the root are still fine.
-  const framed = `<?xml version="1.0"?>\n<!-- run -->\n<testsuites><testsuite name="s"><testcase name="x" /></testsuite></testsuites>\n<!-- end -->\n`;
+  const framed = `<?xml version="1.0"?>\n<!DOCTYPE testsuites>\n<!-- run -->\n<testsuites><testsuite name="s"><testcase name="x" /></testsuite></testsuites>\n<!-- end -->\n`;
   assert.equal(parseResults(framed)?.length, 1);
 });
 

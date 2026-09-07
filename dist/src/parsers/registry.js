@@ -103,14 +103,13 @@ export function parseResultsAt(abs) {
         if (!parser.expand)
             return parser.parse(text);
         const rows = [];
-        // Per file: an Allure run writes one result file per test while it runs,
-        // so a sibling caught mid-write must cost one row, not the whole run.
-        for (const file of parser.expand(abs)) {
-            try {
-                rows.push(...parser.parse(file === abs ? text : readFileSync(file, "utf8")));
-            }
-            catch { /* skip the unreadable sibling */ }
-        }
+        // No per-file tolerance: an Allure run is the whole folder, so a sibling
+        // that is unreadable or caught mid-write makes the aggregate a subset of
+        // the run -- and a subset presented as the run is a green report of an
+        // outcome nobody knows yet. Failing here leaves the last complete run on
+        // screen until the folder is readable again.
+        for (const file of parser.expand(abs))
+            rows.push(...parser.parse(file === abs ? text : readFileSync(file, "utf8")));
         return rows;
     }
     catch {

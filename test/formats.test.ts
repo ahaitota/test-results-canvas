@@ -257,6 +257,14 @@ test("parseTap fails a stream that declared two plans", () => {
   assert.equal(rows[1].message, "TAP stream declared more than one 1..N plan");
 });
 
+test("parseTap validates point numbers against a plan that trails them", () => {
+  // The count matches the plan, so only the numbering shows that point 1 never
+  // arrived -- and the plan is not known until after both points are read.
+  const rows = parseTap("TAP version 13\nok 2 - second\nok 3 - third\n1..2\n");
+  assert.deepEqual(rows.map((r) => r.status), ["pass", "pass", "fail"]);
+  assert.equal(rows[2].message, "TAP point 3 falls outside the plan 1..2");
+});
+
 test("parseTap fails repeated or out-of-order point numbers", () => {
   // The count matches the plan, so only the numbering shows that a result was
   // lost.
@@ -448,6 +456,16 @@ test("parseGoTest rejects a stream caught mid-write rather than losing the failu
   assert.throws(() => parseGoTest(`{"Action":"pass","Package":"p","Test":"TestA","Elapsed":0.1}\n{"Action":"fail","Package":"p","Test":"TestB","Elap`));
 });
 
+test("parseGoTest rejects a stream that ends with a test still running", () => {
+  // Syntactically complete, but TestB never reported an outcome: returning only
+  // TestA would show a green run whose result is not known yet.
+  assert.throws(() => parseGoTest([
+    { Action: "run", Package: "p", Test: "TestA" },
+    { Action: "pass", Package: "p", Test: "TestA", Elapsed: 0.01 },
+    { Action: "run", Package: "p", Test: "TestB" },
+  ].map((e) => JSON.stringify(e)).join("\n")));
+});
+
 test("parseDart pairs testStart/testDone, drops hidden entries and keeps errors", () => {
   const rows = parseDart(DART);
   assert.deepEqual(rows.map((r) => r.name), ["calc adds", "calc subtracts", "calc divides"]);
@@ -480,6 +498,24 @@ test("parseRustJson reads test events and splits the module path", () => {
   assert.equal(rows[0].className, "calc");
   assert.equal(rows[0].method, "adds");
   assert.equal(rows[1].message, "assertion failed: 1 == 2\n");
+});
+
+test("parseDart rejects a stream that ends with a test still running", () => {
+  assert.throws(() => parseDart([
+    { type: "suite", suite: { id: 0, path: "test/calc_test.dart" } },
+    { type: "testStart", test: { id: 1, name: "adds", suiteID: 0 }, time: 1 },
+    { type: "testDone", testID: 1, result: "success", hidden: false, time: 5 },
+    { type: "testStart", test: { id: 2, name: "subtracts", suiteID: 0 }, time: 6 },
+  ].map((e) => JSON.stringify(e)).join("\n")));
+});
+
+test("parseRustJson rejects a stream that ends with a test still running", () => {
+  assert.throws(() => parseRustJson([
+    { type: "suite", event: "started", test_count: 2 },
+    { type: "test", event: "started", name: "calc::adds" },
+    { type: "test", name: "calc::adds", event: "ok" },
+    { type: "test", event: "started", name: "calc::subtracts" },
+  ].map((e) => JSON.stringify(e)).join("\n")));
 });
 
 test("parseRustJson returns nothing for a suite that ran no test", () => {

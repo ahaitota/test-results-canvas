@@ -212,8 +212,9 @@ export function attrsWellFormed(attrs) {
     return true;
 }
 // Whitespace, comments, processing instructions and the doctype are the only
-// content XML allows outside the document element. Scanned rather than matched
-// with a regex, so a long run of text costs one pass and never backtracks.
+// content XML allows outside the document element -- notably not CDATA, and not
+// text. Scanned rather than matched with a regex, so a long run of text costs
+// one pass and never backtracks.
 function isMisc(text) {
     let i = 0;
     while (i < text.length) {
@@ -228,16 +229,41 @@ function isMisc(text) {
             i = end + 3;
             continue;
         }
-        if (text.startsWith("<?", i) || text.startsWith("<!", i)) {
-            const end = text.indexOf(">", i);
+        if (text.startsWith("<?", i)) {
+            const end = text.indexOf("?>", i + 2);
             if (end < 0)
                 return false;
-            i = end + 1;
+            i = end + 2;
+            continue;
+        }
+        if (/^<!DOCTYPE[\s[]/i.test(text.slice(i, i + 10))) {
+            const end = doctypeEnd(text, i + 9);
+            if (end < 0)
+                return false;
+            i = end;
             continue;
         }
         return false;
     }
     return true;
+}
+// Index just past a "<!DOCTYPE ...>", stepping over one internal subset so a
+// ">" declared inside it does not end the doctype early.
+function doctypeEnd(text, from) {
+    let i = from;
+    while (i < text.length) {
+        if (text[i] === "[") {
+            const close = text.indexOf("]", i + 1);
+            if (close < 0)
+                return -1;
+            i = close + 1;
+            continue;
+        }
+        if (text[i] === ">")
+            return i + 1;
+        i++;
+    }
+    return -1;
 }
 // True when the document is one complete element tree: every element that opened
 // also closed, in order, under a valid XML name; every attribute is quoted and
@@ -318,10 +344,10 @@ export function* scanTags(xml) {
         while (j < text.length && !NAME_END.test(text[j]))
             j++;
         const name = text.slice(nameStart, j);
-        if (!name) {
-            i = lt + 1;
-            continue;
-        }
+        // "<>" or a bare "<" in text: XML requires the character to be escaped,
+        // so this is not markup the document is allowed to contain.
+        if (!name)
+            return false;
         const gt = tagEnd(text, j);
         if (gt < 0)
             return false;

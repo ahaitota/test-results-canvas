@@ -59,13 +59,22 @@ function fromYaml(lines) {
 }
 // Why a scope is not a valid, complete TAP stream, or null when it is.
 function scopeFault(frame) {
-    if (frame.invalid)
-        return frame.invalid;
     if (frame.plans === 0)
         return "TAP stream declared no 1..N plan";
     if (frame.plans > 1)
         return "TAP stream declared more than one 1..N plan";
-    const planned = (frame.last ?? 0) - (frame.first ?? 1) + 1;
+    const first = frame.first ?? 1;
+    const last = frame.last ?? 0;
+    let previous = -Infinity;
+    for (const number of frame.numbers) {
+        // "ok 1" twice, or after "ok 2", is a stream that lost a result.
+        if (number <= previous)
+            return `TAP point ${number} repeats or follows a higher number`;
+        if (number < first || number > last)
+            return `TAP point ${number} falls outside the plan ${first}..${last}`;
+        previous = number;
+    }
+    const planned = last - first + 1;
     if (planned !== frame.seen)
         return `TAP plan expected ${planned} test${planned === 1 ? "" : "s"}, saw ${frame.seen}`;
     return null;
@@ -78,7 +87,7 @@ function faultRow(frame, suite) {
 export function parseTap(text) {
     const out = [];
     // stack[0] is the stream itself; the rest are open subtests.
-    const stack = [{ indent: -1, plans: 0, seen: 0 }];
+    const stack = [{ indent: -1, plans: 0, seen: 0, numbers: [] }];
     const suiteOf = () => {
         const names = stack.map((f) => f.name).filter(Boolean);
         return names.length ? names.join(" > ") : undefined;
@@ -122,7 +131,7 @@ export function parseTap(text) {
         }
         const sub = SUBTEST.exec(line);
         if (sub) {
-            stack.push({ indent, name: sub[1].trim(), plans: 0, seen: 0 });
+            stack.push({ indent, name: sub[1].trim(), plans: 0, seen: 0, numbers: [] });
             continue;
         }
         // "Bail out!" abandons the run: everything after it is unreached, and a
@@ -151,18 +160,8 @@ export function parseTap(text) {
         popTo(indent);
         const frame = stack[stack.length - 1];
         frame.seen++;
-        // Explicit numbers must climb, never repeat, and stay inside the plan --
-        // "ok 1" twice is a stream that lost a result, not two tests.
-        const number = point[2] === undefined ? undefined : Number(point[2]);
-        if (number !== undefined) {
-            if (frame.highest !== undefined && number <= frame.highest) {
-                frame.invalid ??= `TAP point ${number} repeats or follows a higher number`;
-            }
-            else if (frame.last !== undefined && (number < (frame.first ?? 1) || number > frame.last)) {
-                frame.invalid ??= `TAP point ${number} falls outside the plan ${frame.first}..${frame.last}`;
-            }
-            frame.highest = number;
-        }
+        if (point[2] !== undefined)
+            frame.numbers.push(Number(point[2]));
         const { status: forced, reason, name } = directive(point[3] ?? "");
         const status = forced ?? (point[1] ? "fail" : "pass");
         last = {

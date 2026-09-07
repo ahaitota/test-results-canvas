@@ -49,15 +49,22 @@ export function parseDart(text: string): TestResult[] {
             continue;
         }
         if (type !== "testDone") continue;
-        const entry = pending.get(num(event, "testID") ?? -1);
+        const id = num(event, "testID") ?? -1;
+        const entry = pending.get(id);
+        if (!entry) continue;
+        // Cleared whichever way it goes, so what is left at the end is only the
+        // tests the stream never finished reporting.
+        pending.delete(id);
         // Hidden entries are the runner's own loading/compiling steps.
-        if (!entry || event.hidden === true) continue;
-        pending.delete(num(event, "testID") ?? -1);
+        if (event.hidden === true) continue;
         const done = num(event, "time");
         entry.row.status = status(str(event, "result"), event.skipped);
         entry.row.durationMs = done != null && entry.startedAt != null ? done - entry.startedAt : undefined;
         entry.row.message = joinMessage(...entry.errors);
         out.push(entry.row);
     }
+    // A test that started and never finished means the report was read
+    // mid-write; the tests that did finish are not the whole run.
+    if (pending.size) throw new SyntaxError("dart test stream ends with a test still running");
     return out;
 }
