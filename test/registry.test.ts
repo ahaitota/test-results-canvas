@@ -5,7 +5,7 @@ import { mkdtempSync, writeFileSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { detectParser, looksLikeResults, parseResults, parseResultsAt, canonicalResultPaths, RESULT_EXTS } from "../src/parsers/registry.js";
+import { detectParser, looksLikeResults, parseResults, parseResultsAt, canonicalResultPaths, expandsDirectory, RESULT_EXTS } from "../src/parsers/registry.js";
 
 const id = (text: string) => detectParser(text)?.id;
 
@@ -91,6 +91,30 @@ test("detection reads the root element, so report content cannot pick the parser
 
 test("CTest is not confused with the other documents rooted at <Site>", () => {
   assert.equal(id(`<Site Name="ci"><Build><Log>ok</Log></Build></Site>`), undefined);
+});
+
+test("expandsDirectory marks the sources a sibling change belongs to", () => {
+  // The watcher uses this to know that a brand-new Allure result changed the
+  // source named after a different file in that folder.
+  const dir = mkdtempSync(join(tmpdir(), "expands-"));
+  const allure = join(dir, "aaa-result.json");
+  const junit = join(dir, "run.xml");
+  writeFileSync(allure, `{"uuid":"aaa","name":"adds","status":"passed"}`, "utf8");
+  writeFileSync(junit, `<testsuites><testsuite name="s"><testcase name="c" /></testsuite></testsuites>`, "utf8");
+  assert.equal(expandsDirectory(allure), true);
+  assert.equal(expandsDirectory(junit), false);
+  assert.equal(expandsDirectory(join(dir, "gone.xml")), false);
+});
+
+test("parseResults rejects XML that is not well formed", () => {
+  // An unquoted attribute value: attr() can only skip what it cannot read, so
+  // this used to parse to a run whose tests had lost their names.
+  assert.equal(parseResults(`<testsuites><testsuite name="s"><testcase name=x /></testsuite></testsuites>`), null);
+  // Two document elements is two documents, or one appended to.
+  assert.equal(parseResults(`<testsuite name="a"><testcase name="x" /></testsuite><testsuite name="b"><testcase name="y" /></testsuite>`), null);
+  // An end tag carrying attributes, and a value that never closes.
+  assert.equal(parseResults(`<testsuites><testsuite name="s"></testsuite name="s"></testsuites>`), null);
+  assert.equal(parseResults(`<testsuites><testsuite name="s><testcase name="x" /></testsuite></testsuites>`), null);
 });
 
 test("parseResults rejects XML that was caught half-written", () => {

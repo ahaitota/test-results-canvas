@@ -13,5 +13,6 @@ export declare function detectParser(text: unknown): Parser | undefined;
 export declare function looksLikeResults(text: unknown): boolean;
 export declare function parseResults(text: string): TestResult[] | null;
 export declare function parseResultsAt(abs: string): TestResult[] | null;
+export declare function expandsDirectory(abs: string): boolean;
 export declare function runKey(abs: string): string;
 export declare function canonicalResultPaths(paths: readonly string[]): string[];

@@ -136,16 +136,22 @@ export function parseResultsAt(abs: string): TestResult[] | null {
     }
 }
 
+// True when this path's format takes in its whole directory, so any qualifying
+// sibling is part of the same source.
+export function expandsDirectory(abs: string): boolean {
+    try {
+        return detectParser(readHead(abs))?.expand !== undefined;
+    } catch {
+        return false;
+    }
+}
+
 // What makes two paths the same run. A format that expands around a file covers
 // its whole folder, so every result in an Allure directory shares one key:
 // adding them as separate sources would parse the set once per member and merge
 // N copies of every row.
 export function runKey(abs: string): string {
-    let parser: Parser | undefined;
-    try {
-        parser = detectParser(readHead(abs));
-    } catch { /* unreadable: it is only ever its own run */ }
-    return parser?.expand ? `${parser.id}\u0000${dirname(abs)}` : abs;
+    return expandsDirectory(abs) ? `expanded\u0000${dirname(abs)}` : abs;
 }
 
 // The paths that name distinct runs, in the order given.

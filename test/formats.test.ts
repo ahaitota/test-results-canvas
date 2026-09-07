@@ -240,6 +240,28 @@ ok 2 - never ran
   assert.equal(rows[1].message, "database unavailable");
 });
 
+test("parseTap fails a stream that ends short of its plan", () => {
+  const rows = parseTap("TAP version 13\n1..2\nok 1 - first\n");
+  assert.deepEqual(rows.map((r) => [r.name, r.status]), [["first", "pass"], ["plan not satisfied", "fail"]]);
+  assert.equal(rows[1].message, "TAP plan expected 2 tests, saw 1");
+});
+
+test("parseTap reports an unmet plan against the subtest that owns it", () => {
+  const rows = parseTap(`TAP version 13
+# Subtest: calc
+    ok 1 - adds
+    1..2
+ok 1 - calc
+1..1
+`);
+  assert.deepEqual(rows.map((r) => [r.name, r.suite]), [["adds", "calc"], ["plan not satisfied", "calc"], ["calc", undefined]]);
+});
+
+test("parseTap leaves a bail out to speak for the tests that never ran", () => {
+  const rows = parseTap("TAP version 13\n1..3\nok 1 - connected\nBail out! database unavailable\n");
+  assert.deepEqual(rows.map((r) => r.name), ["connected", "Bail out!"]);
+});
+
 test("parseTap returns nothing for a plan with no points", () => {
   assert.deepEqual(parseTap("TAP version 13\n1..0 # no tests\n"), []);
 });
@@ -357,6 +379,31 @@ const DART = [
   { type: "testStart", test: { id: 4, name: "calc divides", suiteID: 0 }, time: 80 },
   { type: "testDone", testID: 4, result: "success", hidden: false, skipped: true, time: 80 },
 ].map((e) => JSON.stringify(e)).join("\n");
+
+test("parseGoTest keeps the run timestamp as the start and the terminal one as the end", () => {
+  const [row] = parseGoTest(GO);
+  assert.equal(row.startTime, "2024-01-01T10:00:00Z");
+  assert.equal(row.endTime, "2024-01-01T10:00:01Z");
+});
+
+test("parseGoTest surfaces a package failure that no test reported", () => {
+  // A build or TestMain failure has no Test to attach to, so dropping
+  // package-level events hid the whole failed run.
+  const rows = parseGoTest([
+    { Action: "output", ImportPath: "example/calc", Output: "# example/calc\n" },
+    { Action: "output", ImportPath: "example/calc", Output: "calc.go:3:2: undefined: missing\n" },
+    { Time: "2024-01-01T10:00:00Z", Action: "fail", Package: "example/calc", Elapsed: 0.02, FailedBuild: "example/calc" },
+  ].map((e) => JSON.stringify(e)).join("\n"));
+  assert.deepEqual(rows.map((r) => [r.name, r.status]), [["example/calc", "fail"]]);
+  assert.equal(rows[0].message, "# example/calc\ncalc.go:3:2: undefined: missing");
+  assert.equal(rows[0].durationMs, 20);
+});
+
+test("parseGoTest does not double-report a package whose test already failed", () => {
+  // The GO stream ends with a package-level fail, and TestSubtracts already
+  // stands for it.
+  assert.equal(parseGoTest(GO).filter((r) => r.name === "example/calc").length, 0);
+});
 
 test("parseDart pairs testStart/testDone, drops hidden entries and keeps errors", () => {
   const rows = parseDart(DART);

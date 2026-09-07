@@ -13,11 +13,7 @@ import type { TestResult, TestStatus } from "../types.js";
 
 const POINT = /^(not\s+)?ok\b[ \t]*(\d+)?[ \t]*(?:-[ \t]*)?(.*)$/;
 const SUBTEST = /^#[ \t]*Subtest:[ \t]*(.*)$/;
-
-interface Frame {
-    indent: number;
-    name: string;
-}
+const PLAN = /^(\d+)\.\.(\d+)/;
 
 // "name # SKIP reason" / "# TODO reason" -> the directive and what is left.
 function directive(description: string): { status: TestStatus | null; reason?: string; name: string } {
@@ -60,11 +56,51 @@ function fromYaml(lines: string[]): { message?: string; durationMs?: number } {
     return { message: message || undefined, durationMs };
 }
 
+interface Frame {
+    indent: number;
+    name?: string;
+    // The scope's "1..N" line and how many points it has actually seen. A
+    // stream that stops short of its plan looks like a shorter passing run
+    // unless the shortfall is reported.
+    planned?: number;
+    seen: number;
+}
+
+// The row a scope owes when its points did not match its plan.
+function planShortfall(frame: Frame, suite: string | undefined): TestResult | null {
+    if (frame.planned === undefined || frame.planned === frame.seen) return null;
+    return {
+        name: "plan not satisfied",
+        status: "fail",
+        message: `TAP plan expected ${frame.planned} test${frame.planned === 1 ? "" : "s"}, saw ${frame.seen}`,
+        suite,
+        framework: "TAP",
+    };
+}
+
 export function parseTap(text: string): TestResult[] {
     const out: TestResult[] = [];
-    const stack: Frame[] = [];
+    // stack[0] is the stream itself; the rest are open subtests.
+    const stack: Frame[] = [{ indent: -1, seen: 0 }];
+    const suiteOf = () => {
+        const names = stack.map((f) => f.name).filter(Boolean);
+        return names.length ? names.join(" > ") : undefined;
+    };
+    // Reported by the bail out itself, so the plan it interrupted is not also
+    // blamed for the tests that never ran.
+    let bailed = false;
     let yaml: string[] | null = null;
     let last: TestResult | undefined;
+
+    // Close every scope the given indent has left, reporting each one's plan.
+    const closeTop = (): void => {
+        const suite = suiteOf();
+        const short = planShortfall(stack.pop()!, suite);
+        if (short) out.push(short);
+    };
+    const popTo = (indent: number): void => {
+        while (stack.length > 1 && indent <= stack[stack.length - 1].indent) closeTop();
+    };
 
     for (const raw of String(text || "").split(/\r?\n/)) {
         const line = raw.trim();
@@ -88,31 +124,43 @@ export function parseTap(text: string): TestResult[] {
         }
         const sub = SUBTEST.exec(line);
         if (sub) {
-            stack.push({ indent, name: sub[1].trim() });
+            stack.push({ indent, name: sub[1].trim(), seen: 0 });
             continue;
         }
         // "Bail out!" abandons the run: everything after it is unreached, and a
         // run that stopped early is a failure however many points preceded it.
         const bail = /^Bail out!\s*(.*)$/i.exec(line);
         if (bail) {
-            out.push({ name: "Bail out!", status: "fail", message: bail[1].trim() || undefined, framework: "TAP" });
+            out.push({ name: "Bail out!", status: "fail", message: bail[1].trim() || undefined, suite: suiteOf(), framework: "TAP" });
+            bailed = true;
             break;
+        }
+        // "1..N" belongs to the scope that is open where it appears; a subtest
+        // writes its own, indented with its points.
+        const plan = PLAN.exec(line);
+        if (plan) {
+            stack[stack.length - 1].planned = Number(plan[2]) - Number(plan[1]) + 1;
+            continue;
         }
         const point = POINT.exec(line);
         if (!point) continue;
         // A subtest's own points are indented under it; its summary point sits
         // back at the parent's level and closes the frame.
-        while (stack.length && indent <= stack[stack.length - 1].indent) stack.pop();
+        popTo(indent);
+        stack[stack.length - 1].seen++;
         const { status: forced, reason, name } = directive(point[3] ?? "");
         const status: TestStatus = forced ?? (point[1] ? "fail" : "pass");
         last = {
             name: name || `test ${point[2] ?? out.length + 1}`,
             status,
             message: reason,
-            suite: stack.length ? stack.map((f) => f.name).join(" > ") : undefined,
+            suite: suiteOf(),
             framework: "TAP",
         };
         out.push(last);
+    }
+    if (!bailed) {
+        while (stack.length) closeTop();
     }
     return out;
 }

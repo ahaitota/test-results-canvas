@@ -22,5 +22,6 @@ export declare function childText(el: XmlElement | undefined, name: string): str
 export declare function findAll(el: XmlElement, name: string): Generator<XmlElement>;
 export declare function rootTag(xml: string): XmlTag | undefined;
 export declare function hasElement(xml: string, name: string): boolean;
+export declare function attrsWellFormed(attrs: string): boolean;
 export declare function isWellFormed(xml: string): boolean;
 export declare function scanTags(xml: string): Generator<XmlTag, boolean>;

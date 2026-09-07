@@ -25,9 +25,11 @@ export function xmlUnescape(s: unknown): string {
 // never revisited, so a malformed tag carrying a long token with no "=" costs
 // linear time. A regex pairing a greedy name against a following "=" backtracks
 // over that token from every start position, which is quadratic.
+const IS_SPACE = (c: string) => c === " " || c === "\t" || c === "\n" || c === "\r";
+
 export function attr(attrs: string | undefined, name: string): string | undefined {
     const text = String(attrs || "");
-    const isSpace = (c: string) => c === " " || c === "\t" || c === "\n" || c === "\r";
+    const isSpace = IS_SPACE;
     let i = 0;
     while (i < text.length) {
         while (i < text.length && isSpace(text[i])) i++;
@@ -178,23 +180,57 @@ export function hasElement(xml: string, name: string): boolean {
     return false;
 }
 
-// True when every element that opened also closed, in order, and no construct
-// was left unterminated. A half-written report is structurally incomplete long
-// before it is obviously wrong, and parseXml() is deliberately lenient -- so
-// this is what stops a truncated file from replacing a finished run with the
-// handful of rows that happened to be flushed.
+// True when a tag's attribute text is nothing but well-formed name="value"
+// pairs. XML requires every value to be quoted, so a bare one (name=x) means the
+// file was not written by a conforming serializer -- and since attr() can only
+// skip what it cannot read, that would otherwise surface as a run whose tests
+// quietly lost their names.
+export function attrsWellFormed(attrs: string): boolean {
+    const text = String(attrs || "");
+    let i = 0;
+    while (i < text.length) {
+        while (i < text.length && IS_SPACE(text[i])) i++;
+        if (i >= text.length) return true;
+        const keyStart = i;
+        while (i < text.length && !IS_SPACE(text[i]) && text[i] !== "=") i++;
+        if (i === keyStart) return false; // "=" with no name in front of it
+        while (i < text.length && IS_SPACE(text[i])) i++;
+        if (text[i] !== "=") return false; // a bare token, not an attribute
+        i++;
+        while (i < text.length && IS_SPACE(text[i])) i++;
+        const quote = text[i];
+        if (quote !== '"' && quote !== "'") return false;
+        const close = text.indexOf(quote, i + 1);
+        if (close < 0) return false;
+        i = close + 1;
+        if (i < text.length && !IS_SPACE(text[i])) return false; // no separator
+    }
+    return true;
+}
+
+// True when the document is one complete element tree: every element that opened
+// also closed, in order, every attribute is quoted, nothing was left
+// unterminated, and there is exactly one document element. A half-written report
+// is structurally incomplete long before it is obviously wrong, and parseXml()
+// is deliberately lenient -- so this is what stops a truncated or malformed file
+// from replacing a finished run with whatever happened to be flushed.
 export function isWellFormed(xml: string): boolean {
     const stack: string[] = [];
     const tags = scanTags(xml);
+    let roots = 0;
     for (;;) {
         const next = tags.next();
-        if (next.done) return next.value && stack.length === 0;
-        if (next.value.selfClosing) continue;
-        if (!next.value.closing) {
-            stack.push(next.value.name);
-        } else if (stack.pop() !== next.value.name) {
-            return false;
+        if (next.done) return next.value && roots === 1 && stack.length === 0;
+        const tag = next.value;
+        if (tag.closing) {
+            if (stack.pop() !== tag.name || tag.attrs.trim()) return false;
+            continue;
         }
+        if (!attrsWellFormed(tag.attrs)) return false;
+        // An XML document has exactly one element at the top level; siblings
+        // there are two documents concatenated, or one that was appended to.
+        if (!stack.length) roots++;
+        if (!tag.selfClosing) stack.push(tag.name);
     }
 }
 

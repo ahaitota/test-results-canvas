@@ -1,5 +1,5 @@
 import { test, expect, get_fixture_path, openCanvas } from "./canvas-server";
-import { copyFileSync, mkdirSync, appendFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, appendFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // The non-XML formats end to end: the server has to detect them from content and
@@ -30,5 +30,26 @@ test.describe("cross-language report formats", () => {
 
     await expect(page.getByTestId("test-row")).toHaveCount(3);
     await expect(page.getByTestId("test-name").filter({ hasText: "TestDivides" })).toBeVisible();
+  });
+
+  test("refreshes an Allure source when a new sibling result appears beside it", async ({ page, makeServer }, testInfo) => {
+    // The Allure source shares its folder with another report, so it is not the
+    // only entry there -- and a brand-new result file carries a name no entry is
+    // stored under.
+    const dir = testInfo.outputPath("allure");
+    mkdirSync(dir, { recursive: true });
+    const first = join(dir, "aaa-result.json");
+    const other = join(dir, "run.xml");
+    writeFileSync(first, `{"uuid":"aaa","name":"adds","status":"passed"}`, "utf8");
+    writeFileSync(other, `<testsuites><testsuite name="s"><testcase name="unrelated" /></testsuite></testsuites>`, "utf8");
+
+    const s = await makeServer({ name: "Mixed", resultsFiles: [first, other], watch: true });
+    await openCanvas(page, s);
+    await expect(page.getByTestId("test-row")).toHaveCount(2);
+
+    writeFileSync(join(dir, "bbb-result.json"), `{"uuid":"bbb","name":"subtracts","status":"failed"}`, "utf8");
+
+    await expect(page.getByTestId("test-row")).toHaveCount(3);
+    await expect(page.getByTestId("test-name").filter({ hasText: "subtracts" })).toBeVisible();
   });
 });

@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, basename, relative, isAbsolute, resolve as resolvePath } from "node:path";
 import { watch, readFileSync, writeFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { serializeTrx } from "./parsers/trx.js";
-import { looksLikeResults, parseResultsAt, runKey, RESULT_EXTS } from "./parsers/registry.js";
+import { looksLikeResults, parseResultsAt, runKey, expandsDirectory, RESULT_EXTS } from "./parsers/registry.js";
 import { labelForPath } from "./labels.js";
 import { mergeSources } from "./sources.js";
 import { readHead } from "./head.js";
@@ -653,7 +653,7 @@ export async function createResultsServer(options = {}) {
             return null;
         const label = labelForPath(abs, discovered, listLocalNames());
         discovered.set(label, abs);
-        return { source: { label, path: abs, count: rows.length }, rows };
+        return { source: { label, path: abs, count: rows.length }, rows, expands: expandsDirectory(abs) };
     }
     // Resolve named files into sources, reporting what fell out so the caller
     // can hand back a receipt rather than a silent partial merge.
@@ -723,6 +723,7 @@ export async function createResultsServer(options = {}) {
             discovered.set(label, abs);
         entry.rows = rows;
         entry.source = { label, path: abs, count: rows.length };
+        entry.expands = expandsDirectory(abs);
         return true;
     }
     // Only the sources living in `dir` are touched: a five-project group must
@@ -745,7 +746,11 @@ export async function createResultsServer(options = {}) {
         }
         else {
             for (const entry of here) {
-                if (changedNames.has(basename(entry.source.path)) && reparse(entry, entry.source.path))
+                // A folder-expanding source (Allure) reads every result beside
+                // it, so a brand-new sibling changed it even though the file it
+                // is named after did not.
+                const touched = entry.expands || changedNames.has(basename(entry.source.path));
+                if (touched && reparse(entry, entry.source.path))
                     changed = true;
             }
         }

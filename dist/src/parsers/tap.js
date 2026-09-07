@@ -10,6 +10,7 @@
 //     ...
 const POINT = /^(not\s+)?ok\b[ \t]*(\d+)?[ \t]*(?:-[ \t]*)?(.*)$/;
 const SUBTEST = /^#[ \t]*Subtest:[ \t]*(.*)$/;
+const PLAN = /^(\d+)\.\.(\d+)/;
 // "name # SKIP reason" / "# TODO reason" -> the directive and what is left.
 function directive(description) {
     const hash = description.indexOf("#");
@@ -56,11 +57,42 @@ function fromYaml(lines) {
     const message = [found.get("error") ?? found.get("message"), found.get("stack")].filter(Boolean).join("\n");
     return { message: message || undefined, durationMs };
 }
+// The row a scope owes when its points did not match its plan.
+function planShortfall(frame, suite) {
+    if (frame.planned === undefined || frame.planned === frame.seen)
+        return null;
+    return {
+        name: "plan not satisfied",
+        status: "fail",
+        message: `TAP plan expected ${frame.planned} test${frame.planned === 1 ? "" : "s"}, saw ${frame.seen}`,
+        suite,
+        framework: "TAP",
+    };
+}
 export function parseTap(text) {
     const out = [];
-    const stack = [];
+    // stack[0] is the stream itself; the rest are open subtests.
+    const stack = [{ indent: -1, seen: 0 }];
+    const suiteOf = () => {
+        const names = stack.map((f) => f.name).filter(Boolean);
+        return names.length ? names.join(" > ") : undefined;
+    };
+    // Reported by the bail out itself, so the plan it interrupted is not also
+    // blamed for the tests that never ran.
+    let bailed = false;
     let yaml = null;
     let last;
+    // Close every scope the given indent has left, reporting each one's plan.
+    const closeTop = () => {
+        const suite = suiteOf();
+        const short = planShortfall(stack.pop(), suite);
+        if (short)
+            out.push(short);
+    };
+    const popTo = (indent) => {
+        while (stack.length > 1 && indent <= stack[stack.length - 1].indent)
+            closeTop();
+    };
     for (const raw of String(text || "").split(/\r?\n/)) {
         const line = raw.trim();
         const indent = raw.length - raw.trimStart().length;
@@ -84,33 +116,45 @@ export function parseTap(text) {
         }
         const sub = SUBTEST.exec(line);
         if (sub) {
-            stack.push({ indent, name: sub[1].trim() });
+            stack.push({ indent, name: sub[1].trim(), seen: 0 });
             continue;
         }
         // "Bail out!" abandons the run: everything after it is unreached, and a
         // run that stopped early is a failure however many points preceded it.
         const bail = /^Bail out!\s*(.*)$/i.exec(line);
         if (bail) {
-            out.push({ name: "Bail out!", status: "fail", message: bail[1].trim() || undefined, framework: "TAP" });
+            out.push({ name: "Bail out!", status: "fail", message: bail[1].trim() || undefined, suite: suiteOf(), framework: "TAP" });
+            bailed = true;
             break;
+        }
+        // "1..N" belongs to the scope that is open where it appears; a subtest
+        // writes its own, indented with its points.
+        const plan = PLAN.exec(line);
+        if (plan) {
+            stack[stack.length - 1].planned = Number(plan[2]) - Number(plan[1]) + 1;
+            continue;
         }
         const point = POINT.exec(line);
         if (!point)
             continue;
         // A subtest's own points are indented under it; its summary point sits
         // back at the parent's level and closes the frame.
-        while (stack.length && indent <= stack[stack.length - 1].indent)
-            stack.pop();
+        popTo(indent);
+        stack[stack.length - 1].seen++;
         const { status: forced, reason, name } = directive(point[3] ?? "");
         const status = forced ?? (point[1] ? "fail" : "pass");
         last = {
             name: name || `test ${point[2] ?? out.length + 1}`,
             status,
             message: reason,
-            suite: stack.length ? stack.map((f) => f.name).join(" > ") : undefined,
+            suite: suiteOf(),
             framework: "TAP",
         };
         out.push(last);
+    }
+    if (!bailed) {
+        while (stack.length)
+            closeTop();
     }
     return out;
 }

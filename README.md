@@ -51,10 +51,10 @@ ignored rather than shown as an empty passing run.
 | xUnit.net | xUnit v2/v3 | `dotnet test --logger "xunit;LogFilePath=xunit.xml"` | `.xml` | — |
 | TestNG | TestNG, Maven | `test-output/testng-results.xml` | `.xml` | `is-config` setup/teardown methods are dropped |
 | CTest | CMake / CTest | `ctest -T Test` → `Testing/<tag>/Test.xml` | `.xml` | one row per test binary, not per assertion |
-| TAP 13/14 | node:test, prove, pytest-tap, tap.py, Catch2, … | `node --test --test-reporter=tap > run.tap` | `.tap` | the YAML block contributes `error`/`message`, `stack` and `duration_ms`; a `Bail out!` ends the run as a failed row |
+| TAP 13/14 | node:test, prove, pytest-tap, tap.py, Catch2, … | `node --test --test-reporter=tap > run.tap` | `.tap` | the YAML block contributes `error`/`message`, `stack` and `duration_ms`; a `Bail out!`, or a stream that ends short of its `1..N` plan, becomes a failed row |
 | CTRF JSON | any runner with a CTRF reporter (JS/TS, Python, Java, Go, .NET) | the reporter writes `ctrf-report.json` | `.json` | — |
 | Allure 2 | Allure adapters | `allure-results/<uuid>-result.json` | `.json` | the whole results folder is merged in name order; steps, attachments and containers are ignored |
-| `go test -json` | Go | `go test -json ./... > run.jsonl` | `.json`, `.jsonl`, `.ndjson` | package-level events are dropped; the failure text is the test's raw output |
+| `go test -json` | Go | `go test -json ./... > run.jsonl` | `.json`, `.jsonl`, `.ndjson` | the failure text is the test's raw output; a package that fails with no test to blame (a build or `TestMain` failure) becomes a row of its own |
 | Dart test JSON | `dart test`, `flutter test` | `dart test --reporter=json > run.jsonl` | `.json`, `.jsonl`, `.ndjson` | hidden loading/compiling entries are dropped |
 | Rust libtest JSON | libtest, `cargo nextest` | `cargo nextest run --message-format libtest-json > run.jsonl` | `.json`, `.jsonl`, `.ndjson` | durations need `--report-time` (or nextest) |
 
