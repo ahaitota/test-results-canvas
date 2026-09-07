@@ -23,10 +23,17 @@ export function parseGoTest(text) {
     const started = new Map();
     const packageOutput = new Map();
     const packageFailed = new Map();
+    // Every package the stream mentions, and the ones it saw finish. `go test`
+    // closes each package with a Test-less terminal event, so a package still
+    // open is a snapshot taken between tests.
+    const packages = new Set();
+    const packagesDone = new Set();
     for (const event of jsonLines(text)) {
         const action = str(event, "Action");
         const pkg = packageOf(str(event, "Package") ?? str(event, "ImportPath"));
         const test = str(event, "Test");
+        if (pkg)
+            packages.add(pkg);
         if (!test) {
             if (!pkg)
                 continue;
@@ -34,6 +41,8 @@ export function parseGoTest(text) {
             // runner's own lines.
             if (action === "output" || action === "build-output")
                 collect(packageOutput, pkg, str(event, "Output") ?? "");
+            if (action === "pass" || action === "fail" || action === "skip" || action === "build-fail")
+                packagesDone.add(pkg);
             if (action === "fail" || action === "build-fail") {
                 packageFailed.set(pkg, { time: str(event, "Time"), elapsed: num(event, "Elapsed") });
             }
@@ -76,6 +85,12 @@ export function parseGoTest(text) {
     for (const key of started.keys()) {
         if (!rows.has(key))
             throw new SyntaxError("go test stream ends with a test still running");
+    }
+    // Same for the packages themselves: a stream cut between two tests has every
+    // test it mentions accounted for, and still is not the whole run.
+    for (const pkg of packages) {
+        if (!packagesDone.has(pkg))
+            throw new SyntaxError(`go test stream ends before ${pkg} finished`);
     }
     // Only when no test in that package already carries the failure: a package
     // fails whenever one of its tests does, and a second row would double-count

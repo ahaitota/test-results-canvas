@@ -19,13 +19,17 @@ export function parseTestNG(xml: string): TestResult[] {
             const className = attr(cls.attrs, "name");
             for (const method of findAll(cls, "test-method")) {
                 const name = attr(method.attrs, "name");
-                // @BeforeMethod/@AfterMethod and the like are setup, not tests.
-                if (!name || attr(method.attrs, "is-config") === "true") continue;
+                if (!name) continue;
+                const outcome = status(attr(method.attrs, "status"));
+                // @BeforeMethod/@AfterMethod and the like are setup, not tests --
+                // until one fails, when it IS the run's failure and the tests it
+                // guarded are only reported as skipped.
+                if (attr(method.attrs, "is-config") === "true" && outcome === "pass") continue;
                 const ms = Number(attr(method.attrs, "duration-ms"));
                 const ex = child(method, "exception");
                 out.push({
                     name,
-                    status: status(attr(method.attrs, "status")),
+                    status: outcome,
                     durationMs: Number.isFinite(ms) ? ms : undefined,
                     message: joinMessage(attr(ex?.attrs, "class"), childText(ex, "message"), childText(ex, "full-stacktrace")),
                     className,

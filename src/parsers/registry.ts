@@ -17,7 +17,7 @@ import { parseXunit } from "./xunit.js";
 import { parseTestNG } from "./testng.js";
 import { parseCTest } from "./ctest.js";
 import { parseCtrf } from "./ctrf.js";
-import { parseAllure, expandAllure } from "./allure.js";
+import { parseAllure, expandAllure, ALLURE_STATUS } from "./allure.js";
 import { parseGoTest } from "./gotest.js";
 import { parseDart } from "./dart.js";
 import { parseRustJson } from "./rust.js";
@@ -51,8 +51,6 @@ function root(head: string, ...names: string[]): boolean {
     return name !== undefined && names.includes(name);
 }
 
-const ALLURE_STATUS = new Set(["passed", "failed", "broken", "skipped", "unknown"]);
-
 // An Allure *result*: its own status and name at the top level. A container
 // (`*-container.json`) has a uuid and a name too, but its statuses belong to the
 // fixtures nested inside it.
@@ -84,10 +82,18 @@ export const PARSERS: readonly Parser[] = [
 // Extensions a directory scan will even look at.
 export const RESULT_EXTS: readonly string[] = [...new Set(PARSERS.flatMap((p) => p.exts))];
 
+// A UTF-8 BOM decodes to a leading U+FEFF that is not part of the document:
+// XML validation would see it as content outside the root, and JSON.parse
+// rejects it outright. Windows tooling writes it routinely, so it is stripped
+// once here rather than guarded against in every parser.
+function withoutBom(text: string): string {
+    return text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text;
+}
+
 // The parser that claims this content, or undefined. Only the head is examined:
 // a scan sniffs the first bytes of a candidate rather than reading it whole.
 export function detectParser(text: unknown): Parser | undefined {
-    const head = String(text || "").slice(0, HEAD_BYTES);
+    const head = withoutBom(String(text || "")).slice(0, HEAD_BYTES);
     return PARSERS.find((p) => p.detect(head));
 }
 
@@ -99,11 +105,12 @@ export function looksLikeResults(text: unknown): boolean {
 // format turns out to be malformed -- so a broken file is reported as "not a
 // report" rather than rendered as a run in which no test failed.
 export function parseResults(text: string): TestResult[] | null {
-    const parser = detectParser(text);
+    const body = withoutBom(String(text || ""));
+    const parser = detectParser(body);
     if (!parser) return null;
-    if (parser.wellFormed && !parser.wellFormed(text)) return null;
+    if (parser.wellFormed && !parser.wellFormed(body)) return null;
     try {
-        return parser.parse(text);
+        return parser.parse(body);
     } catch {
         return null;
     }
@@ -113,7 +120,7 @@ export function parseResults(text: string): TestResult[] | null {
 export function parseResultsAt(abs: string): TestResult[] | null {
     let text: string;
     try {
-        text = readFileSync(abs, "utf8");
+        text = withoutBom(readFileSync(abs, "utf8"));
     } catch {
         return null;
     }
@@ -128,7 +135,7 @@ export function parseResultsAt(abs: string): TestResult[] | null {
         // the run -- and a subset presented as the run is a green report of an
         // outcome nobody knows yet. Failing here leaves the last complete run on
         // screen until the folder is readable again.
-        for (const file of parser.expand(abs)) rows.push(...parser.parse(file === abs ? text : readFileSync(file, "utf8")));
+        for (const file of parser.expand(abs)) rows.push(...parser.parse(file === abs ? text : withoutBom(readFileSync(file, "utf8"))));
         return rows;
     } catch {
         return null;

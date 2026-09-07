@@ -14,8 +14,23 @@ function status(event: string): TestStatus | null {
 export function parseRustJson(text: string): TestResult[] {
     const out: TestResult[] = [];
     const running = new Set<string>();
+    let suitesStarted = 0;
+    let suitesEnded = 0;
+    let expected = 0;
     for (const event of jsonLines(text)) {
-        if (str(event, "type") !== "test") continue;
+        const type = str(event, "type");
+        if (type === "suite") {
+            // One suite per test binary, each opened by a "started" event that
+            // declares how many tests it will report.
+            if (str(event, "event") === "started") {
+                suitesStarted++;
+                expected += num(event, "test_count") ?? 0;
+            } else {
+                suitesEnded++;
+            }
+            continue;
+        }
+        if (type !== "test") continue;
         const name = str(event, "name");
         if (!name) continue;
         const outcome = status(str(event, "event") ?? "");
@@ -40,5 +55,9 @@ export function parseRustJson(text: string): TestResult[] {
     // A test that started and never reported an outcome means the stream stops
     // mid-run, so what it does hold is not the whole run.
     if (running.size) throw new SyntaxError("libtest stream ends with a test still running");
+    // Each suite closes with its own terminal event, and says up front how many
+    // tests to expect -- both of which a snapshot taken between tests fails.
+    if (suitesStarted !== suitesEnded) throw new SyntaxError("libtest stream ends before the suite finished");
+    if (suitesStarted && expected !== out.length) throw new SyntaxError(`libtest suite declared ${expected} tests, reported ${out.length}`);
     return out;
 }

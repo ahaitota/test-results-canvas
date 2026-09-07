@@ -10,8 +10,13 @@ export function parseDart(text) {
     const suites = new Map();
     const pending = new Map();
     const out = [];
+    let events = 0;
+    let sawDone = false;
     for (const event of jsonLines(text)) {
+        events++;
         const type = str(event, "type");
+        if (type === "done")
+            sawDone = true;
         if (type === "suite") {
             const suite = rec(event.suite);
             const id = num(suite, "id");
@@ -63,6 +68,10 @@ export function parseDart(text) {
     // mid-write; the tests that did finish are not the whole run.
     if (pending.size)
         throw new SyntaxError("dart test stream ends with a test still running");
+    // Dart closes a run with a "done" event, so a stream without one was read
+    // between two tests however tidy the tests themselves look.
+    if (events && !sawDone)
+        throw new SyntaxError("dart test stream has no done event");
     return out;
 }
 //# sourceMappingURL=dart.js.map

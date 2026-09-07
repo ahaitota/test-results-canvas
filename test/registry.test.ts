@@ -28,6 +28,15 @@ test("detectParser routes each format to its own parser", () => {
   for (const [expected, text] of SAMPLES) assert.equal(id(text), expected, expected);
 });
 
+test("a UTF-8 BOM does not stop a report being read", () => {
+  // Windows tooling writes one routinely: it decodes to a leading U+FEFF that
+  // is outside the XML document, and that JSON.parse rejects outright.
+  const bom = "\uFEFF";
+  assert.equal(id(`${bom}<?xml version="1.0"?><testsuites><testcase name="x" /></testsuites>`), "junit");
+  assert.equal(parseResults(`${bom}<?xml version="1.0"?><testsuites><testcase name="x" /></testsuites>`)?.length, 1);
+  assert.equal(parseResults(`${bom}{"reportFormat":"CTRF","results":{"tool":{"name":"jest"},"tests":[{"name":"a","status":"passed"}]}}`)?.length, 1);
+});
+
 test("looksLikeResults rejects files that are not reports", () => {
   const notReports = [
     `{"name":"pkg","version":"1.0.0","scripts":{"test":"node --test"}}`,

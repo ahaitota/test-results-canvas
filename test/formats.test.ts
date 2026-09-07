@@ -129,6 +129,25 @@ test("parseTestNG skips configuration methods and keeps class/suite context", ()
   assert.equal(rows[1].message, "java.lang.AssertionError\nexpected [1] but found [2]\nat com.example.CalcTest.subtracts");
 });
 
+test("parseTestNG keeps a failed configuration method, which is the run's real failure", () => {
+  const rows = parseTestNG(`<testng-results total="2">
+  <suite name="Default suite">
+    <test name="Default test">
+      <class name="com.example.CalcTest">
+        <test-method status="FAIL" is-config="true" name="setUp" duration-ms="3">
+          <exception class="java.lang.IllegalStateException">
+            <message><![CDATA[setup failed]]></message>
+          </exception>
+        </test-method>
+        <test-method status="SKIP" name="adds" duration-ms="0" />
+      </class>
+    </test>
+  </suite>
+</testng-results>`);
+  assert.deepEqual(rows.map((r) => [r.name, r.status]), [["setUp", "fail"], ["adds", "skip"]]);
+  assert.equal(rows[0].message, "java.lang.IllegalStateException\nsetup failed");
+});
+
 test("parseTestNG returns nothing for a run with no methods", () => {
   assert.deepEqual(parseTestNG(`<testng-results total="0"><suite name="s" /></testng-results>`), []);
 });
@@ -410,7 +429,16 @@ const DART = [
   { type: "testDone", testID: 3, result: "failure", hidden: false, skipped: false, time: 75 },
   { type: "testStart", test: { id: 4, name: "calc divides", suiteID: 0 }, time: 80 },
   { type: "testDone", testID: 4, result: "success", hidden: false, skipped: true, time: 80 },
+  { type: "done", success: false, time: 90 },
 ].map((e) => JSON.stringify(e)).join("\n");
+
+test("parseAllure rejects a record that is not a usable result", () => {
+  // Structurally valid JSON, but nameless: it would contribute no row and no
+  // error, quietly turning a failing run green.
+  assert.throws(() => parseAllure(`{"uuid":"b","status":"failed"}`));
+  assert.throws(() => parseAllure(`{"uuid":"b","name":"adds","status":"weird"}`));
+  assert.throws(() => parseAllure(`{"name":"adds","status":"passed"}`));
+});
 
 test("parseGoTest keeps the run timestamp as the start and the terminal one as the end", () => {
   const [row] = parseGoTest(GO);
@@ -466,6 +494,15 @@ test("parseGoTest rejects a stream that ends with a test still running", () => {
   ].map((e) => JSON.stringify(e)).join("\n")));
 });
 
+test("parseGoTest rejects a stream cut between two tests", () => {
+  // TestA is complete, so only the package's missing terminal event shows that
+  // the run had not finished.
+  assert.throws(() => parseGoTest([
+    { Action: "run", Package: "p", Test: "TestA" },
+    { Action: "pass", Package: "p", Test: "TestA", Elapsed: 0.01 },
+  ].map((e) => JSON.stringify(e)).join("\n")));
+});
+
 test("parseDart pairs testStart/testDone, drops hidden entries and keeps errors", () => {
   const rows = parseDart(DART);
   assert.deepEqual(rows.map((r) => r.name), ["calc adds", "calc subtracts", "calc divides"]);
@@ -475,8 +512,18 @@ test("parseDart pairs testStart/testDone, drops hidden entries and keeps errors"
   assert.equal(rows[1].message, "Expected: 1\ncalc_test.dart 7:5");
 });
 
-test("parseDart returns nothing for a run that started no test", () => {
-  assert.deepEqual(parseDart(`{"protocolVersion":"0.1.1","type":"start","time":0}`), []);
+test("parseDart returns nothing for a run that finished with no test", () => {
+  assert.deepEqual(parseDart(`{"protocolVersion":"0.1.1","type":"start","time":0}\n{"type":"done","success":true,"time":1}`), []);
+});
+
+test("parseDart rejects a run that never reported its done event", () => {
+  // Every test it mentions finished, and it is still a snapshot taken before
+  // the run ended.
+  assert.throws(() => parseDart([
+    { type: "suite", suite: { id: 0, path: "test/calc_test.dart" } },
+    { type: "testStart", test: { id: 1, name: "adds", suiteID: 0 }, time: 1 },
+    { type: "testDone", testID: 1, result: "success", hidden: false, time: 5 },
+  ].map((e) => JSON.stringify(e)).join("\n")));
 });
 
 // --- Rust libtest / nextest ------------------------------------------------
@@ -519,5 +566,13 @@ test("parseRustJson rejects a stream that ends with a test still running", () =>
 });
 
 test("parseRustJson returns nothing for a suite that ran no test", () => {
-  assert.deepEqual(parseRustJson(`{"type":"suite","event":"started","test_count":0}`), []);
+  assert.deepEqual(parseRustJson(`{"type":"suite","event":"started","test_count":0}\n{"type":"suite","event":"ok","passed":0}`), []);
+});
+
+test("parseRustJson rejects a suite that never closed or fell short of its count", () => {
+  const finished = `{"type":"test","name":"calc::adds","event":"ok"}`;
+  // Started, one test reported, no terminal suite event.
+  assert.throws(() => parseRustJson(`{"type":"suite","event":"started","test_count":2}\n${finished}`));
+  // Closed, but a test it promised never arrived.
+  assert.throws(() => parseRustJson(`{"type":"suite","event":"started","test_count":2}\n${finished}\n{"type":"suite","event":"ok","passed":1}`));
 });

@@ -9,6 +9,9 @@ import { rec, str, num, arr, joinMessage } from "./json.js";
 
 const SUFFIX = "-result.json";
 
+// The statuses Allure's model defines; anything else is not a result record.
+export const ALLURE_STATUS = new Set(["passed", "failed", "broken", "skipped", "unknown"]);
+
 function status(raw: string | undefined): TestStatus {
     const s = String(raw || "").toLowerCase();
     if (s === "passed") return "pass";
@@ -35,7 +38,13 @@ export function parseAllure(text: string): TestResult[] {
     for (const entry of entries) {
         const t = rec(entry);
         const name = str(t, "name") ?? str(t, "fullName");
-        if (!name) continue;
+        const outcome = str(t, "status");
+        // Every result file is required input: one that carries no identity,
+        // name or recognized status is not a result this run can be read
+        // without, so it fails rather than quietly contributing no row.
+        if (!t || !str(t, "uuid") || !name || !outcome || !ALLURE_STATUS.has(outcome.toLowerCase())) {
+            throw new SyntaxError("allure result is missing its uuid, name or status");
+        }
         const label = labels(t);
         const start = num(t, "start");
         const stop = num(t, "stop");
