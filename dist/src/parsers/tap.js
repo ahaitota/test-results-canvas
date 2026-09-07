@@ -57,22 +57,28 @@ function fromYaml(lines) {
     const message = [found.get("error") ?? found.get("message"), found.get("stack")].filter(Boolean).join("\n");
     return { message: message || undefined, durationMs };
 }
-// The row a scope owes when its points did not match its plan.
-function planShortfall(frame, suite) {
-    if (frame.planned === undefined || frame.planned === frame.seen)
-        return null;
-    return {
-        name: "plan not satisfied",
-        status: "fail",
-        message: `TAP plan expected ${frame.planned} test${frame.planned === 1 ? "" : "s"}, saw ${frame.seen}`,
-        suite,
-        framework: "TAP",
-    };
+// Why a scope is not a valid, complete TAP stream, or null when it is.
+function scopeFault(frame) {
+    if (frame.invalid)
+        return frame.invalid;
+    if (frame.plans === 0)
+        return "TAP stream declared no 1..N plan";
+    if (frame.plans > 1)
+        return "TAP stream declared more than one 1..N plan";
+    const planned = (frame.last ?? 0) - (frame.first ?? 1) + 1;
+    if (planned !== frame.seen)
+        return `TAP plan expected ${planned} test${planned === 1 ? "" : "s"}, saw ${frame.seen}`;
+    return null;
+}
+// The row a scope owes when it is not a valid, complete stream.
+function faultRow(frame, suite) {
+    const fault = scopeFault(frame);
+    return fault === null ? null : { name: "TAP stream not valid", status: "fail", message: fault, suite, framework: "TAP" };
 }
 export function parseTap(text) {
     const out = [];
     // stack[0] is the stream itself; the rest are open subtests.
-    const stack = [{ indent: -1, seen: 0 }];
+    const stack = [{ indent: -1, plans: 0, seen: 0 }];
     const suiteOf = () => {
         const names = stack.map((f) => f.name).filter(Boolean);
         return names.length ? names.join(" > ") : undefined;
@@ -82,12 +88,12 @@ export function parseTap(text) {
     let bailed = false;
     let yaml = null;
     let last;
-    // Close every scope the given indent has left, reporting each one's plan.
+    // Close every scope the given indent has left, reporting what each owes.
     const closeTop = () => {
         const suite = suiteOf();
-        const short = planShortfall(stack.pop(), suite);
-        if (short)
-            out.push(short);
+        const fault = faultRow(stack.pop(), suite);
+        if (fault)
+            out.push(fault);
     };
     const popTo = (indent) => {
         while (stack.length > 1 && indent <= stack[stack.length - 1].indent)
@@ -116,7 +122,7 @@ export function parseTap(text) {
         }
         const sub = SUBTEST.exec(line);
         if (sub) {
-            stack.push({ indent, name: sub[1].trim(), seen: 0 });
+            stack.push({ indent, name: sub[1].trim(), plans: 0, seen: 0 });
             continue;
         }
         // "Bail out!" abandons the run: everything after it is unreached, and a
@@ -131,7 +137,10 @@ export function parseTap(text) {
         // writes its own, indented with its points.
         const plan = PLAN.exec(line);
         if (plan) {
-            stack[stack.length - 1].planned = Number(plan[2]) - Number(plan[1]) + 1;
+            const frame = stack[stack.length - 1];
+            frame.plans++;
+            frame.first = Number(plan[1]);
+            frame.last = Number(plan[2]);
             continue;
         }
         const point = POINT.exec(line);
@@ -140,7 +149,20 @@ export function parseTap(text) {
         // A subtest's own points are indented under it; its summary point sits
         // back at the parent's level and closes the frame.
         popTo(indent);
-        stack[stack.length - 1].seen++;
+        const frame = stack[stack.length - 1];
+        frame.seen++;
+        // Explicit numbers must climb, never repeat, and stay inside the plan --
+        // "ok 1" twice is a stream that lost a result, not two tests.
+        const number = point[2] === undefined ? undefined : Number(point[2]);
+        if (number !== undefined) {
+            if (frame.highest !== undefined && number <= frame.highest) {
+                frame.invalid ??= `TAP point ${number} repeats or follows a higher number`;
+            }
+            else if (frame.last !== undefined && (number < (frame.first ?? 1) || number > frame.last)) {
+                frame.invalid ??= `TAP point ${number} falls outside the plan ${frame.first}..${frame.last}`;
+            }
+            frame.highest = number;
+        }
         const { status: forced, reason, name } = directive(point[3] ?? "");
         const status = forced ?? (point[1] ? "fail" : "pass");
         last = {

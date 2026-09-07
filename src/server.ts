@@ -75,8 +75,9 @@ const DEFAULT_FILE = "results.trx";
 // as a results file.
 export { RESULT_EXTS, looksLikeResults };
 
-// Newest results file directly inside a directory (non-recursive).
-export function newestResultsFileIn(dir: string): string | null {
+// Newest results file directly inside a directory (non-recursive), optionally
+// narrowed to the ones a caller can use.
+export function newestResultsFileIn(dir: string, accept?: (abs: string) => boolean): string | null {
     let best: string | null = null, bestMtime = -1;
     let names: string[];
     try {
@@ -89,7 +90,7 @@ export function newestResultsFileIn(dir: string): string | null {
         const abs = resolvePath(dir, n);
         try {
             const st = statSync(abs);
-            if (st.isFile() && st.mtimeMs > bestMtime && looksLikeResults(readHead(abs))) {
+            if (st.isFile() && st.mtimeMs > bestMtime && looksLikeResults(readHead(abs)) && (!accept || accept(abs))) {
                 best = abs;
                 bestMtime = st.mtimeMs;
             }
@@ -874,8 +875,15 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
                 // A folder-expanding source (Allure) reads every result beside
                 // it, so a brand-new sibling changed it even though the file it
                 // is named after did not.
-                const touched = entry.expands || changedNames.has(basename(entry.source.path));
-                if (touched && reparse(entry, entry.source.path)) changed = true;
+                if (!entry.expands && !changedNames.has(basename(entry.source.path))) continue;
+                // It is only ANCHORED on that file, though. A re-run that
+                // deletes the old results and writes new ones leaves the anchor
+                // pointing at nothing, so follow the folder to a sibling of the
+                // same kind rather than going stale on a file that is gone.
+                const anchor = entry.expands && !existsSync(entry.source.path)
+                    ? newestResultsFileIn(dir, expandsDirectory) ?? entry.source.path
+                    : entry.source.path;
+                if (reparse(entry, anchor)) changed = true;
             }
         }
         if (!changed) return;

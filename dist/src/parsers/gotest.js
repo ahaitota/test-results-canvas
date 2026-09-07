@@ -12,6 +12,11 @@ function collect(into, key, line) {
         into.set(key, lines);
     lines.push(line);
 }
+// Build events name the target, not the package: "example/calc [example/calc.test]"
+// is where "example/calc" failed, and its diagnostics belong to that package.
+function packageOf(raw) {
+    return raw?.replace(/\s*\[[^\]]*]\s*$/, "") || undefined;
+}
 export function parseGoTest(text) {
     const rows = new Map();
     const output = new Map();
@@ -20,12 +25,14 @@ export function parseGoTest(text) {
     const packageFailed = new Map();
     for (const event of jsonLines(text)) {
         const action = str(event, "Action");
-        const pkg = str(event, "Package") ?? str(event, "ImportPath");
+        const pkg = packageOf(str(event, "Package") ?? str(event, "ImportPath"));
         const test = str(event, "Test");
         if (!test) {
             if (!pkg)
                 continue;
-            if (action === "output")
+            // `build-output` carries the compiler diagnostics; `output` the
+            // runner's own lines.
+            if (action === "output" || action === "build-output")
                 collect(packageOutput, pkg, str(event, "Output") ?? "");
             if (action === "fail" || action === "build-fail") {
                 packageFailed.set(pkg, { time: str(event, "Time"), elapsed: num(event, "Elapsed") });

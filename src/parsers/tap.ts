@@ -59,29 +59,39 @@ function fromYaml(lines: string[]): { message?: string; durationMs?: number } {
 interface Frame {
     indent: number;
     name?: string;
-    // The scope's "1..N" line and how many points it has actually seen. A
-    // stream that stops short of its plan looks like a shorter passing run
-    // unless the shortfall is reported.
-    planned?: number;
+    // The scope's "1..N" line, how many of them it declared, and how many points
+    // it has actually seen. A stream that stops short of its plan -- or never
+    // declares one -- looks like a shorter passing run unless it is reported.
+    first?: number;
+    last?: number;
+    plans: number;
     seen: number;
+    // The highest explicit point number so far, and the first structural
+    // complaint against the scope.
+    highest?: number;
+    invalid?: string;
 }
 
-// The row a scope owes when its points did not match its plan.
-function planShortfall(frame: Frame, suite: string | undefined): TestResult | null {
-    if (frame.planned === undefined || frame.planned === frame.seen) return null;
-    return {
-        name: "plan not satisfied",
-        status: "fail",
-        message: `TAP plan expected ${frame.planned} test${frame.planned === 1 ? "" : "s"}, saw ${frame.seen}`,
-        suite,
-        framework: "TAP",
-    };
+// Why a scope is not a valid, complete TAP stream, or null when it is.
+function scopeFault(frame: Frame): string | null {
+    if (frame.invalid) return frame.invalid;
+    if (frame.plans === 0) return "TAP stream declared no 1..N plan";
+    if (frame.plans > 1) return "TAP stream declared more than one 1..N plan";
+    const planned = (frame.last ?? 0) - (frame.first ?? 1) + 1;
+    if (planned !== frame.seen) return `TAP plan expected ${planned} test${planned === 1 ? "" : "s"}, saw ${frame.seen}`;
+    return null;
+}
+
+// The row a scope owes when it is not a valid, complete stream.
+function faultRow(frame: Frame, suite: string | undefined): TestResult | null {
+    const fault = scopeFault(frame);
+    return fault === null ? null : { name: "TAP stream not valid", status: "fail", message: fault, suite, framework: "TAP" };
 }
 
 export function parseTap(text: string): TestResult[] {
     const out: TestResult[] = [];
     // stack[0] is the stream itself; the rest are open subtests.
-    const stack: Frame[] = [{ indent: -1, seen: 0 }];
+    const stack: Frame[] = [{ indent: -1, plans: 0, seen: 0 }];
     const suiteOf = () => {
         const names = stack.map((f) => f.name).filter(Boolean);
         return names.length ? names.join(" > ") : undefined;
@@ -92,11 +102,11 @@ export function parseTap(text: string): TestResult[] {
     let yaml: string[] | null = null;
     let last: TestResult | undefined;
 
-    // Close every scope the given indent has left, reporting each one's plan.
+    // Close every scope the given indent has left, reporting what each owes.
     const closeTop = (): void => {
         const suite = suiteOf();
-        const short = planShortfall(stack.pop()!, suite);
-        if (short) out.push(short);
+        const fault = faultRow(stack.pop()!, suite);
+        if (fault) out.push(fault);
     };
     const popTo = (indent: number): void => {
         while (stack.length > 1 && indent <= stack[stack.length - 1].indent) closeTop();
@@ -124,7 +134,7 @@ export function parseTap(text: string): TestResult[] {
         }
         const sub = SUBTEST.exec(line);
         if (sub) {
-            stack.push({ indent, name: sub[1].trim(), seen: 0 });
+            stack.push({ indent, name: sub[1].trim(), plans: 0, seen: 0 });
             continue;
         }
         // "Bail out!" abandons the run: everything after it is unreached, and a
@@ -139,7 +149,10 @@ export function parseTap(text: string): TestResult[] {
         // writes its own, indented with its points.
         const plan = PLAN.exec(line);
         if (plan) {
-            stack[stack.length - 1].planned = Number(plan[2]) - Number(plan[1]) + 1;
+            const frame = stack[stack.length - 1];
+            frame.plans++;
+            frame.first = Number(plan[1]);
+            frame.last = Number(plan[2]);
             continue;
         }
         const point = POINT.exec(line);
@@ -147,7 +160,19 @@ export function parseTap(text: string): TestResult[] {
         // A subtest's own points are indented under it; its summary point sits
         // back at the parent's level and closes the frame.
         popTo(indent);
-        stack[stack.length - 1].seen++;
+        const frame = stack[stack.length - 1];
+        frame.seen++;
+        // Explicit numbers must climb, never repeat, and stay inside the plan --
+        // "ok 1" twice is a stream that lost a result, not two tests.
+        const number = point[2] === undefined ? undefined : Number(point[2]);
+        if (number !== undefined) {
+            if (frame.highest !== undefined && number <= frame.highest) {
+                frame.invalid ??= `TAP point ${number} repeats or follows a higher number`;
+            } else if (frame.last !== undefined && (number < (frame.first ?? 1) || number > frame.last)) {
+                frame.invalid ??= `TAP point ${number} falls outside the plan ${frame.first}..${frame.last}`;
+            }
+            frame.highest = number;
+        }
         const { status: forced, reason, name } = directive(point[3] ?? "");
         const status: TestStatus = forced ?? (point[1] ? "fail" : "pass");
         last = {

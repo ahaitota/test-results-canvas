@@ -16,19 +16,25 @@ export function arr(from, key) {
 }
 // Objects from a JSONL/NDJSON stream. Runners interleave plain text (build
 // errors, panics) with their JSON events, so a line that is not an object is
-// skipped instead of failing the whole run.
+// skipped -- but a line that *starts* like one and will not parse means the file
+// was caught mid-write, and throwing lets the registry reject it rather than
+// present the events that happened to be flushed as a complete run.
 export function jsonLines(text) {
     const out = [];
     for (const line of String(text || "").split("\n")) {
         const trimmed = line.trim();
         if (!trimmed.startsWith("{"))
             continue;
+        let parsed;
         try {
-            const parsed = rec(JSON.parse(trimmed));
-            if (parsed)
-                out.push(parsed);
+            parsed = JSON.parse(trimmed);
         }
-        catch { /* not an event line */ }
+        catch {
+            throw new SyntaxError("truncated JSON event line");
+        }
+        const record = rec(parsed);
+        if (record)
+            out.push(record);
     }
     return out;
 }

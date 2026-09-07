@@ -75,7 +75,7 @@ export const PARSERS: readonly Parser[] = [
     // "tests" too.
     { id: "ctrf", exts: [".json"], detect: (h) => /"reportFormat"\s*:\s*"CTRF"/i.test(h) || (/"tool"\s*:\s*\{/.test(h) && /"tests"\s*:\s*\[/.test(h)), parse: parseCtrf },
     { id: "allure", exts: [".json"], detect: isAllureResult, parse: parseAllure, expand: expandAllure },
-    { id: "gotest", exts: JSONL, detect: (h) => /"Action"\s*:\s*"(run|output|pass|fail|skip)"/.test(h), parse: parseGoTest },
+    { id: "gotest", exts: JSONL, detect: (h) => /"Action"\s*:\s*"(run|output|pass|fail|skip|build-output|build-fail)"/.test(h), parse: parseGoTest },
     { id: "dart", exts: JSONL, detect: (h) => /"type"\s*:\s*"(testStart|testDone)"/.test(h) || /"protocolVersion"\s*:/.test(h), parse: parseDart },
     { id: "rust", exts: JSONL, detect: (h) => /"type"\s*:\s*"(suite|test)"\s*,\s*"event"\s*:/.test(h), parse: parseRustJson },
     { id: "tap", exts: [".tap"], detect: (h) => /^\s*TAP version \d/im.test(h) || (/^\s*\d+\.\.\d+\s*$/m.test(h) && /^\s*(not\s+)?ok\b/m.test(h)), parse: parseTap },

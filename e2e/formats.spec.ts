@@ -1,5 +1,5 @@
 import { test, expect, get_fixture_path, openCanvas } from "./canvas-server";
-import { copyFileSync, mkdirSync, appendFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, appendFileSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 // The non-XML formats end to end: the server has to detect them from content and
@@ -51,5 +51,26 @@ test.describe("cross-language report formats", () => {
 
     await expect(page.getByTestId("test-row")).toHaveCount(3);
     await expect(page.getByTestId("test-name").filter({ hasText: "subtracts" })).toBeVisible();
+  });
+
+  test("re-anchors an Allure source when the run that named it is replaced", async ({ page, makeServer }, testInfo) => {
+    // A re-run clears the folder and writes fresh files, so the file the source
+    // was anchored on no longer exists.
+    const dir = testInfo.outputPath("allure-replaced");
+    mkdirSync(dir, { recursive: true });
+    const first = join(dir, "aaa-result.json");
+    const other = join(dir, "run.xml");
+    writeFileSync(first, `{"uuid":"aaa","name":"adds","status":"passed"}`, "utf8");
+    writeFileSync(other, `<testsuites><testsuite name="s"><testcase name="unrelated" /></testsuite></testsuites>`, "utf8");
+
+    const s = await makeServer({ name: "Mixed", resultsFiles: [first, other], watch: true });
+    await openCanvas(page, s);
+    await expect(page.getByTestId("test-name").filter({ hasText: "adds" })).toBeVisible();
+
+    rmSync(first);
+    writeFileSync(join(dir, "ccc-result.json"), `{"uuid":"ccc","name":"divides","status":"passed"}`, "utf8");
+
+    await expect(page.getByTestId("test-name").filter({ hasText: "divides" })).toBeVisible();
+    await expect(page.getByTestId("test-name").filter({ hasText: "adds" })).toHaveCount(0);
   });
 });

@@ -115,6 +115,17 @@ test("parseResults rejects XML that is not well formed", () => {
   // An end tag carrying attributes, and a value that never closes.
   assert.equal(parseResults(`<testsuites><testsuite name="s"></testsuite name="s"></testsuites>`), null);
   assert.equal(parseResults(`<testsuites><testsuite name="s><testcase name="x" /></testsuite></testsuites>`), null);
+  // A repeated attribute: attr() returns the first, so the row would silently
+  // take one of two conflicting names.
+  assert.equal(parseResults(`<testsuites><testsuite name="a" name="b"><testcase name="x" /></testsuite></testsuites>`), null);
+  // "</a/>" is not an end tag.
+  assert.equal(parseResults(`<testsuites><testsuite name="s"><testcase name="x"></testcase/></testsuite></testsuites>`), null);
+  // Only whitespace, comments, PIs and a doctype may sit outside the root.
+  assert.equal(parseResults(`garbage<testsuites><testcase name="x" /></testsuites>`), null);
+  assert.equal(parseResults(`<testsuites><testcase name="x" /></testsuites>tail`), null);
+  // The declaration, a doctype and comments around the root are still fine.
+  const framed = `<?xml version="1.0"?>\n<!-- run -->\n<testsuites><testsuite name="s"><testcase name="x" /></testsuite></testsuites>\n<!-- end -->\n`;
+  assert.equal(parseResults(framed)?.length, 1);
 });
 
 test("parseResults rejects XML that was caught half-written", () => {

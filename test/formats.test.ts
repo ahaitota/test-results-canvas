@@ -242,8 +242,32 @@ ok 2 - never ran
 
 test("parseTap fails a stream that ends short of its plan", () => {
   const rows = parseTap("TAP version 13\n1..2\nok 1 - first\n");
-  assert.deepEqual(rows.map((r) => [r.name, r.status]), [["first", "pass"], ["plan not satisfied", "fail"]]);
+  assert.deepEqual(rows.map((r) => [r.name, r.status]), [["first", "pass"], ["TAP stream not valid", "fail"]]);
   assert.equal(rows[1].message, "TAP plan expected 2 tests, saw 1");
+});
+
+test("parseTap fails a stream that never declared a plan", () => {
+  const rows = parseTap("TAP version 13\nok 1 - first\n");
+  assert.deepEqual(rows.map((r) => [r.name, r.status]), [["first", "pass"], ["TAP stream not valid", "fail"]]);
+  assert.equal(rows[1].message, "TAP stream declared no 1..N plan");
+});
+
+test("parseTap fails a stream that declared two plans", () => {
+  const rows = parseTap("TAP version 13\n1..1\nok 1 - first\n1..1\n");
+  assert.equal(rows[1].message, "TAP stream declared more than one 1..N plan");
+});
+
+test("parseTap fails repeated or out-of-order point numbers", () => {
+  // The count matches the plan, so only the numbering shows that a result was
+  // lost.
+  const rows = parseTap("TAP version 13\n1..2\nok 1 - first\nok 1 - duplicate\n");
+  assert.deepEqual(rows.map((r) => r.status), ["pass", "pass", "fail"]);
+  assert.equal(rows[2].message, "TAP point 1 repeats or follows a higher number");
+});
+
+test("parseTap fails a point numbered outside its plan", () => {
+  const rows = parseTap("TAP version 13\n1..2\nok 1 - first\nok 5 - stray\n");
+  assert.equal(rows[2].message, "TAP point 5 falls outside the plan 1..2");
 });
 
 test("parseTap reports an unmet plan against the subtest that owns it", () => {
@@ -254,7 +278,7 @@ test("parseTap reports an unmet plan against the subtest that owns it", () => {
 ok 1 - calc
 1..1
 `);
-  assert.deepEqual(rows.map((r) => [r.name, r.suite]), [["adds", "calc"], ["plan not satisfied", "calc"], ["calc", undefined]]);
+  assert.deepEqual(rows.map((r) => [r.name, r.suite]), [["adds", "calc"], ["TAP stream not valid", "calc"], ["calc", undefined]]);
 });
 
 test("parseTap leaves a bail out to speak for the tests that never ran", () => {
@@ -403,6 +427,25 @@ test("parseGoTest does not double-report a package whose test already failed", (
   // The GO stream ends with a package-level fail, and TestSubtracts already
   // stands for it.
   assert.equal(parseGoTest(GO).filter((r) => r.name === "example/calc").length, 0);
+});
+
+test("parseGoTest collects build-output so a compile failure keeps its diagnostics", () => {
+  // Go 1.27 reports compilation through build-output/build-fail, naming the
+  // build target rather than the package.
+  const rows = parseGoTest([
+    { ImportPath: "example/calc [example/calc.test]", Action: "build-output", Output: "# example/calc\n" },
+    { ImportPath: "example/calc [example/calc.test]", Action: "build-output", Output: "calc.go:3:2: undefined: missing\n" },
+    { ImportPath: "example/calc [example/calc.test]", Action: "build-fail" },
+    { Time: "2024-01-01T10:00:00Z", Action: "fail", Package: "example/calc", Elapsed: 0 },
+  ].map((e) => JSON.stringify(e)).join("\n"));
+  assert.deepEqual(rows.map((r) => [r.name, r.status]), [["example/calc", "fail"]]);
+  assert.equal(rows[0].message, "# example/calc\ncalc.go:3:2: undefined: missing");
+});
+
+test("parseGoTest rejects a stream caught mid-write rather than losing the failure", () => {
+  // The passing event is complete and the failing one is not; returning just the
+  // pass would replace the last finished run with a green one.
+  assert.throws(() => parseGoTest(`{"Action":"pass","Package":"p","Test":"TestA","Elapsed":0.1}\n{"Action":"fail","Package":"p","Test":"TestB","Elap`));
 });
 
 test("parseDart pairs testStart/testDone, drops hidden entries and keeps errors", () => {

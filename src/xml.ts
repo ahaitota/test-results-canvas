@@ -90,6 +90,8 @@ function tagEnd(text: string, from: number): number {
 }
 
 const NAME_END = /[\s/>]/;
+// https://www.w3.org/TR/xml/#NT-Name, narrowed to the ASCII range reports use.
+const XML_NAME = /^[A-Za-z_:][A-Za-z0-9_.:-]*$/;
 
 // Text content with CDATA sections taken literally and the rest unescaped.
 export function decodeText(raw: string): string {
@@ -180,20 +182,25 @@ export function hasElement(xml: string, name: string): boolean {
     return false;
 }
 
-// True when a tag's attribute text is nothing but well-formed name="value"
-// pairs. XML requires every value to be quoted, so a bare one (name=x) means the
+// True when a tag's attribute text is nothing but well-formed, uniquely named
+// name="value" pairs. XML requires every value to be quoted and every name to
+// appear once, so a bare or repeated one (name=x, name="a" name="b") means the
 // file was not written by a conforming serializer -- and since attr() can only
-// skip what it cannot read, that would otherwise surface as a run whose tests
-// quietly lost their names.
+// skip what it cannot read, and returns the first match of a name, that would
+// otherwise surface as a run whose tests quietly lost or swapped their names.
 export function attrsWellFormed(attrs: string): boolean {
     const text = String(attrs || "");
+    const seen = new Set<string>();
     let i = 0;
     while (i < text.length) {
         while (i < text.length && IS_SPACE(text[i])) i++;
         if (i >= text.length) return true;
         const keyStart = i;
         while (i < text.length && !IS_SPACE(text[i]) && text[i] !== "=") i++;
-        if (i === keyStart) return false; // "=" with no name in front of it
+        const key = text.slice(keyStart, i);
+        if (!XML_NAME.test(key)) return false; // "=" with no name, or not a name
+        if (seen.has(key)) return false;
+        seen.add(key);
         while (i < text.length && IS_SPACE(text[i])) i++;
         if (text[i] !== "=") return false; // a bare token, not an attribute
         i++;
@@ -208,27 +215,63 @@ export function attrsWellFormed(attrs: string): boolean {
     return true;
 }
 
+// Whitespace, comments, processing instructions and the doctype are the only
+// content XML allows outside the document element. Scanned rather than matched
+// with a regex, so a long run of text costs one pass and never backtracks.
+function isMisc(text: string): boolean {
+    let i = 0;
+    while (i < text.length) {
+        if (IS_SPACE(text[i])) {
+            i++;
+            continue;
+        }
+        if (text.startsWith("<!--", i)) {
+            const end = text.indexOf("-->", i + 4);
+            if (end < 0) return false;
+            i = end + 3;
+            continue;
+        }
+        if (text.startsWith("<?", i) || text.startsWith("<!", i)) {
+            const end = text.indexOf(">", i);
+            if (end < 0) return false;
+            i = end + 1;
+            continue;
+        }
+        return false;
+    }
+    return true;
+}
+
 // True when the document is one complete element tree: every element that opened
-// also closed, in order, every attribute is quoted, nothing was left
-// unterminated, and there is exactly one document element. A half-written report
+// also closed, in order, under a valid XML name; every attribute is quoted and
+// named once; nothing was left unterminated; there is exactly one document
+// element; and nothing but misc content sits outside it. A half-written report
 // is structurally incomplete long before it is obviously wrong, and parseXml()
 // is deliberately lenient -- so this is what stops a truncated or malformed file
 // from replacing a finished run with whatever happened to be flushed.
 export function isWellFormed(xml: string): boolean {
+    const text = String(xml || "");
     const stack: string[] = [];
-    const tags = scanTags(xml);
+    const tags = scanTags(text);
     let roots = 0;
+    let pos = 0;
     for (;;) {
         const next = tags.next();
-        if (next.done) return next.value && roots === 1 && stack.length === 0;
+        if (next.done) return next.value && roots === 1 && stack.length === 0 && isMisc(text.slice(pos));
         const tag = next.value;
+        // Outside the root, only misc content: text before or after the document
+        // element is two documents concatenated, or one with noise around it.
+        if (!stack.length && !isMisc(text.slice(pos, tag.start))) return false;
+        pos = tag.end;
+        if (!XML_NAME.test(tag.name)) return false;
         if (tag.closing) {
-            if (stack.pop() !== tag.name || tag.attrs.trim()) return false;
+            // "</a/>" is not an end tag, and an end tag carries no attributes.
+            if (tag.selfClosing || tag.attrs.trim()) return false;
+            if (stack.pop() !== tag.name) return false;
             continue;
         }
         if (!attrsWellFormed(tag.attrs)) return false;
-        // An XML document has exactly one element at the top level; siblings
-        // there are two documents concatenated, or one that was appended to.
+        // An XML document has exactly one element at the top level.
         if (!stack.length) roots++;
         if (!tag.selfClosing) stack.push(tag.name);
     }
