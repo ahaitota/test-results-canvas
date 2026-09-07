@@ -33,6 +33,21 @@ function emit(el, assembly, collection, out) {
 export function parseXunit(xml) {
     const out = [];
     for (const assembly of findAll(parseXml(xml), "assembly")) {
+        // <errors> sits outside every collection: fixture and assembly cleanup
+        // blow up there, and nothing else in the report records that failure.
+        for (const error of child(assembly, "errors")?.children ?? []) {
+            if (error.name !== "error")
+                continue;
+            const failure = child(error, "failure");
+            out.push({
+                name: attr(error.attrs, "name") ?? attr(error.attrs, "type") ?? "assembly error",
+                status: "fail",
+                message: joinMessage(attr(failure?.attrs, "exception-type"), childText(failure, "message"), childText(failure, "stack-trace")),
+                suite: attr(error.attrs, "type"),
+                framework: "xUnit.net",
+                storage: attr(assembly.attrs, "name"),
+            });
+        }
         for (const collection of assembly.children) {
             if (collection.name !== "collection")
                 continue;

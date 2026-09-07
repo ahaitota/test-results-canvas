@@ -33,14 +33,32 @@ function emit(el, suite, out) {
         endTime: attr(el.attrs, "end-time"),
     });
 }
+// Rows for one element, returning how many of them failed: a suite that failed
+// on its own reports that only when nothing beneath it already does.
 function walk(el, suite, out) {
+    let failures = 0;
     for (const c of el.children) {
         if (c.name === "test-case") {
             emit(c, suite, out);
+            if (out[out.length - 1]?.status === "fail")
+                failures++;
             continue;
         }
-        walk(c, c.name === "test-suite" ? attr(c.attrs, "name") ?? suite : suite, out);
+        if (c.name !== "test-suite") {
+            failures += walk(c, suite, out);
+            continue;
+        }
+        const inner = walk(c, attr(c.attrs, "name") ?? suite, out);
+        // A fixture that blows up in OneTimeSetUp, or an assembly that fails to
+        // load, carries its <failure> on the suite and has no case to show it.
+        if (!inner && status(attr(c.attrs, "result")) === "fail") {
+            emit(c, suite, out);
+            failures++;
+            continue;
+        }
+        failures += inner;
     }
+    return failures;
 }
 export function parseNUnit(xml) {
     const out = [];

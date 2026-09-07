@@ -100,7 +100,14 @@ export function parseTap(text) {
     // Close every scope the given indent has left, reporting what each owes.
     const closeTop = () => {
         const suite = suiteOf();
-        const fault = faultRow(stack.pop(), suite);
+        const frame = stack.pop();
+        // Node writes "# Subtest: name" immediately above the point that
+        // summarises it, with nothing indented in between. That is a label on
+        // the next point, not a nested stream, so a scope that never received
+        // any content of its own simply goes away.
+        if (frame.indent >= 0 && !frame.seen && !frame.plans)
+            return;
+        const fault = faultRow(frame, suite);
         if (fault)
             out.push(fault);
     };

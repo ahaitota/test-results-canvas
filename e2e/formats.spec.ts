@@ -73,4 +73,22 @@ test.describe("cross-language report formats", () => {
     await expect(page.getByTestId("test-name").filter({ hasText: "divides" })).toBeVisible();
     await expect(page.getByTestId("test-name").filter({ hasText: "adds" })).toHaveCount(0);
   });
+
+  test("keeps watching a source whose extension no folder scan would look at", async ({ page, makeServer }, testInfo) => {
+    // An explicitly named file is accepted by content, so it can be called
+    // anything -- and its rewrites have to reach the panel all the same.
+    const dir = testInfo.outputPath("custom-ext");
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, "junit.report");
+    const suite = (cases: string) => `<testsuites><testsuite name="s">${cases}</testsuite></testsuites>`;
+    writeFileSync(file, suite(`<testcase name="adds" />`), "utf8");
+
+    const s = await makeServer({ resultsFile: file, watch: true });
+    await openCanvas(page, s);
+    await expect(page.getByTestId("test-row")).toHaveCount(1);
+
+    writeFileSync(file, suite(`<testcase name="adds" /><testcase name="subtracts" />`), "utf8");
+
+    await expect(page.getByTestId("test-row")).toHaveCount(2);
+  });
 });

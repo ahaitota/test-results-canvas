@@ -49,6 +49,33 @@ test("parseNUnit maps outcomes, durations, suite and failure detail", () => {
   assert.equal(by.Divides.message, "not ready");
 });
 
+test("parseNUnit reports a suite that failed with no case to show it", () => {
+  // OneTimeSetUp blows up: the fixture carries the failure and its tests never
+  // ran, so without this the run renders as empty and green.
+  const rows = parseNUnit(`<test-run id="1" result="Failed">
+  <test-suite type="Assembly" name="Sample.dll" result="Failed">
+    <test-suite type="TestFixture" name="CalcTests" result="Failed" duration="0.2">
+      <failure>
+        <message><![CDATA[OneTimeSetUp: connection refused]]></message>
+        <stack-trace><![CDATA[at Ns.CalcTests.Setup()]]></stack-trace>
+      </failure>
+    </test-suite>
+  </test-suite>
+</test-run>`);
+  assert.deepEqual(rows.map((r) => [r.name, r.status]), [["CalcTests", "fail"]]);
+  assert.equal(rows[0].message, "OneTimeSetUp: connection refused\nat Ns.CalcTests.Setup()");
+  assert.equal(rows[0].suite, "Sample.dll");
+});
+
+test("parseNUnit does not repeat a suite failure its cases already report", () => {
+  const rows = parseNUnit(`<test-run id="1" result="Failed">
+  <test-suite type="TestFixture" name="CalcTests" result="Failed">
+    <test-case name="Subtracts" result="Failed"><failure><message>boom</message></failure></test-case>
+  </test-suite>
+</test-run>`);
+  assert.deepEqual(rows.map((r) => r.name), ["Subtracts"]);
+});
+
 test("parseNUnit reads NUnit 2 result/time spellings", () => {
   const rows = parseNUnit(`<test-results><test-suite name="Old"><results>
     <test-case name="Legacy" result="Success" time="0.100" />
@@ -91,6 +118,26 @@ test("parseXunit maps outcomes and carries assembly/collection context", () => {
   assert.equal(rows[0].startTime, "2024-01-01T10:00:00");
   assert.equal(rows[1].message, "Assert.Equal() Failure\nat Ns.CalcTests.Subtracts()");
   assert.equal(rows[2].message, "not ready");
+});
+
+test("parseXunit reports assembly-level errors, which no collection holds", () => {
+  // Fixture and assembly cleanup fail outside every collection; without this
+  // the report parses to nothing at all.
+  const rows = parseXunit(`<assemblies>
+  <assembly name="/src/Sample.dll" errors="1" total="0">
+    <errors>
+      <error type="fixture-cleanup" name="Ns.DatabaseFixture">
+        <failure exception-type="System.InvalidOperationException">
+          <message><![CDATA[the connection was already closed]]></message>
+          <stack-trace><![CDATA[at Ns.DatabaseFixture.Dispose()]]></stack-trace>
+        </failure>
+      </error>
+    </errors>
+  </assembly>
+</assemblies>`);
+  assert.deepEqual(rows.map((r) => [r.name, r.status]), [["Ns.DatabaseFixture", "fail"]]);
+  assert.equal(rows[0].message, "System.InvalidOperationException\nthe connection was already closed\nat Ns.DatabaseFixture.Dispose()");
+  assert.equal(rows[0].storage, "/src/Sample.dll");
 });
 
 test("parseXunit returns nothing for an assembly that ran no tests", () => {
@@ -214,6 +261,13 @@ test("parseTap reads points, directives and the YAML diagnostic block", () => {
   assert.equal(rows[1].message, "Expected 1 got 2");
   assert.equal(rows[1].durationMs, 15);
   assert.equal(rows[2].message, "not ready");
+});
+
+test("parseTap treats a bare Subtest annotation as a label, not a nested stream", () => {
+  // What `node --test --test-reporter=tap` writes for a single top-level test:
+  // the annotation sits directly above the point that summarises it.
+  const rows = parseTap("TAP version 13\n# Subtest: simple\nok 1 - simple\n1..1\n");
+  assert.deepEqual(rows.map((r) => [r.name, r.status]), [["simple", "pass"]]);
 });
 
 test("parseTap nests subtests under the parent point", () => {

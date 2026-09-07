@@ -899,7 +899,12 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
             const w = watch(dir, { persistent: false }, (_event, filename) => {
                 if (!filename) return;
                 const name = String(filename);
-                if (!RESULT_EXTS.some((e) => name.toLowerCase().endsWith(e))) return;
+                // An active source is watched whatever it is called: an
+                // explicitly named file is accepted by content, so a rewrite of
+                // `junit.report` must not be discarded for its extension. The
+                // filter only bounds what a scan may DISCOVER.
+                const active = entries.some((e) => dirname(e.source.path) === dir && basename(e.source.path) === name);
+                if (!active && !RESULT_EXTS.some((e) => name.toLowerCase().endsWith(e))) return;
                 // Debounced per watched folder, collecting the names that moved
                 // in it. Keying by folder rather than by file is what keeps a
                 // burst -- an Allure run writes one JSON per test -- to a single
