@@ -123,6 +123,20 @@ test("parseNUnit reports a run that failed before any suite did", () => {
   assert.equal(rows[0].message, "Could not load file or assembly");
 });
 
+test("parseNUnit counts a warning as a test that ran, keeping what it warned about", () => {
+  // A warning is not a failure and not a test nobody ran; calling it skipped
+  // takes it out of the pass rate it belongs in.
+  const rows = parseNUnit(`<test-run id="1" result="Warning">
+  <test-suite type="TestFixture" name="CalcTests" result="Warning">
+    <test-case name="Adds" result="Warning" duration="0.01">
+      <assertions><assertion result="Warning"><message><![CDATA[rounding drifted]]></message></assertion></assertions>
+    </test-case>
+  </test-suite>
+</test-run>`);
+  assert.deepEqual(rows.map((r) => [r.name, r.status]), [["Adds", "pass"]]);
+  assert.equal(rows[0].message, "rounding drifted");
+});
+
 test("parseNUnit reads NUnit 2 result/time spellings", () => {
   const rows = parseNUnit(`<test-results><test-suite name="Old"><results>
     <test-case name="Legacy" result="Success" time="0.100" />

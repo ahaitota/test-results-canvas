@@ -6,10 +6,11 @@ export interface Parser {
     parse(text: string): TestResult[];
     wellFormed?(text: string): boolean;
     expand?(abs: string): string[];
+    groups?(abs: string): boolean;
 }
 export declare const PARSERS: readonly Parser[];
 export declare const RESULT_EXTS: readonly string[];
-export declare function detectParser(text: unknown): Parser | undefined;
+export declare function detectParser(text: unknown, scope?: "head" | "full"): Parser | undefined;
 export declare function looksLikeResults(text: unknown): boolean;
 export declare function parseResults(text: string): TestResult[] | null;
 export declare function parseResultsAt(abs: string): TestResult[] | null;

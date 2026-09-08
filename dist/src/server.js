@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, basename, relative, isAbsolute, resolve as resolvePath } from "node:path";
 import { watch, readFileSync, writeFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { serializeTrx } from "./parsers/trx.js";
-import { looksLikeResults, parseResultsAt, runKey, canonicalResultPaths, expandsDirectory, formatIdAt, RESULT_EXTS } from "./parsers/registry.js";
+import { looksLikeResults, parseResultsAt, runKey, canonicalPath, canonicalResultPaths, expandsDirectory, formatIdAt, RESULT_EXTS } from "./parsers/registry.js";
 import { labelForPath } from "./labels.js";
 import { mergeSources } from "./sources.js";
 import { readHead } from "./head.js";
@@ -677,7 +677,7 @@ export async function createResultsServer(options = {}) {
             return null;
         const label = labelForPath(abs, discovered, listLocalNames());
         discovered.set(label, abs);
-        return { source: { label, path: abs, count: rows.length }, rows, expands: expandsDirectory(abs), format: formatIdAt(abs), dirSourced };
+        return { source: { label, path: abs, count: rows.length }, rows, expands: expandsDirectory(abs), format: formatIdAt(abs), key: canonicalPath(abs), dirSourced };
     }
     // The first of these paths that parses in full. Head detection is not
     // enough to choose by: a report caught mid-write is recognizable long
@@ -772,6 +772,7 @@ export async function createResultsServer(options = {}) {
         entry.source = { label, path: abs, count: rows.length };
         entry.expands = expandsDirectory(abs);
         entry.format = formatIdAt(abs) ?? entry.format;
+        entry.key = canonicalPath(abs);
         return true;
     }
     // Accepts only reports of the format a source was read as, so re-deriving
@@ -798,6 +799,24 @@ export async function createResultsServer(options = {}) {
         if (awaitedSeed.kind === "group")
             return new Set(awaitedSeed.paths.filter((p) => dirname(p) === dir).map((p) => basename(p)));
         return new Set();
+    }
+    // Whether a file this server is following just moved. Compared as canonical
+    // paths rather than raw names: Windows reports whichever spelling the
+    // writer used, which need not be the one the source was opened with, and a
+    // missed event on a report whose extension no scan looks at leaves the
+    // panel stuck on what it had.
+    function isWatchedFile(dir, name) {
+        const raw = join(dir, name);
+        if (entries.some((e) => e.source.path === raw) || awaitedNamesIn(dir).has(name))
+            return true;
+        const key = canonicalPath(raw);
+        if (entries.some((e) => (e.key ?? canonicalPath(e.source.path)) === key))
+            return true;
+        for (const awaited of awaitedNamesIn(dir)) {
+            if (canonicalPath(join(dir, awaited)) === key)
+                return true;
+        }
+        return false;
     }
     // Retry an unfulfilled seed after something moved in `dir`. Nothing is shown
     // until the whole request resolves, on the same all-or-nothing terms the
@@ -844,6 +863,11 @@ export async function createResultsServer(options = {}) {
         if (!here.length)
             return;
         let changed = false, moved = false;
+        // Compared as canonical identities for the same reason the watcher
+        // accepts an event at all: the spelling in the event need not be the
+        // one the source was opened with.
+        const changedKeys = new Set([...changedNames].map((n) => canonicalPath(join(dir, n))));
+        const touched = (entry) => changedKeys.has(entry.key ?? canonicalPath(entry.source.path));
         if (here.length === 1) {
             const entry = here[0];
             const before = entry.source.path;
@@ -864,7 +888,7 @@ export async function createResultsServer(options = {}) {
             // update. Re-deriving here would hand the panel whatever else in
             // the folder happens to be newer, which is how an explicitly named
             // report gets replaced by an unrelated one beside it.
-            const rewritten = changedNames.has(basename(before)) && existsSync(before);
+            const rewritten = touched(entry) && existsSync(before);
             // Otherwise a source alone in its folder follows that folder's
             // newest report: `dotnet test` writes a fresh
             // <machine>_<user>_<timestamp>.trx per run instead of overwriting,
@@ -897,7 +921,7 @@ export async function createResultsServer(options = {}) {
                 // A folder-expanding source (Allure) reads every result beside
                 // it, so a brand-new sibling changed it even though the file it
                 // is named after did not.
-                if (!entry.expands && !changedNames.has(basename(entry.source.path)))
+                if (!entry.expands && !touched(entry))
                     continue;
                 // It is only ANCHORED on that file, though. A re-run that
                 // deletes the old results and writes new ones leaves the anchor
@@ -958,9 +982,7 @@ export async function createResultsServer(options = {}) {
                 // `junit.report` must not be discarded for its extension. Same
                 // for a file a seed is still waiting for. The filter only bounds
                 // what a scan may DISCOVER.
-                const active = entries.some((e) => dirname(e.source.path) === dir && basename(e.source.path) === name)
-                    || awaitedNamesIn(dir).has(name);
-                if (!active && !RESULT_EXTS.some((e) => name.toLowerCase().endsWith(e)))
+                if (!isWatchedFile(dir, name) && !RESULT_EXTS.some((e) => name.toLowerCase().endsWith(e)))
                     return;
                 // Debounced per watched folder, collecting the names that moved
                 // in it. Keying by folder rather than by file is what keeps a

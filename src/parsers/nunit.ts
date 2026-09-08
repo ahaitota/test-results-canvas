@@ -10,6 +10,10 @@ function status(result: string | undefined): TestStatus {
     // NUnit 2 spells the same outcomes Success/Failure on <test-case>.
     if (r === "passed" || r === "success") return "pass";
     if (r === "failed" || r === "failure" || r === "error") return "fail";
+    // A warning is a test that ran and did not fail; counting it as skipped
+    // would take it out of the pass rate it belongs in. Its diagnostics are
+    // kept on the row.
+    if (r === "warning") return "pass";
     return "skip";
 }
 
@@ -23,11 +27,14 @@ function emit(el: XmlElement, suite: string | undefined, out: TestResult[]): voi
     if (!name) return;
     const failure = child(el, "failure");
     const detail = failure ?? child(el, "reason");
+    // A warning records itself as an assertion rather than a reason, and that
+    // text is the only account of what it warned about.
+    const assertion = child(child(el, "assertions"), "assertion");
     out.push({
         name,
         status: status(attr(el.attrs, "result")),
         durationMs: seconds(attr(el.attrs, "duration") ?? attr(el.attrs, "time")),
-        message: joinMessage(childText(detail, "message"), childText(failure, "stack-trace")),
+        message: joinMessage(childText(detail, "message") ?? childText(assertion, "message"), childText(failure, "stack-trace")),
         className: attr(el.attrs, "classname"),
         method: attr(el.attrs, "methodname") ?? name,
         suite,

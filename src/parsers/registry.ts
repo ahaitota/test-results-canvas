@@ -17,7 +17,7 @@ import { parseXunit } from "./xunit.js";
 import { parseTestNG } from "./testng.js";
 import { parseCTest } from "./ctest.js";
 import { parseCtrf } from "./ctrf.js";
-import { parseAllure, expandAllure, ALLURE_STATUS } from "./allure.js";
+import { parseAllure, expandAllure, isAllureRunFile, ALLURE_STATUS } from "./allure.js";
 import { parseGoTest } from "./gotest.js";
 import { parseDart } from "./dart.js";
 import { parseRustJson } from "./rust.js";
@@ -37,6 +37,9 @@ export interface Parser {
     wellFormed?(text: string): boolean;
     // Sibling files that form the same run (Allure writes one file per test).
     expand?(abs: string): string[];
+    // Whether `expand` groups THIS file with its folder. A format can do that
+    // for its own naming only, and a file it does not group is its own run.
+    groups?(abs: string): boolean;
 }
 
 // Shared by the XML dialects: same extension, same structural gate.
@@ -72,7 +75,7 @@ export const PARSERS: readonly Parser[] = [
     // CTRF needs a marker it owns: Playwright's JSON report nests "results" and
     // "tests" too.
     { id: "ctrf", exts: [".json"], detect: (h) => /"reportFormat"\s*:\s*"CTRF"/i.test(h) || (/"tool"\s*:\s*\{/.test(h) && /"tests"\s*:\s*\[/.test(h)), parse: parseCtrf },
-    { id: "allure", exts: [".json"], detect: isAllureResult, parse: parseAllure, expand: expandAllure },
+    { id: "allure", exts: [".json"], detect: isAllureResult, parse: parseAllure, expand: expandAllure, groups: isAllureRunFile },
     { id: "gotest", exts: JSONL, detect: (h) => /"Action"\s*:\s*"(run|output|pass|fail|skip|build-output|build-fail)"/.test(h), parse: parseGoTest },
     { id: "dart", exts: JSONL, detect: (h) => /"type"\s*:\s*"(testStart|testDone)"/.test(h) || /"protocolVersion"\s*:/.test(h), parse: parseDart },
     { id: "rust", exts: JSONL, detect: (h) => /"type"\s*:\s*"(suite|test)"\s*,\s*"event"\s*:/.test(h), parse: parseRustJson },
@@ -90,11 +93,18 @@ function withoutBom(text: string): string {
     return text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text;
 }
 
-// The parser that claims this content, or undefined. Only the head is examined:
-// a scan sniffs the first bytes of a candidate rather than reading it whole.
-export function detectParser(text: unknown): Parser | undefined {
-    const head = withoutBom(String(text || "")).slice(0, HEAD_BYTES);
-    return PARSERS.find((p) => p.detect(head));
+// The parser that claims this content, or undefined. `scope` is how much of it
+// to look at: a directory scan only ever reads the opening bytes of a
+// candidate, but a file that has already been read whole is matched against all
+// of it -- a report can carry a long leading comment or metadata field and be
+// perfectly valid. The head is still tried first, so the full sweep costs
+// nothing until it is the difference between reading a file and rejecting it.
+export function detectParser(text: unknown, scope: "head" | "full" = "head"): Parser | undefined {
+    const body = withoutBom(String(text || ""));
+    const head = body.slice(0, HEAD_BYTES);
+    const found = PARSERS.find((p) => p.detect(head));
+    if (found || scope === "head" || body.length <= head.length) return found;
+    return PARSERS.find((p) => p.detect(body));
 }
 
 export function looksLikeResults(text: unknown): boolean {
@@ -106,7 +116,7 @@ export function looksLikeResults(text: unknown): boolean {
 // report" rather than rendered as a run in which no test failed.
 export function parseResults(text: string): TestResult[] | null {
     const body = withoutBom(String(text || ""));
-    const parser = detectParser(body);
+    const parser = detectParser(body, "full");
     if (!parser) return null;
     if (parser.wellFormed && !parser.wellFormed(body)) return null;
     try {
@@ -124,7 +134,7 @@ export function parseResultsAt(abs: string): TestResult[] | null {
     } catch {
         return null;
     }
-    const parser = detectParser(text);
+    const parser = detectParser(text, "full");
     if (!parser) return null;
     if (parser.wellFormed && !parser.wellFormed(text)) return null;
     try {
@@ -143,9 +153,13 @@ export function parseResultsAt(abs: string): TestResult[] | null {
 }
 
 // True when this path's format takes in its whole directory, so any qualifying
-// sibling is part of the same source.
+// sibling is part of the same source. Asked of the FILE, not just the format:
+// Allure groups its own `<uuid>-result.json` naming, and a report that happens
+// to be Allure JSON under another name stands alone.
 export function expandsDirectory(abs: string): boolean {
-    return detectAt(abs)?.expand !== undefined;
+    const parser = detectAt(abs);
+    if (!parser?.expand) return false;
+    return parser.groups?.(abs) ?? true;
 }
 
 // The parser that claims the file at `abs`, read from its head alone.

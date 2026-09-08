@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, basename, relative, isAbsolute, resolve as resolvePath } from "node:path";
 import { watch, readFileSync, writeFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { serializeTrx } from "./parsers/trx.js";
-import { looksLikeResults, parseResultsAt, runKey, canonicalResultPaths, expandsDirectory, formatIdAt, RESULT_EXTS } from "./parsers/registry.js";
+import { looksLikeResults, parseResultsAt, runKey, canonicalPath, canonicalResultPaths, expandsDirectory, formatIdAt, RESULT_EXTS } from "./parsers/registry.js";
 import { labelForPath } from "./labels.js";
 import { mergeSources } from "./sources.js";
 import type { Source } from "./sources.js";
@@ -170,6 +170,10 @@ interface SourceEntry {
     // The format it was read as, remembered so a re-derive can stay on that
     // kind of report even once the file it was read from is gone.
     format?: string;
+    // The canonical identity of `source.path`, taken while the file was there
+    // to resolve. Watcher events carry whatever spelling the writer used, which
+    // need not be the one the source was opened with.
+    key?: string;
     // Resolved by asking a directory for its newest report, rather than named.
     // The folder is then the identity, so it follows whatever report in it is
     // newest and readable -- a named source keeps the format it was opened as.
@@ -813,7 +817,7 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         if (rows === null) return null;
         const label = labelForPath(abs, discovered, listLocalNames());
         discovered.set(label, abs);
-        return { source: { label, path: abs, count: rows.length }, rows, expands: expandsDirectory(abs), format: formatIdAt(abs), dirSourced };
+        return { source: { label, path: abs, count: rows.length }, rows, expands: expandsDirectory(abs), format: formatIdAt(abs), key: canonicalPath(abs), dirSourced };
     }
 
     // The first of these paths that parses in full. Head detection is not
@@ -907,6 +911,7 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         entry.source = { label, path: abs, count: rows.length };
         entry.expands = expandsDirectory(abs);
         entry.format = formatIdAt(abs) ?? entry.format;
+        entry.key = canonicalPath(abs);
         return true;
     }
 
@@ -931,6 +936,22 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         if (awaitedSeed.kind === "file") return new Set(awaitedSeed.dir === dir ? [awaitedSeed.name] : []);
         if (awaitedSeed.kind === "group") return new Set(awaitedSeed.paths.filter((p) => dirname(p) === dir).map((p) => basename(p)));
         return new Set();
+    }
+
+    // Whether a file this server is following just moved. Compared as canonical
+    // paths rather than raw names: Windows reports whichever spelling the
+    // writer used, which need not be the one the source was opened with, and a
+    // missed event on a report whose extension no scan looks at leaves the
+    // panel stuck on what it had.
+    function isWatchedFile(dir: string, name: string): boolean {
+        const raw = join(dir, name);
+        if (entries.some((e) => e.source.path === raw) || awaitedNamesIn(dir).has(name)) return true;
+        const key = canonicalPath(raw);
+        if (entries.some((e) => (e.key ?? canonicalPath(e.source.path)) === key)) return true;
+        for (const awaited of awaitedNamesIn(dir)) {
+            if (canonicalPath(join(dir, awaited)) === key) return true;
+        }
+        return false;
     }
 
     // Retry an unfulfilled seed after something moved in `dir`. Nothing is shown
@@ -972,6 +993,11 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         const here = entries.filter((e) => dirname(e.source.path) === dir);
         if (!here.length) return;
         let changed = false, moved = false;
+        // Compared as canonical identities for the same reason the watcher
+        // accepts an event at all: the spelling in the event need not be the
+        // one the source was opened with.
+        const changedKeys = new Set([...changedNames].map((n) => canonicalPath(join(dir, n))));
+        const touched = (entry: SourceEntry) => changedKeys.has(entry.key ?? canonicalPath(entry.source.path));
         if (here.length === 1) {
             const entry = here[0];
             const before = entry.source.path;
@@ -991,7 +1017,7 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
             // update. Re-deriving here would hand the panel whatever else in
             // the folder happens to be newer, which is how an explicitly named
             // report gets replaced by an unrelated one beside it.
-            const rewritten = changedNames.has(basename(before)) && existsSync(before);
+            const rewritten = touched(entry) && existsSync(before);
             // Otherwise a source alone in its folder follows that folder's
             // newest report: `dotnet test` writes a fresh
             // <machine>_<user>_<timestamp>.trx per run instead of overwriting,
@@ -1021,7 +1047,7 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
                 // A folder-expanding source (Allure) reads every result beside
                 // it, so a brand-new sibling changed it even though the file it
                 // is named after did not.
-                if (!entry.expands && !changedNames.has(basename(entry.source.path))) continue;
+                if (!entry.expands && !touched(entry)) continue;
                 // It is only ANCHORED on that file, though. A re-run that
                 // deletes the old results and writes new ones leaves the anchor
                 // pointing at nothing, so follow the folder to a sibling of the
@@ -1077,9 +1103,7 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
                 // `junit.report` must not be discarded for its extension. Same
                 // for a file a seed is still waiting for. The filter only bounds
                 // what a scan may DISCOVER.
-                const active = entries.some((e) => dirname(e.source.path) === dir && basename(e.source.path) === name)
-                    || awaitedNamesIn(dir).has(name);
-                if (!active && !RESULT_EXTS.some((e) => name.toLowerCase().endsWith(e))) return;
+                if (!isWatchedFile(dir, name) && !RESULT_EXTS.some((e) => name.toLowerCase().endsWith(e))) return;
                 // Debounced per watched folder, collecting the names that moved
                 // in it. Keying by folder rather than by file is what keeps a
                 // burst -- an Allure run writes one JSON per test -- to a single

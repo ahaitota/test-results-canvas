@@ -76,14 +76,16 @@ test.describe("cross-language report formats", () => {
 
   test("keeps watching a source whose extension no folder scan would look at", async ({ page, makeServer }, testInfo) => {
     // An explicitly named file is accepted by content, so it can be called
-    // anything -- and its rewrites have to reach the panel all the same.
+    // anything -- and its rewrites have to reach the panel all the same, even
+    // when the writer spells the name differently than the panel was opened
+    // with, as Windows allows.
     const dir = testInfo.outputPath("custom-ext");
     mkdirSync(dir, { recursive: true });
     const file = join(dir, "junit.report");
     const suite = (cases: string) => `<testsuites><testsuite name="s">${cases}</testsuite></testsuites>`;
     writeFileSync(file, suite(`<testcase name="adds" />`), "utf8");
 
-    const s = await makeServer({ resultsFile: file, watch: true });
+    const s = await makeServer({ resultsFile: process.platform === "win32" ? file.toUpperCase() : file, watch: true });
     await openCanvas(page, s);
     await expect(page.getByTestId("test-row")).toHaveCount(1);
 

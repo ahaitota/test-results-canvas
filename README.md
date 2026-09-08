@@ -38,7 +38,10 @@ agent's actions and no file backs them, and report a failed launch in the panel.
 
 The format is detected from the file's **content**, never from its name, so a
 report can be called anything; the extensions below are only what a folder scan
-looks at. A leading UTF-8 BOM is ignored. XML dialects are told apart by their
+looks at. A folder scan judges a candidate by its opening bytes, since that is
+all it reads of one, but a file that has been read whole is matched against all
+of it — so a report can carry a long leading comment or metadata field. A
+leading UTF-8 BOM is ignored. XML dialects are told apart by their
 root element, so a failure message quoting `<testsuite>` cannot send an NUnit
 report to the JUnit parser. A file no parser claims — or one that claims a format
 but is incomplete: XML a conforming parser would reject, a JSONL event line that
@@ -50,7 +53,7 @@ rather than shown as an empty or partly green passing run.
 | --- | --- | --- | --- | --- |
 | TRX | VSTest, `dotnet test` | `dotnet test --logger trx` | `.trx`, `.xml` | — |
 | JUnit XML | Surefire, Gradle, pytest, jest-junit, go-junit-report, … | `pytest --junitxml=report.xml` | `.xml` | — |
-| NUnit 3 (and 2) | NUnit console/engine | `nunit3-console --result=nunit.xml` | `.xml` | properties and attachments are not shown; a suite that fails in its own `OneTimeSetUp`/`OneTimeTearDown` is reported alongside its cases, while a failure NUnit marks as inherited (`site="Child"`/`"Parent"`) is left to the suite that owns it |
+| NUnit 3 (and 2) | NUnit console/engine | `nunit3-console --result=nunit.xml` | `.xml` | properties and attachments are not shown; a `Warning` result counts as a test that ran, keeping what it warned about; a suite that fails in its own `OneTimeSetUp`/`OneTimeTearDown` is reported alongside its cases, while a failure NUnit marks as inherited (`site="Child"`/`"Parent"`) is left to the suite that owns it |
 | xUnit.net | xUnit v2/v3 | `dotnet test --logger "xunit;LogFilePath=xunit.xml"` | `.xml` | assembly-level `<errors>` (fixture and cleanup failures) are reported as failing rows; every test needs a name and a schema result, and the parsed count must match the assembly's own `passed`/`failed`/`skipped` when it declares them; v3's per-test `source-file`/`start-rtf`/`finish-rtf` are used when present, falling back to the assembly's `run-date`/`run-time` |
 | TestNG | TestNG, Maven | `test-output/testng-results.xml` | `.xml` | `is-config` setup/teardown methods are dropped unless they failed, since a failed one is the run's real failure |
 | CTest | CMake / CTest | `ctest -T Test` → `Testing/<tag>/Test.xml` | `.xml` | one row per test binary, not per assertion |

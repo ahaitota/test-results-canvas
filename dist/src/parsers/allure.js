@@ -102,11 +102,18 @@ export function parseAllure(text) {
     }
     return out;
 }
+// A file Allure groups by folder. It only does that for its own naming, so a
+// report that happens to be Allure JSON under some other name is its own run --
+// and must keep its own key, or it would shadow every other candidate in the
+// folder while parsing only itself.
+export function isAllureRunFile(abs) {
+    return basename(abs).endsWith(RESULT_SUFFIX);
+}
 // The files that belong to the same run as `abs`: the results name-sorted, then
 // the containers, so the fixtures that failed come after the tests and the
 // order is the same on every re-read.
 export function expandAllure(abs) {
-    if (!basename(abs).endsWith(RESULT_SUFFIX))
+    if (!isAllureRunFile(abs))
         return [abs];
     try {
         const dir = dirname(abs);

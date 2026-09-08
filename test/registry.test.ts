@@ -176,6 +176,42 @@ test("canonicalResultPaths collapses an Allure folder to a single run", () => {
   assert.deepEqual(parseResultsAt(one)?.length, 2);
 });
 
+test("a report is detected against all of itself once it has been read", () => {
+  // A long leading comment or metadata field pushes the identifying markup past
+  // the window a directory scan reads, but a file that has been read whole is
+  // matched against all of it.
+  const padding = "x".repeat(9000);
+  const junit = `<!-- ${padding} -->\n<testsuites><testsuite name="s"><testcase name="late" /></testsuite></testsuites>`;
+  assert.equal(parseResults(junit)?.length, 1);
+  const ctrf = `{"metadata":"${padding}","reportFormat":"CTRF","results":{"tool":{"name":"jest"},"tests":[{"name":"late","status":"passed"}]}}`;
+  assert.equal(parseResults(ctrf)?.length, 1);
+  const allure = `{"description":"${padding}","uuid":"a","name":"late","status":"passed"}`;
+  assert.equal(parseResults(allure)?.length, 1);
+  // A directory scan still only judges the opening bytes, since that is all it
+  // reads of a candidate.
+  assert.equal(looksLikeResults(junit.slice(0, 8192)), false);
+});
+
+test("an Allure report under a custom name is its own run, not the folder's", () => {
+  // expandAllure only groups Allure's own naming, so the key has to agree:
+  // sharing the folder's key would let one such file shadow every other
+  // candidate in it while parsing only itself.
+  const dir = mkdtempSync(join(tmpdir(), "allure-named-"));
+  const older = join(dir, "old.json");
+  const newer = join(dir, "new.json");
+  writeFileSync(older, `{"uuid":"o","name":"complete","status":"passed"}`, "utf8");
+  writeFileSync(newer, `{"uuid":"n","name":"partial","status":"passed"`, "utf8");
+  assert.notEqual(runKey(newer), runKey(older));
+  assert.deepEqual(canonicalResultPaths([newer, older]), [newer, older]);
+  // And the folder's own naming still groups.
+  const grouped = join(dir, "aaa-result.json");
+  const sibling = join(dir, "bbb-result.json");
+  writeFileSync(grouped, `{"uuid":"g","name":"grouped","status":"passed"}`, "utf8");
+  writeFileSync(sibling, `{"uuid":"s","name":"sibling","status":"passed"}`, "utf8");
+  assert.equal(runKey(grouped), runKey(sibling));
+  assert.deepEqual(canonicalResultPaths([grouped, sibling]), [grouped]);
+});
+
 test("parseResults rejects a file whose declared format is malformed", () => {
   // Detected as CTRF by its head, but the document is truncated: a broken report
   // must not surface as a run in which nothing failed.
