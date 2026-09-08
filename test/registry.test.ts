@@ -1,7 +1,7 @@
 // Format detection and the file-level entry points of the parser registry.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, readdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readdirSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -213,13 +213,28 @@ test("runKey names one run however the caller spelled the path", () => {
   const abs = join(dir, "run.xml");
   writeFileSync(abs, `<testsuites><testsuite name="s"><testcase name="c" /></testsuite></testsuites>`, "utf8");
   const shouted = abs.toUpperCase();
-  const insensitive = process.platform === "win32" || process.platform === "darwin";
-  // Where the filesystem ignores case, that alias is the same file, and adding
-  // it as a second source would double every row it holds.
-  assert.equal(runKey(abs) === runKey(shouted), insensitive);
-  assert.equal(canonicalResultPaths([abs, shouted]).length, insensitive ? 1 : 2);
+  // Asked of the filesystem rather than assumed from the platform: macOS can be
+  // formatted either way, and on a case-sensitive volume that alias is a
+  // genuinely different file that must keep its own key.
+  const alias = existsSync(shouted);
+  assert.equal(runKey(abs) === runKey(shouted), alias);
+  assert.equal(canonicalResultPaths([abs, shouted]).length, alias ? 1 : 2);
   // A path spelled the long way round is the same run everywhere.
   assert.equal(runKey(join(dir, "sub", "..", "run.xml")), runKey(abs));
+});
+
+test("canonicalResultPaths collapses a whole Allure folder to one attempt", () => {
+  // Every result in the folder expands to the same run, and parsing it is
+  // reading all of them: walking the candidates one by one would parse the
+  // directory once per file in it.
+  const dir = mkdtempSync(join(tmpdir(), "allure-many-"));
+  const paths: string[] = [];
+  for (let i = 0; i < 200; i++) {
+    const abs = join(dir, `${String(i).padStart(3, "0")}-result.json`);
+    writeFileSync(abs, `{"uuid":"u${i}","name":"test ${i}","status":"passed"}`, "utf8");
+    paths.push(abs);
+  }
+  assert.deepEqual(canonicalResultPaths(paths), [paths[0]]);
 });
 
 test("parseResultsAt reads a file from disk and returns null for a missing one", () => {

@@ -142,19 +142,26 @@ function detectAt(abs) {
 export function formatIdAt(abs) {
     return detectAt(abs)?.id;
 }
-// One key per file, whatever spelling the caller used. Windows and macOS
-// compare paths case-insensitively, and a symlink or a mixed-case alias names
-// the same run -- keying on the raw string would add the same report twice and
-// double every row it holds. Only the KEY is canonical: the path a source is
-// read from and displayed under stays exactly as it was given.
+// One key per file, whatever spelling the caller used. A symlink, a Windows
+// 8.3 short name or a mixed-case alias on a case-insensitive filesystem all
+// name the same run -- keying on the raw string would add the same report twice
+// and double every row it holds.
+//
+// The canonical spelling comes from the filesystem rather than from folding
+// case by platform: `realpathSync.native` returns the real on-disk name, which
+// collapses an alias exactly where the volume treats it as one, and leaves
+// genuinely distinct names alone on a case-SENSITIVE volume -- which macOS can
+// be formatted as. Only the KEY is canonical: the path a source is read from
+// and displayed under stays exactly as it was given.
 export function canonicalPath(p) {
-    let out = resolve(p);
+    const resolved = resolve(p);
     try {
-        // Resolves symlinks, and on Windows gives back the real on-disk case.
-        out = realpathSync.native(out);
+        return realpathSync.native(resolved);
     }
-    catch { /* not on disk yet: the spelling given is all there is */ }
-    return process.platform === "win32" || process.platform === "darwin" ? out.toLowerCase() : out;
+    catch {
+        // Not on disk yet, so the spelling given is all there is to go on.
+        return resolved;
+    }
 }
 // What makes two paths the same run. A format that expands around a file covers
 // its whole folder, so every result in an Allure directory shares one key:

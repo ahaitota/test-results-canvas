@@ -44,7 +44,10 @@ function declaredTests(assembly) {
     const parts = ["passed", "failed", "skipped"].map((n) => numAttr(assembly.attrs, n));
     if (parts.some((n) => n === undefined))
         return undefined;
-    return parts.reduce((sum, n) => sum + n, 0) + (numAttr(assembly.attrs, "notrun") ?? 0);
+    // v3 spells it `not-run`; `notrun` is accepted as well so a writer using
+    // the older spelling is not read as having lost those tests.
+    const notRun = numAttr(assembly.attrs, "not-run") ?? numAttr(assembly.attrs, "notrun") ?? 0;
+    return parts.reduce((sum, n) => sum + n, 0) + notRun;
 }
 export function parseXunit(xml) {
     const out = [];

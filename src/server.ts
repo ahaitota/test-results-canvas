@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, basename, relative, isAbsolute, resolve as resolvePath } from "node:path";
 import { watch, readFileSync, writeFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { serializeTrx } from "./parsers/trx.js";
-import { looksLikeResults, parseResultsAt, runKey, expandsDirectory, formatIdAt, RESULT_EXTS } from "./parsers/registry.js";
+import { looksLikeResults, parseResultsAt, runKey, canonicalResultPaths, expandsDirectory, formatIdAt, RESULT_EXTS } from "./parsers/registry.js";
 import { labelForPath } from "./labels.js";
 import { mergeSources } from "./sources.js";
 import type { Source } from "./sources.js";
@@ -820,8 +820,13 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
     // enough to choose by: a report caught mid-write is recognizable long
     // before it is complete, and picking it would hide a finished run sitting
     // beside it.
+    //
+    // Collapsed to one path per run first: a format that takes in its whole
+    // folder re-reads every sibling on each attempt, so walking all of them
+    // would parse the directory once per file in it -- and they are the same
+    // run, so the second attempt could only fail the same way as the first.
     function firstReadable(candidates: readonly string[], dirSourced = false): SourceEntry | null {
-        for (const abs of candidates) {
+        for (const abs of canonicalResultPaths(candidates)) {
             const entry = buildEntry(abs, dirSourced);
             if (entry) return entry;
         }
@@ -971,9 +976,11 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
             const entry = here[0];
             const before = entry.source.path;
             // Move the source onto the first candidate that parses, or re-read
-            // where it already points when none do.
+            // where it already points when none do. One path per run, for the
+            // same reason firstReadable() takes one: a folder-expanding format
+            // parses every sibling on each attempt.
             const follow = (candidates: readonly string[]): boolean => {
-                for (const candidate of candidates) {
+                for (const candidate of canonicalResultPaths(candidates)) {
                     if (!reparse(entry, candidate)) continue;
                     moved = candidate !== before;
                     return true;
