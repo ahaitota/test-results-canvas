@@ -170,6 +170,10 @@ interface SourceEntry {
     // The format it was read as, remembered so a re-derive can stay on that
     // kind of report even once the file it was read from is gone.
     format?: string;
+    // Resolved by asking a directory for its newest report, rather than named.
+    // The folder is then the identity, so it follows whatever report in it is
+    // newest and readable -- a named source keeps the format it was opened as.
+    dirSourced?: boolean;
 }
 
 // A path the caller named that did not become a source, and why.
@@ -346,8 +350,14 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
     // picking one member out of the picker switches the view, and must not
     // destroy the only way back to the merge.
     let groupDef: { name: string; paths: string[] } | null = null;
-    // One watcher per directory the sources live in.
+    // One watcher per directory the sources live in, with the identity of the
+    // directory each was armed on -- a folder deleted and recreated keeps the
+    // old watcher alive but silent, and the stamp is how that is noticed.
     const watchers = new Map<string, FSWatcher>();
+    const watchStamps = new Map<string, string>();
+    // Verifies those watchers, and arms one for a folder that did not exist
+    // when the panel opened.
+    let resultsPoll: ReturnType<typeof setInterval> | null = null;
     // Held at this level so closing the server can cancel a reload that was
     // already queued. Keyed by watched folder, alongside the file names that
     // changed in it since the last refresh.
@@ -507,12 +517,17 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         for (const t of resultsTimers.values()) clearTimeout(t);
         resultsTimers.clear();
         pendingNames.clear();
+        if (resultsPoll) {
+            clearInterval(resultsPoll);
+            resultsPoll = null;
+        }
         for (const w of watchers.values()) {
             try {
                 w.close();
             } catch { /* already closed */ }
         }
         watchers.clear();
+        watchStamps.clear();
     }
     function stopCoverageWatcher() {
         // Retire the current generation first: a debounced callback that has
@@ -793,21 +808,21 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         return target && existsSync(target.path) ? target : null;
     }
 
-    function buildEntry(abs: string): SourceEntry | null {
+    function buildEntry(abs: string, dirSourced = false): SourceEntry | null {
         const rows = parseResultsAt(abs);
         if (rows === null) return null;
         const label = labelForPath(abs, discovered, listLocalNames());
         discovered.set(label, abs);
-        return { source: { label, path: abs, count: rows.length }, rows, expands: expandsDirectory(abs), format: formatIdAt(abs) };
+        return { source: { label, path: abs, count: rows.length }, rows, expands: expandsDirectory(abs), format: formatIdAt(abs), dirSourced };
     }
 
     // The first of these paths that parses in full. Head detection is not
     // enough to choose by: a report caught mid-write is recognizable long
     // before it is complete, and picking it would hide a finished run sitting
     // beside it.
-    function firstReadable(candidates: readonly string[]): SourceEntry | null {
+    function firstReadable(candidates: readonly string[], dirSourced = false): SourceEntry | null {
         for (const abs of candidates) {
-            const entry = buildEntry(abs);
+            const entry = buildEntry(abs, dirSourced);
             if (entry) return entry;
         }
         return null;
@@ -932,7 +947,7 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
             const candidates = awaitedSeed.kind === "file"
                 ? [resolvePath(awaitedSeed.dir, awaitedSeed.name)]
                 : resultsFilesIn(awaitedSeed.dir);
-            const entry = firstReadable(candidates);
+            const entry = firstReadable(candidates, awaitedSeed.kind === "dir");
             if (!entry) return false;
             awaitedSeed = null;
             applySources([entry], null);
@@ -955,6 +970,16 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         if (here.length === 1) {
             const entry = here[0];
             const before = entry.source.path;
+            // Move the source onto the first candidate that parses, or re-read
+            // where it already points when none do.
+            const follow = (candidates: readonly string[]): boolean => {
+                for (const candidate of candidates) {
+                    if (!reparse(entry, candidate)) continue;
+                    moved = candidate !== before;
+                    return true;
+                }
+                return reparse(entry, before);
+            };
             // The file the source names was itself rewritten: that IS the
             // update. Re-deriving here would hand the panel whatever else in
             // the folder happens to be newer, which is how an explicitly named
@@ -964,24 +989,25 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
             // newest report: `dotnet test` writes a fresh
             // <machine>_<user>_<timestamp>.trx per run instead of overwriting,
             // and re-deriving is how a single named file has always stayed
-            // live. Constrained to the format it already is, so a Cobertura
-            // sibling or another runner's report cannot capture it, and taken
-            // newest-first until one parses, so a report caught mid-write does
-            // not shut out the complete one behind it.
+            // live. Taken newest-first until one parses, so a report caught
+            // mid-write does not shut out the complete one behind it.
+            //
+            // A source that came from a DIRECTORY follows it wherever it goes,
+            // because the folder is what was asked for -- including onto a
+            // report of another format, which is a runner writing its results
+            // differently, not a different run. A NAMED source keeps the format
+            // it was opened as, so a stray report beside it cannot take its
+            // place.
             //
             // Sources that SHARE a folder never re-derive at all. They would all
             // resolve onto the same newest file and quietly collapse into one,
             // losing the rest of the merge — so they re-parse their own path.
-            if (rewritten) {
+            if (entry.dirSourced) {
+                changed = follow(resultsFilesIn(dir));
+            } else if (rewritten) {
                 changed = reparse(entry, before);
             } else {
-                for (const candidate of resultsFilesIn(dir, sameFormat(entry.format))) {
-                    if (!reparse(entry, candidate)) continue;
-                    changed = true;
-                    moved = candidate !== before;
-                    break;
-                }
-                if (!changed) changed = reparse(entry, before);
+                changed = follow(resultsFilesIn(dir, sameFormat(entry.format)));
             }
         } else {
             for (const entry of here) {
@@ -1007,7 +1033,34 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         broadcast();
     }
 
+    // Directory identity, so a folder deleted and recreated is not mistaken for
+    // the one a watcher is still attached to. Null when it is not there (or is
+    // not a directory) at all.
+    function dirStamp(dir: string): string | null {
+        try {
+            const st = statSync(dir);
+            return st.isDirectory() ? `${st.ino}:${st.birthtimeMs}` : null;
+        } catch {
+            return null;
+        }
+    }
+
+    function dropWatcher(dir: string): void {
+        const w = watchers.get(dir);
+        if (w) {
+            try {
+                w.close();
+            } catch { /* already closed */ }
+        }
+        watchers.delete(dir);
+        watchStamps.delete(dir);
+    }
+
     function startWatch(dir: string): void {
+        const stamp = dirStamp(dir);
+        // Not there yet -- a run that has still to create its output folder.
+        // The poll arms the watcher the moment it appears.
+        if (stamp === null) return;
         try {
             const w = watch(dir, { persistent: false }, (_event, filename) => {
                 if (!filename) return;
@@ -1035,11 +1088,62 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
                     refreshDir(dir, pending);
                 }, 400));
             });
-            w.on("error", (err) => console.error("[server] watcher error:", err?.message || err));
+            w.on("error", (err) => {
+                console.error("[server] watcher error:", err?.message || err);
+                // A watcher that has errored delivers nothing further; drop it
+                // so the poll puts a working one back.
+                dropWatcher(dir);
+            });
             watchers.set(dir, w);
+            watchStamps.set(dir, stamp);
         } catch (err) {
             console.error(`[server] watch failed for ${dir}:`, err instanceof Error ? err.message : err);
         }
+    }
+
+    // Every folder the panel has a reason to watch.
+    function wantedDirs(): string[] {
+        const wanted = new Set(entries.map((e) => dirname(e.source.path)));
+        for (const dir of awaitedDirs()) wanted.add(dir);
+        return [...wanted];
+    }
+
+    // Re-read a folder from scratch: every source in it is treated as changed,
+    // which is what a watcher gap means -- whatever happened while nothing was
+    // listening was missed.
+    function rescanDir(dir: string): void {
+        if (retryAwaitedSeed(dir)) return;
+        const here = entries.filter((e) => dirname(e.source.path) === dir);
+        if (here.length) refreshDir(dir, new Set(here.map((e) => basename(e.source.path))));
+    }
+
+    // The watchers are a shortcut for the common case, not the source of truth.
+    // A folder may not exist when the panel opens -- `dotnet test` creates
+    // TestResults/ on the first run -- and one deleted and recreated leaves its
+    // watcher attached to a directory nothing writes to any more, with no event
+    // to say so. A tick costs one stat per watched folder.
+    function syncResultsPoll(): void {
+        const wanted = watchEnabled && wantedDirs().length > 0;
+        if (wanted === (resultsPoll !== null)) return;
+        if (!wanted) {
+            if (resultsPoll) clearInterval(resultsPoll);
+            resultsPoll = null;
+            return;
+        }
+        resultsPoll = setInterval(() => {
+            for (const dir of wantedDirs()) {
+                const stamp = dirStamp(dir);
+                if (stamp === null) {
+                    dropWatcher(dir);
+                    continue;
+                }
+                if (watchers.has(dir) && watchStamps.get(dir) === stamp) continue;
+                dropWatcher(dir);
+                startWatch(dir);
+                rescanDir(dir);
+            }
+        }, 500);
+        resultsPoll.unref?.();
     }
 
     // One watcher per directory the sources live in, plus any an unfulfilled
@@ -1047,16 +1151,12 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
     // one folder share a watcher, and a folder nothing points at any more is
     // dropped.
     function syncWatchers(): void {
-        const wanted = new Set(entries.map((e) => dirname(e.source.path)));
-        for (const dir of awaitedDirs()) wanted.add(dir);
-        for (const [dir, w] of watchers) {
-            if (wanted.has(dir)) continue;
-            try {
-                w.close();
-            } catch { /* already closed */ }
-            watchers.delete(dir);
+        const wanted = new Set(wantedDirs());
+        for (const dir of [...watchers.keys()]) {
+            if (!wanted.has(dir)) dropWatcher(dir);
         }
         for (const dir of wanted) if (!watchers.has(dir)) startWatch(dir);
+        syncResultsPoll();
     }
 
     // Seed from a set of files, or from the original single file/dir.
@@ -1097,7 +1197,7 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
             // Newest first, but the newest can be a report caught mid-write, so
             // take the first that parses in full: a complete older run beats a
             // partial newer one.
-            if (!entry && dir) entry = firstReadable(resultsFilesIn(dir));
+            if (!entry && dir) entry = firstReadable(resultsFilesIn(dir), true);
             if (entry) {
                 applySources([entry], null);
                 // A fresh seed re-points the whole panel, so a group left over

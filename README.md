@@ -71,7 +71,15 @@ A run opened from several reports is seeded all or nothing: if any of the named
 files cannot be read, none of them replace what the panel already shows. A
 folder is read newest-first until a report parses in full, so a run still being
 written never hides the finished one behind it — and whatever was asked for but
-was not there yet is watched, so it appears on its own once it lands.
+was not there yet is watched, so it appears on its own once it lands. That
+includes a folder that does not exist at all when the panel opens (`dotnet test`
+creates `TestResults/` on its first run), and one deleted and recreated by a
+re-run.
+
+`resultsDir` and `resultsFile` differ in what they follow afterwards. A folder
+is the identity, so it moves to whatever report in it is newest and readable,
+even if the runner switched formats. A named file keeps the format it was opened
+as, so a stray report beside it cannot take its place.
 
 ## Install (once, per user — works in every project)
 ### Step 1:

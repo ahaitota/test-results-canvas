@@ -154,6 +154,63 @@ test.describe("cross-language report formats", () => {
     await expect(page.getByTestId("test-name").filter({ hasText: "adds" })).toBeVisible();
   });
 
+  test("a directory source follows its newest readable report, whatever format that is", async ({ page, makeServer }, testInfo) => {
+    // The folder is what was asked for, so a runner that starts writing its
+    // results differently is still the same run, not a different one.
+    const dir = testInfo.outputPath("dir-any-format");
+    mkdirSync(dir, { recursive: true });
+    const junit = join(dir, "old.xml");
+    const ctrf = join(dir, "new.json");
+    writeFileSync(junit, `<testsuites><testsuite name="s"><testcase name="fromJUnit" /></testsuite></testsuites>`, "utf8");
+    // Newer, recognizable as CTRF, and cut off mid-document.
+    writeFileSync(ctrf, `{"reportFormat":"CTRF","results":{"tool":{"name":"jest"},"tests":[{"name":"fromCTRF"`, "utf8");
+    const old = new Date(Date.now() - 60_000);
+    utimesSync(junit, old, old);
+
+    const s = await makeServer({ resultsDir: dir, watch: true });
+    await openCanvas(page, s);
+    await expect(page.getByTestId("test-name").filter({ hasText: "fromJUnit" })).toBeVisible();
+
+    writeFileSync(ctrf, `{"reportFormat":"CTRF","results":{"tool":{"name":"jest"},"tests":[{"name":"fromCTRF","status":"passed"}]}}`, "utf8");
+
+    await expect(page.getByTestId("test-name").filter({ hasText: "fromCTRF" })).toBeVisible();
+    await expect(page.getByTestId("test-name").filter({ hasText: "fromJUnit" })).toHaveCount(0);
+  });
+
+  test("watches a results directory that does not exist yet", async ({ page, makeServer }, testInfo) => {
+    // `dotnet test` creates TestResults/ on its first run, so the folder the
+    // agent names may well not be there when the panel opens.
+    const dir = join(testInfo.outputPath("absent"), "TestResults");
+
+    const s = await makeServer({ resultsDir: dir, watch: true });
+    await openCanvas(page, s);
+    await expect(page.getByTestId("test-name").filter({ hasText: "adds" })).toHaveCount(0);
+
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "run.xml"), `<testsuites><testsuite name="s"><testcase name="adds" /></testsuite></testsuites>`, "utf8");
+
+    await expect(page.getByTestId("test-name").filter({ hasText: "adds" })).toBeVisible();
+  });
+
+  test("recovers when the watched directory is deleted and recreated", async ({ page, makeServer }, testInfo) => {
+    const dir = join(testInfo.outputPath("recreated"), "TestResults");
+    mkdirSync(dir, { recursive: true });
+    const suite = (name: string) => `<testsuites><testsuite name="s"><testcase name="${name}" /></testsuite></testsuites>`;
+    writeFileSync(join(dir, "run.xml"), suite("before"), "utf8");
+
+    const s = await makeServer({ resultsDir: dir, watch: true });
+    await openCanvas(page, s);
+    await expect(page.getByTestId("test-name").filter({ hasText: "before" })).toBeVisible();
+
+    // The watcher is still attached to the directory that was removed, and no
+    // event will ever arrive from the new one.
+    rmSync(dir, { recursive: true, force: true });
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "run.xml"), suite("after"), "utf8");
+
+    await expect(page.getByTestId("test-name").filter({ hasText: "after" })).toBeVisible();
+  });
+
   test("does not seed a merge when one of the requested reports cannot be read, and takes it when it lands", async ({ page, makeServer }, testInfo) => {
     // A seed has no receipt to hand back, so a partial merge would show fewer
     // tests than were asked for with nothing on screen to say so.
