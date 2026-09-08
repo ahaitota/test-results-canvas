@@ -90,8 +90,10 @@ function tagEnd(text: string, from: number): number {
 }
 
 const NAME_END = /[\s/>]/;
-// https://www.w3.org/TR/xml/#NT-Name, narrowed to the ASCII range reports use.
-const XML_NAME = /^[A-Za-z_:][A-Za-z0-9_.:-]*$/;
+// https://www.w3.org/TR/xml/#NT-Name. The non-ASCII ranges are collapsed into
+// one span: this exists to catch markup that was cut off or never was markup,
+// so being permissive about exotic-but-legal names is the safe direction.
+const XML_NAME = /^[A-Za-z_:\u00C0-\uFFFF][A-Za-z0-9_.:\-\u00C0-\uFFFF]*$/;
 
 // Text content with CDATA sections taken literally and the rest unescaped.
 export function decodeText(raw: string): string {

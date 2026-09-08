@@ -49,6 +49,15 @@ export function joinMessage(...parts: (string | undefined)[]): string | undefine
     return text || undefined;
 }
 
+// Epoch milliseconds as an ISO timestamp. A value outside the range Date can
+// represent yields nothing rather than throwing: a timestamp is decoration on
+// a row, and must not cost the report it came from.
+export function isoFromEpoch(ms: number | undefined): string | undefined {
+    if (ms == null) return undefined;
+    const at = new Date(ms);
+    return Number.isNaN(at.getTime()) ? undefined : at.toISOString();
+}
+
 // The keys of a JSON object at depth 1, mapped to their value when that value is
 // a string. Scanned rather than parsed, so it also works on a truncated head.
 //

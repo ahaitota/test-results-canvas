@@ -3,7 +3,7 @@
 // them in name order, which keeps a re-read of any one of them deterministic.
 import { readdirSync } from "node:fs";
 import { dirname, join, basename } from "node:path";
-import { rec, str, num, arr, joinMessage } from "./json.js";
+import { rec, str, num, arr, joinMessage, isoFromEpoch } from "./json.js";
 const SUFFIX = "-result.json";
 // The statuses Allure's model defines; anything else is not a result record.
 export const ALLURE_STATUS = new Set(["passed", "failed", "broken", "skipped", "unknown"]);
@@ -53,8 +53,8 @@ export function parseAllure(text) {
             className: label.get("testClass"),
             suite: label.get("suite") ?? label.get("parentSuite"),
             framework: label.get("framework"),
-            startTime: start == null ? undefined : new Date(start).toISOString(),
-            endTime: stop == null ? undefined : new Date(stop).toISOString(),
+            startTime: isoFromEpoch(start),
+            endTime: isoFromEpoch(stop),
         });
     }
     return out;

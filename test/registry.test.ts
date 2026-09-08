@@ -180,6 +180,8 @@ test("parseResults rejects a file whose declared format is malformed", () => {
   // Detected as CTRF by its head, but the document is truncated: a broken report
   // must not surface as a run in which nothing failed.
   assert.equal(parseResults(`{"reportFormat":"CTRF","results":{"tests":[{"name":"a",`), null);
+  // A CTRF report missing the structure its own reportFormat promises.
+  assert.equal(parseResults(`{"reportFormat":"CTRF"}`), null);
   assert.equal(parseResults("random log line\n"), null);
 });
 

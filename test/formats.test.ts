@@ -93,6 +93,36 @@ test("parseNUnit does not repeat a suite failure its cases already report", () =
   assert.deepEqual(rows.map((r) => r.name), ["Subtracts"]);
 });
 
+test("parseNUnit reports a parent fixture failure once, not on every child it took down", () => {
+  // NUnit copies the failure onto each affected suite with site="Parent"; only
+  // the suite whose own SetUp failed owns it.
+  const rows = parseNUnit(`<test-run id="1" result="Failed">
+  <test-suite type="SetUpFixture" name="Database" result="Failed" site="SetUp">
+    <failure>
+      <message><![CDATA[OneTimeSetUp: connection refused]]></message>
+    </failure>
+    <test-suite type="TestFixture" name="CalcTests" result="Failed" site="Parent">
+      <failure><message><![CDATA[OneTimeSetUp: connection refused]]></message></failure>
+    </test-suite>
+    <test-suite type="TestFixture" name="OrderTests" result="Failed" site="Parent">
+      <failure><message><![CDATA[OneTimeSetUp: connection refused]]></message></failure>
+    </test-suite>
+  </test-suite>
+</test-run>`);
+  assert.deepEqual(rows.map((r) => [r.name, r.status]), [["Database", "fail"]]);
+  assert.equal(rows[0].message, "OneTimeSetUp: connection refused");
+});
+
+test("parseNUnit reports a run that failed before any suite did", () => {
+  // An assembly that will not load produces no suite to hang the failure on,
+  // and an empty run would read as green.
+  const rows = parseNUnit(`<test-run id="1" name="Sample.dll" result="Failed" testcasecount="0">
+  <failure><message><![CDATA[Could not load file or assembly]]></message></failure>
+</test-run>`);
+  assert.deepEqual(rows.map((r) => [r.name, r.status]), [["Sample.dll", "fail"]]);
+  assert.equal(rows[0].message, "Could not load file or assembly");
+});
+
 test("parseNUnit reads NUnit 2 result/time spellings", () => {
   const rows = parseNUnit(`<test-results><test-suite name="Old"><results>
     <test-case name="Legacy" result="Success" time="0.100" />
@@ -448,6 +478,15 @@ test("parseCtrf rejects a test record without a name or a known status", () => {
 
 test("parseCtrf rejects a report whose summary counts more tests than it holds", () => {
   assert.throws(() => parseCtrf(`{"reportFormat":"CTRF","results":{"tool":{"name":"jest"},"summary":{"tests":2,"passed":1,"failed":1},"tests":[{"name":"adds","status":"passed"}]}}`));
+});
+
+test("parseCtrf rejects a report with no results.tests array", () => {
+  // reportFormat already claimed the file as CTRF, so these are malformed
+  // reports, not runs in which nothing happened.
+  assert.throws(() => parseCtrf(`{"reportFormat":"CTRF"}`));
+  assert.throws(() => parseCtrf(`{"reportFormat":"CTRF","results":{}}`));
+  assert.throws(() => parseCtrf(`{"reportFormat":"CTRF","results":{"tests":{}}}`));
+  assert.throws(() => parseCtrf(`{"reportFormat":"CTRF","results":[]}`));
 });
 
 test("parseCtrf returns nothing for a report with no tests", () => {

@@ -5,7 +5,7 @@
 import { readdirSync } from "node:fs";
 import { dirname, join, basename } from "node:path";
 import type { TestResult, TestStatus } from "../types.js";
-import { rec, str, num, arr, joinMessage } from "./json.js";
+import { rec, str, num, arr, joinMessage, isoFromEpoch } from "./json.js";
 
 const SUFFIX = "-result.json";
 
@@ -57,8 +57,8 @@ export function parseAllure(text: string): TestResult[] {
             className: label.get("testClass"),
             suite: label.get("suite") ?? label.get("parentSuite"),
             framework: label.get("framework"),
-            startTime: start == null ? undefined : new Date(start).toISOString(),
-            endTime: stop == null ? undefined : new Date(stop).toISOString(),
+            startTime: isoFromEpoch(start),
+            endTime: isoFromEpoch(stop),
         });
     }
     return out;
