@@ -167,6 +167,28 @@ test("parseXunit maps outcomes and carries assembly/collection context", () => {
   assert.equal(rows[2].message, "not ready");
 });
 
+test("parseXunit rejects a record missing its name or outcome, and never calls a failure a skip", () => {
+  const assembly = (tests: string) => `<assemblies><assembly name="a.dll"><collection name="c">${tests}</collection></assembly></assemblies>`;
+  // No result attribute: defaulting turned this failure into a test nobody ran.
+  assert.throws(() => parseXunit(assembly(`<test name="boom"><failure><message>bad</message></failure></test>`)));
+  assert.throws(() => parseXunit(assembly(`<test type="Ns" method="boom" result="Fail" />`)));
+  assert.throws(() => parseXunit(assembly(`<test name="boom" result="Exploded" />`)));
+  // A record that carries a failure failed, whatever it says of itself.
+  const rows = parseXunit(assembly(`<test name="boom" result="Skip"><failure><message>bad</message></failure></test>`));
+  assert.deepEqual(rows.map((r) => [r.name, r.status]), [["boom", "fail"]]);
+});
+
+test("parseXunit rejects an assembly whose own counters do not match its tests", () => {
+  const assembly = (counts: string, tests: string) => `<assemblies><assembly name="a.dll" ${counts}><collection name="c">${tests}</collection></assembly></assemblies>`;
+  const one = `<test name="adds" result="Pass" />`;
+  assert.throws(() => parseXunit(assembly(`passed="1" failed="1" skipped="0"`, one)));
+  // Counted correctly, including a runner that reports notrun separately.
+  assert.equal(parseXunit(assembly(`passed="1" failed="0" skipped="0"`, one)).length, 1);
+  assert.equal(parseXunit(assembly(`passed="1" failed="0" skipped="0" notrun="0"`, one)).length, 1);
+  // A report that does not count itself is left alone.
+  assert.equal(parseXunit(assembly(`total="1"`, one)).length, 1);
+});
+
 test("parseXunit reads the v3 per-test source path and timestamps", () => {
   const rows = parseXunit(`<assemblies>
   <assembly name="/src/Sample.dll" run-date="2024-01-01" run-time="10:00:00">
@@ -576,6 +598,35 @@ const DART = [
   { type: "testDone", testID: 4, result: "success", hidden: false, skipped: true, time: 80 },
   { type: "done", success: false, time: 90 },
 ].map((e) => JSON.stringify(e)).join("\n");
+
+test("parseAllure reports a fixture that failed in a container", () => {
+  // Allure records setup and teardown only here, so a teardown that blew up is
+  // a failure of the run that no test result mentions.
+  const rows = parseAllure(JSON.stringify({
+    uuid: "c1",
+    name: "DatabaseFixture",
+    children: ["r1"],
+    befores: [{ name: "connect", status: "passed", start: 1, stop: 2 }],
+    afters: [{
+      name: "disconnect",
+      status: "broken",
+      statusDetails: { message: "the connection was already closed", trace: "at Db.Dispose()" },
+      start: 10,
+      stop: 25,
+    }],
+  }));
+  // The successful setup is not a test and would only inflate the run.
+  assert.deepEqual(rows.map((r) => [r.name, r.status]), [["disconnect", "fail"]]);
+  assert.equal(rows[0].message, "the connection was already closed\nat Db.Dispose()");
+  assert.equal(rows[0].suite, "DatabaseFixture");
+  assert.equal(rows[0].durationMs, 15);
+});
+
+test("parseAllure still rejects a result that only looks like a container", () => {
+  // No befores/afters/children, so this is a result missing its status -- not a
+  // container, and not something to pass over in silence.
+  assert.throws(() => parseAllure(`{"uuid":"b","name":"adds"}`));
+});
 
 test("parseAllure rejects a record that is not a usable result", () => {
   // Structurally valid JSON, but nameless: it would contribute no row and no

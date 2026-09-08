@@ -3,8 +3,8 @@
 //
 // Order is specificity, not preference: the first parser whose signature appears
 // in the file's head wins, so add narrower dialects above broader ones.
-import { readFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { readFileSync, realpathSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { HEAD_BYTES, readHead } from "../head.js";
 import { attr, rootTag, hasElement, isWellFormed } from "../xml.js";
 import { topLevelFields } from "./json.js";
@@ -142,12 +142,26 @@ function detectAt(abs) {
 export function formatIdAt(abs) {
     return detectAt(abs)?.id;
 }
+// One key per file, whatever spelling the caller used. Windows and macOS
+// compare paths case-insensitively, and a symlink or a mixed-case alias names
+// the same run -- keying on the raw string would add the same report twice and
+// double every row it holds. Only the KEY is canonical: the path a source is
+// read from and displayed under stays exactly as it was given.
+export function canonicalPath(p) {
+    let out = resolve(p);
+    try {
+        // Resolves symlinks, and on Windows gives back the real on-disk case.
+        out = realpathSync.native(out);
+    }
+    catch { /* not on disk yet: the spelling given is all there is */ }
+    return process.platform === "win32" || process.platform === "darwin" ? out.toLowerCase() : out;
+}
 // What makes two paths the same run. A format that expands around a file covers
 // its whole folder, so every result in an Allure directory shares one key:
 // adding them as separate sources would parse the set once per member and merge
 // N copies of every row.
 export function runKey(abs) {
-    return expandsDirectory(abs) ? `expanded\u0000${dirname(abs)}` : abs;
+    return expandsDirectory(abs) ? `expanded\u0000${canonicalPath(dirname(abs))}` : canonicalPath(abs);
 }
 // The paths that name distinct runs, in the order given.
 export function canonicalResultPaths(paths) {

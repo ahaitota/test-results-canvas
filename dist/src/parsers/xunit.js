@@ -1,18 +1,17 @@
 // xUnit.net v2/v3 result XML: <assemblies> / <assembly> / <collection> / <test>.
-import { attr, parseXml, child, childText, findAll } from "../xml.js";
+import { attr, numAttr, parseXml, child, childText, findAll } from "../xml.js";
 import { joinMessage } from "./json.js";
-function status(result) {
-    const r = String(result || "").toLowerCase();
-    if (r === "pass")
-        return "pass";
-    if (r === "fail")
-        return "fail";
-    return "skip";
-}
+// The outcomes the xUnit schema defines. A record outside them is not one this
+// report can be read without, so it is rejected rather than defaulted -- the
+// default was "skip", which quietly turned a failure into a test nobody ran.
+const RESULTS = new Map([["pass", "pass"], ["fail", "fail"], ["skip", "skip"], ["notrun", "skip"]]);
 function emit(el, assembly, collection, out) {
     const name = attr(el.attrs, "name");
-    if (!name)
-        return;
+    const outcome = attr(el.attrs, "result");
+    const status = RESULTS.get(String(outcome ?? "").toLowerCase());
+    if (!name || !status) {
+        throw new SyntaxError("xunit test is missing its name or a known result");
+    }
     const failure = child(el, "failure");
     const time = parseFloat(attr(el.attrs, "time") ?? "");
     // v3 timestamps each test; v2 only dated the assembly, so that is the
@@ -22,7 +21,8 @@ function emit(el, assembly, collection, out) {
     const assemblyStart = date && clock ? `${date}T${clock}` : undefined;
     out.push({
         name,
-        status: status(attr(el.attrs, "result")),
+        // A record carrying a failure failed, whatever it says of itself.
+        status: failure ? "fail" : status,
         durationMs: Number.isFinite(time) ? Math.round(time * 1000) : undefined,
         message: joinMessage(childText(failure, "message"), childText(failure, "stack-trace"), childText(el, "reason")),
         className: attr(el.attrs, "type"),
@@ -36,6 +36,15 @@ function emit(el, assembly, collection, out) {
         startTime: attr(el.attrs, "start-rtf") ?? assemblyStart,
         endTime: attr(el.attrs, "finish-rtf"),
     });
+}
+// What an assembly says it holds, from the breakdown rather than `total`: the
+// parts are unambiguous, where `total` has meant different things across
+// versions. Undefined when the report does not count itself.
+function declaredTests(assembly) {
+    const parts = ["passed", "failed", "skipped"].map((n) => numAttr(assembly.attrs, n));
+    if (parts.some((n) => n === undefined))
+        return undefined;
+    return parts.reduce((sum, n) => sum + n, 0) + (numAttr(assembly.attrs, "notrun") ?? 0);
 }
 export function parseXunit(xml) {
     const out = [];
@@ -55,11 +64,20 @@ export function parseXunit(xml) {
                 storage: attr(assembly.attrs, "name"),
             });
         }
+        let tests = 0;
         for (const collection of assembly.children) {
             if (collection.name !== "collection")
                 continue;
-            for (const test of findAll(collection, "test"))
+            for (const test of findAll(collection, "test")) {
                 emit(test, assembly, attr(collection.attrs, "name"), out);
+                tests++;
+            }
+        }
+        // The assembly counts itself, so a mismatch means rows went missing
+        // between the runner writing those counters and this file being read.
+        const declared = declaredTests(assembly);
+        if (declared !== undefined && declared !== tests) {
+            throw new SyntaxError(`xunit assembly declared ${declared} tests, found ${tests}`);
         }
     }
     return out;

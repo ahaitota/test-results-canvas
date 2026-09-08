@@ -1,13 +1,19 @@
 // Allure 2 result JSON. One `<uuid>-result.json` per test, so a run is the whole
 // directory: expandAllure() collects the siblings and the registry concatenates
 // them in name order, which keeps a re-read of any one of them deterministic.
+//
+// `<uuid>-container.json` files sit alongside them and hold the fixtures --
+// setup and teardown -- that Allure records nowhere else. A teardown that blew
+// up is a failure of the run no test result mentions, so containers are read
+// too, and the ones that failed become rows.
 
 import { readdirSync } from "node:fs";
 import { dirname, join, basename } from "node:path";
 import type { TestResult, TestStatus } from "../types.js";
 import { rec, str, num, arr, joinMessage, isoFromEpoch } from "./json.js";
 
-const SUFFIX = "-result.json";
+const RESULT_SUFFIX = "-result.json";
+const CONTAINER_SUFFIX = "-container.json";
 
 // The statuses Allure's model defines; anything else is not a result record.
 export const ALLURE_STATUS = new Set(["passed", "failed", "broken", "skipped", "unknown"]);
@@ -31,12 +37,50 @@ function labels(from: ReturnType<typeof rec>): Map<string, string> {
     return map;
 }
 
+// A container groups results and carries their fixtures. Recognized by holding
+// one of those arrays rather than by lacking a status, so a *result* that is
+// missing its status is still rejected instead of passing for a container.
+function isContainer(t: ReturnType<typeof rec>): boolean {
+    return Array.isArray(t?.befores) || Array.isArray(t?.afters) || Array.isArray(t?.children);
+}
+
+// The fixtures a container ran that did not pass. A successful setup is not a
+// test and only inflates the run; a failed one is the reason everything under
+// it did not happen.
+function fixtures(t: ReturnType<typeof rec>, out: TestResult[]): void {
+    const owner = str(t, "name");
+    for (const key of ["befores", "afters"]) {
+        for (const entry of arr(t, key)) {
+            const fixture = rec(entry);
+            const name = str(fixture, "name");
+            if (!name || status(str(fixture, "status")) !== "fail") continue;
+            const start = num(fixture, "start");
+            const stop = num(fixture, "stop");
+            const details = rec(fixture?.statusDetails);
+            out.push({
+                name,
+                status: "fail",
+                durationMs: start != null && stop != null ? stop - start : undefined,
+                message: joinMessage(str(details, "message"), str(details, "trace")),
+                suite: owner,
+                framework: "Allure",
+                startTime: isoFromEpoch(start),
+                endTime: isoFromEpoch(stop),
+            });
+        }
+    }
+}
+
 export function parseAllure(text: string): TestResult[] {
     const parsed: unknown = JSON.parse(text);
     const entries = Array.isArray(parsed) ? parsed : [parsed];
     const out: TestResult[] = [];
     for (const entry of entries) {
         const t = rec(entry);
+        if (isContainer(t)) {
+            fixtures(t, out);
+            continue;
+        }
         const name = str(t, "name") ?? str(t, "fullName");
         const outcome = str(t, "status");
         // Every result file is required input: one that carries no identity,
@@ -51,7 +95,7 @@ export function parseAllure(text: string): TestResult[] {
         const details = rec(t?.statusDetails);
         out.push({
             name,
-            status: status(str(t, "status")),
+            status: status(outcome),
             durationMs: start != null && stop != null ? stop - start : undefined,
             message: joinMessage(str(details, "message"), str(details, "trace")),
             className: label.get("testClass"),
@@ -64,13 +108,17 @@ export function parseAllure(text: string): TestResult[] {
     return out;
 }
 
-// The result files that belong to the same run as `abs`, name-sorted.
+// The files that belong to the same run as `abs`: the results name-sorted, then
+// the containers, so the fixtures that failed come after the tests and the
+// order is the same on every re-read.
 export function expandAllure(abs: string): string[] {
-    if (!basename(abs).endsWith(SUFFIX)) return [abs];
+    if (!basename(abs).endsWith(RESULT_SUFFIX)) return [abs];
     try {
         const dir = dirname(abs);
-        const names = readdirSync(dir).filter((n) => n.endsWith(SUFFIX)).sort();
-        return names.length ? names.map((n) => join(dir, n)) : [abs];
+        const names = readdirSync(dir);
+        const of = (suffix: string) => names.filter((n) => n.endsWith(suffix)).sort().map((n) => join(dir, n));
+        const results = of(RESULT_SUFFIX);
+        return results.length ? [...results, ...of(CONTAINER_SUFFIX)] : [abs];
     } catch {
         return [abs];
     }

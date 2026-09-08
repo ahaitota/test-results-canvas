@@ -5,7 +5,7 @@ import { mkdtempSync, writeFileSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { detectParser, looksLikeResults, parseResults, parseResultsAt, canonicalResultPaths, expandsDirectory, RESULT_EXTS } from "../src/parsers/registry.js";
+import { detectParser, looksLikeResults, parseResults, parseResultsAt, canonicalResultPaths, expandsDirectory, runKey, RESULT_EXTS } from "../src/parsers/registry.js";
 
 const id = (text: string) => detectParser(text)?.id;
 
@@ -191,6 +191,35 @@ test("parseResults still returns rows for a report that ran no tests", () => {
 
 test("RESULT_EXTS covers every discovered extension without dropping the originals", () => {
   assert.deepEqual([...RESULT_EXTS].sort(), [".jsonl", ".json", ".ndjson", ".tap", ".trx", ".xml"].sort());
+});
+
+test("parseResultsAt merges an Allure run's fixture failures with its results", () => {
+  // The teardown that broke is the only failure in the folder; a run that
+  // reported it nowhere would read as all green.
+  const dir = mkdtempSync(join(tmpdir(), "allure-fixtures-"));
+  const one = join(dir, "aaa-result.json");
+  writeFileSync(one, `{"uuid":"aaa","name":"adds","status":"passed"}`, "utf8");
+  writeFileSync(join(dir, "ccc-container.json"), JSON.stringify({
+    uuid: "ccc",
+    name: "DatabaseFixture",
+    children: ["aaa"],
+    afters: [{ name: "disconnect", status: "broken", statusDetails: { message: "already closed" } }],
+  }), "utf8");
+  assert.deepEqual(parseResultsAt(one)?.map((r) => [r.name, r.status]), [["adds", "pass"], ["disconnect", "fail"]]);
+});
+
+test("runKey names one run however the caller spelled the path", () => {
+  const dir = mkdtempSync(join(tmpdir(), "spelling-"));
+  const abs = join(dir, "run.xml");
+  writeFileSync(abs, `<testsuites><testsuite name="s"><testcase name="c" /></testsuite></testsuites>`, "utf8");
+  const shouted = abs.toUpperCase();
+  const insensitive = process.platform === "win32" || process.platform === "darwin";
+  // Where the filesystem ignores case, that alias is the same file, and adding
+  // it as a second source would double every row it holds.
+  assert.equal(runKey(abs) === runKey(shouted), insensitive);
+  assert.equal(canonicalResultPaths([abs, shouted]).length, insensitive ? 1 : 2);
+  // A path spelled the long way round is the same run everywhere.
+  assert.equal(runKey(join(dir, "sub", "..", "run.xml")), runKey(abs));
 });
 
 test("parseResultsAt reads a file from disk and returns null for a missing one", () => {
