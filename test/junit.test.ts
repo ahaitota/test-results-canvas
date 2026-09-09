@@ -23,6 +23,10 @@ const SUITE = `<?xml version="1.0" encoding="UTF-8"?>
   </testsuite>
 </testsuites>`;
 
+test("parseJUnit rejects a case with no name, which no run could account for", () => {
+  assert.throws(() => parseJUnit(`<testsuites><testsuite name="s"><testcase classname="C"><failure message="boom" /></testcase></testsuite></testsuites>`));
+});
+
 test("parseJUnit maps pass/fail/error/skip outcomes", () => {
   const rows = byName(parseJUnit(SUITE));
   assert.equal(Object.keys(rows).length, 4);

@@ -213,7 +213,9 @@ function findChild(inner: string, names: readonly string[]): { attrs: string; bo
 // result record tagged with the given suite context, and append it.
 function emitCase(attrs: string, inner: string, ctx: SuiteCtx, results: TestResult[]): void {
     const name = attr(attrs, "name");
-    if (!name) return;
+    // A case with no name is one this run cannot account for. Dropping it would
+    // take a failure off the report and leave a shorter, greener one behind.
+    if (!name) throw new SyntaxError("junit testcase is missing its name");
     const className = attr(attrs, "classname");
     const durationMs = timeToMs(attr(attrs, "time"));
     // Optional, and only some runners write it, but when it is there it is the

@@ -5,12 +5,9 @@ import { attr, parseXml, child, childText, findAll } from "../xml.js";
 import type { XmlElement } from "../xml.js";
 import { joinMessage } from "./json.js";
 
-function status(raw: string | undefined): TestStatus {
-    const s = String(raw || "").toLowerCase();
-    if (s === "passed") return "pass";
-    if (s === "failed") return "fail";
-    return "skip";
-}
+// The outcomes CTest writes. Anything else is not a result this report can be
+// read without: defaulting it to "skip" would take a failure off the run.
+const STATUS = new Map<string, TestStatus>([["passed", "pass"], ["failed", "fail"], ["notrun", "skip"], ["disabled", "skip"]]);
 
 // CTest reports numbers as <NamedMeasurement name="..."><Value>.
 function measurement(results: XmlElement | undefined, name: string): string | undefined {
@@ -30,15 +27,17 @@ export function parseCTest(xml: string): TestResult[] {
             const outcome = attr(test.attrs, "Status");
             if (test.name !== "Test" || !outcome) continue;
             const name = childText(test, "Name");
-            if (!name) continue;
+            const status = STATUS.get(outcome.toLowerCase());
+            if (!name || !status) {
+                throw new SyntaxError("ctest result is missing its name or a known status");
+            }
             const results = child(test, "Results");
             const seconds = Number(measurement(results, "Execution Time"));
-            const failed = status(outcome) === "fail";
             out.push({
                 name,
-                status: status(outcome),
+                status,
                 durationMs: Number.isFinite(seconds) ? Math.round(seconds * 1000) : undefined,
-                message: failed ? joinMessage(measurement(results, "Exception"), childText(child(results, "Measurement"), "Value")) : undefined,
+                message: status === "fail" ? joinMessage(measurement(results, "Exception"), childText(child(results, "Measurement"), "Value")) : undefined,
                 suite: childText(test, "Path"),
                 framework: "CTest",
                 startTime,

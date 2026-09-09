@@ -1,14 +1,9 @@
 // TestNG result XML: <testng-results> / <suite> / <test> / <class> / <test-method>.
 import { attr, parseXml, child, childText, findAll } from "../xml.js";
 import { joinMessage } from "./json.js";
-function status(raw) {
-    const s = String(raw || "").toUpperCase();
-    if (s === "PASS")
-        return "pass";
-    if (s === "FAIL")
-        return "fail";
-    return "skip";
-}
+// The outcomes TestNG writes. Anything else is not a result this report can be
+// read without: defaulting it to "skip" would take a failure off the run.
+const STATUS = new Map([["PASS", "pass"], ["FAIL", "fail"], ["SKIP", "skip"]]);
 export function parseTestNG(xml) {
     const out = [];
     for (const suite of findAll(parseXml(xml), "suite")) {
@@ -17,9 +12,10 @@ export function parseTestNG(xml) {
             const className = attr(cls.attrs, "name");
             for (const method of findAll(cls, "test-method")) {
                 const name = attr(method.attrs, "name");
-                if (!name)
-                    continue;
-                const outcome = status(attr(method.attrs, "status"));
+                const outcome = STATUS.get(String(attr(method.attrs, "status") ?? "").toUpperCase());
+                if (!name || !outcome) {
+                    throw new SyntaxError("testng method is missing its name or a known status");
+                }
                 // @BeforeMethod/@AfterMethod and the like are setup, not tests --
                 // until one FAILS, when it is the run's real failure and the
                 // tests it guarded only report as skipped. TestNG also skips the

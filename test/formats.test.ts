@@ -302,6 +302,12 @@ test("parseTestNG keeps a failed configuration method, which is the run's real f
   assert.equal(rows[0].message, "java.lang.IllegalStateException\nsetup failed");
 });
 
+test("parseTestNG rejects a method missing its name or a known status", () => {
+  const wrap = (method: string) => `<testng-results><suite name="s"><test name="t"><class name="C">${method}</class></test></suite></testng-results>`;
+  assert.throws(() => parseTestNG(wrap(`<test-method status="FAIL"><exception class="E"><message>boom</message></exception></test-method>`)));
+  assert.throws(() => parseTestNG(wrap(`<test-method status="EXPLODED" name="a" />`)));
+});
+
 test("parseTestNG returns nothing for a run with no methods", () => {
   assert.deepEqual(parseTestNG(`<testng-results total="0"><suite name="s" /></testng-results>`), []);
 });
@@ -341,6 +347,16 @@ test("parseCTest reads outcomes and ignores the TestList entries", () => {
   assert.equal(rows[0].startTime, "Jan 01 10:00 UTC");
   assert.equal(rows[0].message, undefined);
   assert.equal(rows[1].message, "SegFault\nassertion failed");
+});
+
+test("parseCTest rejects a result missing its name or a known status", () => {
+  // Dropping either would take a failure off the run and leave a shorter,
+  // greener report behind.
+  assert.throws(() => parseCTest(`<Site><Testing><Test Status="failed"><Results><NamedMeasurement name="Exception"><Value>boom</Value></NamedMeasurement></Results></Test></Testing></Site>`));
+  assert.throws(() => parseCTest(`<Site><Testing><Test Status="exploded"><Name>a</Name></Test></Testing></Site>`));
+  // The outcomes CTest does write are all read.
+  const rows = parseCTest(`<Site><Testing><Test Status="notrun"><Name>a</Name></Test><Test Status="disabled"><Name>b</Name></Test></Testing></Site>`);
+  assert.deepEqual(rows.map((r) => [r.name, r.status]), [["a", "skip"], ["b", "skip"]]);
 });
 
 test("parseCTest returns nothing when no test ran", () => {
