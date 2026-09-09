@@ -677,7 +677,7 @@ export async function createResultsServer(options = {}) {
             return null;
         const label = labelForPath(abs, discovered, listLocalNames());
         discovered.set(label, abs);
-        return { source: { label, path: abs, count: rows.length }, rows, expands: expandsDirectory(abs), format: formatIdAt(abs), key: canonicalPath(abs), dirSourced };
+        return { source: { label, path: abs, count: rows.length }, rows, expands: expandsDirectory(abs), format: formatIdAt(abs, "full"), key: canonicalPath(abs), dirSourced };
     }
     // The first of these paths that parses in full. Head detection is not
     // enough to choose by: a report caught mid-write is recognizable long
@@ -771,7 +771,7 @@ export async function createResultsServer(options = {}) {
         entry.rows = rows;
         entry.source = { label, path: abs, count: rows.length };
         entry.expands = expandsDirectory(abs);
-        entry.format = formatIdAt(abs) ?? entry.format;
+        entry.format = formatIdAt(abs, "full") ?? entry.format;
         entry.key = canonicalPath(abs);
         return true;
     }
@@ -974,8 +974,18 @@ export async function createResultsServer(options = {}) {
             return;
         try {
             const w = watch(dir, { persistent: false }, (_event, filename) => {
-                if (!filename)
+                // Node is allowed to report a change without saying what moved.
+                // Dropping it would leave the panel on a run that is no longer
+                // what is on disk, so the whole folder is re-read instead.
+                if (!filename) {
+                    clearTimeout(resultsTimers.get(dir));
+                    resultsTimers.set(dir, setTimeout(() => {
+                        resultsTimers.delete(dir);
+                        pendingNames.delete(dir);
+                        rescanDir(dir);
+                    }, 400));
                     return;
+                }
                 const name = String(filename);
                 // An active source is watched whatever it is called: an
                 // explicitly named file is accepted by content, so a rewrite of
@@ -1157,6 +1167,9 @@ export async function createResultsServer(options = {}) {
     // which is what the <select> expects to see back. `groupDef` survives, so
     // the merge stays listed and can be picked again.
     function loadSingle(abs, label) {
+        // A deliberate choice retires whatever an unfulfilled seed was still
+        // waiting for: it must not arrive later and take the panel back.
+        awaitedSeed = null;
         const entry = buildEntry(abs);
         // Registered but unparseable: keep the old behaviour of showing an empty
         // run rather than refusing the selection outright.
@@ -1658,6 +1671,9 @@ export async function createResultsServer(options = {}) {
                 return { ok: false, error: "none of those paths could be read as a test-results file", skipped: built.skipped };
             }
             const name = groupNameFor(input.name, built.entries.length);
+            // Same as the picker: this replaces the panel deliberately, so a
+            // seed still waiting must not arrive later and undo it.
+            awaitedSeed = null;
             applySources(built.entries, name);
             // Resolved to a single file, so this is an ordinary run, not a merge:
             // any group left from an earlier open must not stay in the picker.

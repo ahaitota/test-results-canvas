@@ -58,10 +58,13 @@ function declaredTests(assembly: XmlElement): number | undefined {
 export function parseXunit(xml: string): TestResult[] {
     const out: TestResult[] = [];
     for (const assembly of findAll(parseXml(xml), "assembly")) {
+        let tests = 0;
+        let errors = 0;
         // <errors> sits outside every collection: fixture and assembly cleanup
         // blow up there, and nothing else in the report records that failure.
         for (const error of child(assembly, "errors")?.children ?? []) {
             if (error.name !== "error") continue;
+            errors++;
             const failure = child(error, "failure");
             out.push({
                 name: attr(error.attrs, "name") ?? attr(error.attrs, "type") ?? "assembly error",
@@ -72,7 +75,12 @@ export function parseXunit(xml: string): TestResult[] {
                 storage: attr(assembly.attrs, "name"),
             });
         }
-        let tests = 0;
+        // The assembly counts its errors too, and they are failures no test
+        // carries -- so one it declares but does not record is a lost failure.
+        const declaredErrors = numAttr(assembly.attrs, "errors");
+        if (declaredErrors !== undefined && declaredErrors !== errors) {
+            throw new SyntaxError(`xunit assembly declared ${declaredErrors} errors, found ${errors}`);
+        }
         for (const collection of assembly.children) {
             if (collection.name !== "collection") continue;
             for (const test of findAll(collection, "test")) {

@@ -1,5 +1,5 @@
 import { test, expect, get_fixture_path, openCanvas } from "./canvas-server";
-import { copyFileSync, mkdirSync, appendFileSync, writeFileSync, rmSync, utimesSync } from "node:fs";
+import { copyFileSync, mkdirSync, writeFileSync, rmSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 
 // The non-XML formats end to end: the server has to detect them from content and
@@ -16,7 +16,7 @@ test.describe("cross-language report formats", () => {
     await expect(page.getByTestId("chip-skip")).toHaveText("1 skipped");
   });
 
-  test("renders a go test JSON stream and refreshes when it grows", async ({ page, makeServer }, testInfo) => {
+  test("renders a go test JSON stream and follows the next run", async ({ page, makeServer }, testInfo) => {
     const dir = testInfo.outputPath("go");
     mkdirSync(dir, { recursive: true });
     const file = join(dir, "go-test.jsonl");
@@ -26,9 +26,17 @@ test.describe("cross-language report formats", () => {
     await openCanvas(page, s);
     await expect(page.getByTestId("test-row")).toHaveCount(2);
 
-    appendFileSync(file, `{"Action":"skip","Package":"example/calc","Test":"TestDivides","Elapsed":0}\n`, "utf8");
+    // A re-run writes the stream afresh: `go test` closes a package with its
+    // own outcome, so nothing follows that within one run.
+    const rerun = [
+      { Time: "2024-01-01T10:05:00Z", Action: "run", Package: "example/calc", Test: "TestAddsTwoNumbers" },
+      { Time: "2024-01-01T10:05:01Z", Action: "pass", Package: "example/calc", Test: "TestAddsTwoNumbers", Elapsed: 0.04 },
+      { Time: "2024-01-01T10:05:01Z", Action: "skip", Package: "example/calc", Test: "TestDivides", Elapsed: 0 },
+      { Time: "2024-01-01T10:05:01Z", Action: "pass", Package: "example/calc", Elapsed: 0.1 },
+    ].map((e) => JSON.stringify(e)).join("\n");
+    writeFileSync(file, `${rerun}\n`, "utf8");
 
-    await expect(page.getByTestId("test-row")).toHaveCount(3);
+    await expect(page.getByTestId("test-row")).toHaveCount(2);
     await expect(page.getByTestId("test-name").filter({ hasText: "TestDivides" })).toBeVisible();
   });
 
@@ -113,6 +121,52 @@ test.describe("cross-language report formats", () => {
 
     await expect(page.getByTestId("test-name").filter({ hasText: "subtracts" })).toBeVisible();
     await expect(page.getByTestId("test-name").filter({ hasText: "unrelated" })).toHaveCount(0);
+  });
+
+  test("a deliberate open retires a seed that was still waiting", async ({ page, makeServer }, testInfo) => {
+    const waiting = testInfo.outputPath("stale-seed");
+    const chosen = testInfo.outputPath("stale-picked");
+    mkdirSync(waiting, { recursive: true });
+    mkdirSync(chosen, { recursive: true });
+    const awaited = join(waiting, "run.xml");
+    const picked = join(chosen, "picked.xml");
+    const suite = (name: string) => `<testsuites><testsuite name="s"><testcase name="${name}" /></testsuite></testsuites>`;
+    writeFileSync(awaited, `<testsuites><testsuite name="s"><testcase name="fromSeed" />`, "utf8");
+    writeFileSync(picked, suite("fromOpen"), "utf8");
+
+    const s = await makeServer({ resultsFile: awaited, watch: true });
+    await openCanvas(page, s);
+    await expect(page.getByTestId("test-name").filter({ hasText: "fromSeed" })).toHaveCount(0);
+
+    s.openFiles({ files: [picked] });
+    await expect(page.getByTestId("test-name").filter({ hasText: "fromOpen" })).toBeVisible();
+
+    // The report the seed was waiting for arrives late. It must not pull the
+    // panel off what was asked for since -- and the panel is still following
+    // that, which is what says the watchers saw both writes.
+    writeFileSync(awaited, suite("fromSeed"), "utf8");
+    writeFileSync(picked, suite("openAgain"), "utf8");
+
+    await expect(page.getByTestId("test-name").filter({ hasText: "openAgain" })).toBeVisible();
+    await expect(page.getByTestId("test-name").filter({ hasText: "fromSeed" })).toHaveCount(0);
+  });
+
+  test("a source whose format only shows past its head still follows the next run", async ({ page, makeServer }, testInfo) => {
+    // Scans judge a file by its opening, but a named source is read whole -- so
+    // one that opens with a long preamble still knows what format it is.
+    const dir = testInfo.outputPath("late-format");
+    mkdirSync(dir, { recursive: true });
+    const suite = (name: string) => `<testsuites><testsuite name="s"><testcase name="${name}" /></testsuite></testsuites>`;
+    const file = join(dir, "first.xml");
+    writeFileSync(file, `<!--${"pad ".repeat(3000)}-->${suite("first")}`, "utf8");
+
+    const s = await makeServer({ resultsFile: file, watch: true });
+    await openCanvas(page, s);
+    await expect(page.getByTestId("test-name").filter({ hasText: "first" })).toBeVisible();
+
+    writeFileSync(join(dir, "second.xml"), suite("second"), "utf8");
+
+    await expect(page.getByTestId("test-name").filter({ hasText: "second" })).toBeVisible();
   });
 
   test("prefers a complete report over a newer one caught mid-write, then follows it", async ({ page, makeServer }, testInfo) => {

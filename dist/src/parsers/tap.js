@@ -184,6 +184,10 @@ export function parseTap(text) {
         while (stack.length)
             closeTop();
     }
+    // Cut inside a point's diagnostic block, so the file was read while the
+    // runner was still writing it.
+    if (yaml)
+        throw new SyntaxError("TAP stream ends inside a YAML diagnostic");
     return out;
 }
 //# sourceMappingURL=tap.js.map

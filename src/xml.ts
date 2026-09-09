@@ -10,7 +10,17 @@ export function xmlUnescape(s: unknown): string {
         .replace(/&quot;/g, '"')
         .replace(/&#39;/g, "'")
         .replace(/&apos;/g, "'")
+        // Numeric references are as legal as the named ones, and a runner that
+        // encodes a character this way means the character, not its spelling.
+        .replace(/&#x([0-9a-f]+);/gi, (_m, hex: string) => codePoint(parseInt(hex, 16)))
+        .replace(/&#(\d+);/g, (_m, dec: string) => codePoint(Number(dec)))
         .replace(/&amp;/g, "&");
+}
+
+// A reference to something Unicode has no character for is dropped rather than
+// throwing over one character of a report.
+function codePoint(value: number): string {
+    return value >= 0 && value <= 0x10FFFF ? String.fromCodePoint(value) : "";
 }
 
 // Read one attribute out of a tag's raw attribute text. Accepts both quoting
@@ -252,17 +262,25 @@ function isMisc(text: string): boolean {
 }
 
 // Index just past a "<!DOCTYPE ...>", stepping over one internal subset so a
-// ">" declared inside it does not end the doctype early.
+// ">" declared inside it does not end the doctype early. Quote-aware, because
+// a "]" can legally sit inside an entity's replacement text.
 function doctypeEnd(text: string, from: number): number {
     let i = from;
+    let quote = "";
+    let subset = false;
     while (i < text.length) {
-        if (text[i] === "[") {
-            const close = text.indexOf("]", i + 1);
-            if (close < 0) return -1;
-            i = close + 1;
-            continue;
+        const ch = text[i];
+        if (quote) {
+            if (ch === quote) quote = "";
+        } else if (ch === '"' || ch === "'") {
+            quote = ch;
+        } else if (ch === "[") {
+            subset = true;
+        } else if (ch === "]") {
+            subset = false;
+        } else if (ch === ">" && !subset) {
+            return i + 1;
         }
-        if (text[i] === ">") return i + 1;
         i++;
     }
     return -1;

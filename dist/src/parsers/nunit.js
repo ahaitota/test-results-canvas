@@ -1,28 +1,40 @@
 // NUnit 3 result XML: <test-run> / nested <test-suite> / <test-case>.
 import { attr, parseXml, child, childText } from "../xml.js";
 import { joinMessage } from "./json.js";
+// The outcomes NUnit writes, across versions 2 and 3. Anything else is not a
+// result this report can be read without: defaulting it to "skip" would take a
+// failure off the run.
+const STATUS = new Map([
+    ["passed", "pass"], ["success", "pass"], ["warning", "pass"],
+    ["failed", "fail"], ["failure", "fail"], ["error", "fail"],
+    ["skipped", "skip"], ["ignored", "skip"], ["inconclusive", "skip"], ["notrunnable", "skip"],
+]);
 function status(result) {
-    const r = String(result || "").toLowerCase();
-    // NUnit 2 spells the same outcomes Success/Failure on <test-case>.
-    if (r === "passed" || r === "success")
-        return "pass";
-    if (r === "failed" || r === "failure" || r === "error")
-        return "fail";
-    // A warning is a test that ran and did not fail; counting it as skipped
-    // would take it out of the pass rate it belongs in. Its diagnostics are
-    // kept on the row.
-    if (r === "warning")
-        return "pass";
-    return "skip";
+    return STATUS.get(String(result || "").toLowerCase());
 }
 function seconds(value) {
     const n = parseFloat(value ?? "");
     return Number.isFinite(n) ? Math.round(n * 1000) : undefined;
 }
-function emit(el, suite, out) {
+// One <test-case>, which must be readable in full: a case with no name or an
+// outcome this does not know is one the run cannot account for, and dropping it
+// would leave a shorter, greener report behind.
+function emitCase(el, suite, out) {
     const name = attr(el.attrs, "name");
-    if (!name)
-        return;
+    const outcome = status(attr(el.attrs, "result"));
+    if (!name || !outcome) {
+        throw new SyntaxError("nunit test-case is missing its name or a known result");
+    }
+    const failure = child(el, "failure");
+    emitRow(el, name, failure ? "fail" : outcome, suite, out);
+}
+// A suite reports itself under whatever outcome it carries.
+function emitSuite(el, suite, out) {
+    const name = attr(el.attrs, "name");
+    if (name)
+        emitRow(el, name, "fail", suite, out);
+}
+function emitRow(el, name, status, suite, out) {
     const failure = child(el, "failure");
     const detail = failure ?? child(el, "reason");
     // A warning records itself as an assertion rather than a reason, and that
@@ -30,7 +42,7 @@ function emit(el, suite, out) {
     const assertion = child(child(el, "assertions"), "assertion");
     out.push({
         name,
-        status: status(attr(el.attrs, "result")),
+        status,
         durationMs: seconds(attr(el.attrs, "duration") ?? attr(el.attrs, "time")),
         message: joinMessage(childText(detail, "message") ?? childText(assertion, "message"), childText(failure, "stack-trace")),
         className: attr(el.attrs, "classname"),
@@ -65,7 +77,7 @@ function walk(el, suite, out) {
     let failures = 0;
     for (const c of el.children) {
         if (c.name === "test-case") {
-            emit(c, suite, out);
+            emitCase(c, suite, out);
             if (out[out.length - 1]?.status === "fail")
                 failures++;
             continue;
@@ -81,7 +93,7 @@ function walk(el, suite, out) {
         // and a fixture that blows up in OneTimeSetUp -- or an assembly that
         // fails to load -- has no case to carry its failure at all.
         if (ownFailure(c) || (failed && !inherited && !inner)) {
-            emit(c, suite, out);
+            emitSuite(c, suite, out);
             failures++;
         }
         failures += inner;

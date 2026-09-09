@@ -48,7 +48,14 @@ function fixtures(t, out) {
         for (const entry of arr(t, key)) {
             const fixture = rec(entry);
             const name = str(fixture, "name");
-            if (!name || status(str(fixture, "status")) !== "fail")
+            const outcome = str(fixture, "status");
+            // A fixture this cannot read is one the run cannot account for: the
+            // broken teardown with no name is exactly the failure that would
+            // otherwise vanish and leave the folder looking green.
+            if (!fixture || !name || !outcome || !ALLURE_STATUS.has(outcome.toLowerCase())) {
+                throw new SyntaxError("allure fixture is missing its name or a known status");
+            }
+            if (status(outcome) !== "fail")
                 continue;
             const start = num(fixture, "start");
             const stop = num(fixture, "stop");
@@ -115,15 +122,12 @@ export function isAllureRunFile(abs) {
 export function expandAllure(abs) {
     if (!isAllureRunFile(abs))
         return [abs];
-    try {
-        const dir = dirname(abs);
-        const names = readdirSync(dir);
-        const of = (suffix) => names.filter((n) => n.endsWith(suffix)).sort().map((n) => join(dir, n));
-        const results = of(RESULT_SUFFIX);
-        return results.length ? [...results, ...of(CONTAINER_SUFFIX)] : [abs];
-    }
-    catch {
-        return [abs];
-    }
+    // A folder that cannot be listed is a run that cannot be read. Falling back
+    // to this one file would present a single result as the whole directory.
+    const dir = dirname(abs);
+    const names = readdirSync(dir);
+    const of = (suffix) => names.filter((n) => n.endsWith(suffix)).sort().map((n) => join(dir, n));
+    const results = of(RESULT_SUFFIX);
+    return results.length ? [...results, ...of(CONTAINER_SUFFIX)] : [abs];
 }
 //# sourceMappingURL=allure.js.map

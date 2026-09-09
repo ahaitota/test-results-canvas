@@ -48,6 +48,12 @@ export function parseGoTest(text) {
             }
             continue;
         }
+        // A package reports its own outcome last, so anything after that is a
+        // second run appended to the same file. Which run each row belongs to
+        // is then anyone's guess, and a half-written one could pass for whole.
+        if (pkg && packagesDone.has(pkg)) {
+            throw new SyntaxError(`go test stream continues after ${pkg} finished`);
+        }
         const key = `${pkg ?? ""}\u0000${test}`;
         if (action === "run") {
             started.set(key, str(event, "Time") ?? "");
@@ -79,6 +85,13 @@ export function parseGoTest(text) {
             continue;
         row.message = (output.get(key) ?? []).join("").trim() || undefined;
     }
+    // The packages a test already failed in, so the package rows below do not
+    // rescan every result for each of them.
+    const failedInPackage = new Set();
+    for (const row of rows.values()) {
+        if (row.status === "fail" && row.suite)
+            failedInPackage.add(row.suite);
+    }
     // A test that started and never reached a terminal event means the stream
     // stops mid-run. Returning the tests that did finish would show a green
     // subset of a run whose outcome is not known yet.
@@ -96,7 +109,7 @@ export function parseGoTest(text) {
     // fails whenever one of its tests does, and a second row would double-count
     // an outcome the run already shows.
     for (const [pkg, at] of packageFailed) {
-        if ([...rows.values()].some((r) => r.suite === pkg && r.status === "fail"))
+        if (failedInPackage.has(pkg))
             continue;
         rows.set(`${pkg}\u0000`, {
             name: pkg,

@@ -33,11 +33,14 @@ export function parseCTest(xml: string): TestResult[] {
             }
             const results = child(test, "Results");
             const seconds = Number(measurement(results, "Execution Time"));
+            // CTest's reason for stopping. A test that ran to the end and then
+            // returned non-zero says "Completed", which is no reason at all.
+            const reason = measurement(results, "Completion Status");
             out.push({
                 name,
                 status,
                 durationMs: Number.isFinite(seconds) ? Math.round(seconds * 1000) : undefined,
-                message: status === "fail" ? joinMessage(measurement(results, "Exception"), childText(child(results, "Measurement"), "Value")) : undefined,
+                message: status === "fail" ? joinMessage(reason === "Completed" ? undefined : reason, childText(child(results, "Measurement"), "Value")) : undefined,
                 suite: childText(test, "Path"),
                 framework: "CTest",
                 startTime,

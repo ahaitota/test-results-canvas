@@ -2,13 +2,16 @@
 // `cargo nextest run --message-format libtest-json`: one event per line.
 
 import type { TestResult, TestStatus } from "../types.js";
-import { jsonLines, str, num } from "./json.js";
+import { jsonLines, str, num, joinMessage } from "./json.js";
 
 function status(event: string): TestStatus | null {
     if (event === "ok") return "pass";
-    if (event === "failed" || event === "timeout") return "fail";
+    if (event === "failed") return "fail";
     if (event === "ignored") return "skip";
-    return null; // "started"
+    // "started" opens a test; "timeout" only reports that one is taking a
+    // while, and the outcome still follows. Treating it as a failure both
+    // invented a row and left the real one to disagree with the suite's count.
+    return null;
 }
 
 export function parseRustJson(text: string): TestResult[] {
@@ -35,6 +38,7 @@ export function parseRustJson(text: string): TestResult[] {
         if (!name) continue;
         const outcome = status(str(event, "event") ?? "");
         if (!outcome) {
+            // Both "started" and "timeout" leave the test open.
             running.add(name);
             continue;
         }
@@ -45,7 +49,7 @@ export function parseRustJson(text: string): TestResult[] {
             name,
             status: outcome,
             durationMs: secs == null ? undefined : Math.round(secs * 1000),
-            message: outcome === "pass" ? undefined : (str(event, "stdout") ?? str(event, "message")),
+            message: outcome === "pass" ? undefined : joinMessage(str(event, "stdout"), str(event, "message"), str(event, "reason")),
             className: path.length > 1 ? path.slice(0, -1).join("::") : undefined,
             method: path[path.length - 1],
             suite: path.length > 1 ? path[0] : undefined,
@@ -54,8 +58,7 @@ export function parseRustJson(text: string): TestResult[] {
     }
     // A test that started and never reported an outcome means the stream stops
     // mid-run, so what it does hold is not the whole run.
-    if (running.size) throw new SyntaxError("libtest stream ends with a test still running");
-    // Each suite closes with its own terminal event, and says up front how many
+    if (running.size) throw new SyntaxError("libtest stream ends with a test still running");    // Each suite closes with its own terminal event, and says up front how many
     // tests to expect -- both of which a snapshot taken between tests fails.
     if (suitesStarted !== suitesEnded) throw new SyntaxError("libtest stream ends before the suite finished");
     if (suitesStarted && expected !== out.length) throw new SyntaxError(`libtest suite declared ${expected} tests, reported ${out.length}`);

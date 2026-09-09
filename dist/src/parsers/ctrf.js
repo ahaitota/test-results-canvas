@@ -26,6 +26,7 @@ export function parseCtrf(text) {
     }
     const tool = str(rec(results.tool), "name");
     const out = [];
+    let failed = 0;
     for (const entry of results.tests) {
         const t = rec(entry);
         const name = str(t, "name");
@@ -35,12 +36,16 @@ export function parseCtrf(text) {
         if (!t || !name || !outcome || !STATUS.has(outcome.toLowerCase())) {
             throw new SyntaxError("ctrf test is missing its name or a known status");
         }
+        if (outcome.toLowerCase() === "failed")
+            failed++;
         out.push({
             name,
             status: status(outcome),
             durationMs: num(t, "duration"),
             message: joinMessage(str(t, "message"), str(t, "trace")),
-            suite: str(t, "suite"),
+            // A suite is a string in the original shape and a path of them in
+            // the current one.
+            suite: suiteOf(t),
             file: str(t, "filePath"),
             framework: tool,
             startTime: iso(num(t, "start")),
@@ -48,11 +53,28 @@ export function parseCtrf(text) {
         });
     }
     // The report counts itself, so a mismatch means rows went missing between
-    // the runner writing the summary and this file being read.
-    const declared = num(rec(results.summary), "tests");
+    // the runner writing the summary and this file being read -- and a summary
+    // claiming failures none of its tests admit to is the same disagreement
+    // pointing the other way.
+    const summary = rec(results.summary);
+    const declared = num(summary, "tests");
     if (declared != null && declared !== out.length) {
         throw new SyntaxError(`ctrf summary declared ${declared} tests, found ${out.length}`);
     }
+    const declaredFailed = num(summary, "failed");
+    if (declaredFailed != null && declaredFailed !== failed) {
+        throw new SyntaxError(`ctrf summary declared ${declaredFailed} failures, found ${failed}`);
+    }
     return out;
+}
+// CTRF 1.0 carries the suite as an array of names from the root down; the
+// original shape used a single string.
+function suiteOf(t) {
+    const raw = t.suite;
+    if (Array.isArray(raw)) {
+        const path = raw.filter((s) => typeof s === "string" && s !== "");
+        return path.length ? path.join(" > ") : undefined;
+    }
+    return str(t, "suite");
 }
 //# sourceMappingURL=ctrf.js.map

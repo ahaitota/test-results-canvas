@@ -9,7 +9,7 @@ import { dirname, resolve } from "node:path";
 import type { TestResult } from "../types.js";
 import { HEAD_BYTES, readHead } from "../head.js";
 import { attr, rootTag, hasElement, isWellFormed } from "../xml.js";
-import { topLevelFields } from "./json.js";
+import { topLevelFields, firstJsonObject, rec } from "./json.js";
 import { parseTrx } from "./trx.js";
 import { parseJUnit } from "./junit.js";
 import { parseNUnit } from "./nunit.js";
@@ -54,13 +54,48 @@ function root(head: string, ...names: string[]): boolean {
     return name !== undefined && names.includes(name);
 }
 
+const ALLURE_STATUS_VALUES = ALLURE_STATUS;
+
 // An Allure *result*: its own status and name at the top level. A container
 // (`*-container.json`) has a uuid and a name too, but its statuses belong to the
 // fixtures nested inside it.
 function isAllureResult(head: string): boolean {
     const top = topLevelFields(head);
-    if (!top.has("uuid") || !ALLURE_STATUS.has(top.get("status") ?? "")) return false;
+    if (!top.has("uuid") || !ALLURE_STATUS_VALUES.has(top.get("status") ?? "")) return false;
     return top.has("name") || top.has("fullName");
+}
+
+// The event streams are one JSON object per line, so what a document IS can be
+// read off its first object. Searching the raw text instead would let a key
+// nested in some unrelated JSON -- `{"metadata":{"Action":"pass"}}` -- claim
+// the file and blank the panel with an empty run.
+const GO_ACTIONS = new Set(["start", "run", "output", "pass", "fail", "skip", "build-output", "build-fail"]);
+// Dart's own event names. "suite" is deliberately not among them: Rust opens
+// with a "suite" event too, and the two are told apart below by what the event
+// carries rather than by which parser is asked first.
+const DART_TYPES = new Set(["start", "testStart", "testDone", "allSuites", "group"]);
+const RUST_TYPES = new Set(["suite", "test", "bench"]);
+
+function isGoEvent(head: string): boolean {
+    const first = firstJsonObject(head);
+    return typeof first?.Action === "string" && GO_ACTIONS.has(first.Action);
+}
+
+function isDartEvent(head: string): boolean {
+    const first = firstJsonObject(head);
+    if (!first) return false;
+    if (typeof first.protocolVersion === "string") return true;
+    if (typeof first.type !== "string") return false;
+    // Dart's suite event carries the suite it describes; Rust's carries an
+    // outcome.
+    return DART_TYPES.has(first.type) || (first.type === "suite" && rec(first.suite) !== undefined);
+}
+
+function isRustEvent(head: string): boolean {
+    const first = firstJsonObject(head);
+    // Key order is the runner's business, so the pair is read as fields rather
+    // than matched as adjacent text.
+    return typeof first?.type === "string" && RUST_TYPES.has(first.type) && typeof first.event === "string";
 }
 
 export const PARSERS: readonly Parser[] = [
@@ -72,13 +107,13 @@ export const PARSERS: readonly Parser[] = [
     // <Site> is also the root of CTest's Build.xml and Coverage.xml, so the
     // testing section has to be there as well.
     { id: "ctest", ...XML, detect: (h) => root(h, "site") && hasElement(h, "Testing"), parse: parseCTest },
-    // CTRF needs a marker it owns: Playwright's JSON report nests "results" and
-    // "tests" too.
-    { id: "ctrf", exts: [".json"], detect: (h) => /"reportFormat"\s*:\s*"CTRF"/i.test(h) || (/"tool"\s*:\s*\{/.test(h) && /"tests"\s*:\s*\[/.test(h)), parse: parseCtrf },
+    // CTRF names itself. The nested tool/tests shape alone is not enough: an
+    // application's own JSON can hold both and would blank the panel.
+    { id: "ctrf", exts: [".json"], detect: (h) => (topLevelFields(h).get("reportFormat") ?? "").toUpperCase() === "CTRF", parse: parseCtrf },
     { id: "allure", exts: [".json"], detect: isAllureResult, parse: parseAllure, expand: expandAllure, groups: isAllureRunFile },
-    { id: "gotest", exts: JSONL, detect: (h) => /"Action"\s*:\s*"(run|output|pass|fail|skip|build-output|build-fail)"/.test(h), parse: parseGoTest },
-    { id: "dart", exts: JSONL, detect: (h) => /"type"\s*:\s*"(testStart|testDone)"/.test(h) || /"protocolVersion"\s*:/.test(h), parse: parseDart },
-    { id: "rust", exts: JSONL, detect: (h) => /"type"\s*:\s*"(suite|test)"\s*,\s*"event"\s*:/.test(h), parse: parseRustJson },
+    { id: "gotest", exts: JSONL, detect: isGoEvent, parse: parseGoTest },
+    { id: "dart", exts: JSONL, detect: isDartEvent, parse: parseDart },
+    { id: "rust", exts: JSONL, detect: isRustEvent, parse: parseRustJson },
     { id: "tap", exts: [".tap"], detect: (h) => /^\s*TAP version \d/im.test(h) || (/^\s*\d+\.\.\d+\s*$/m.test(h) && /^\s*(not\s+)?ok\b/m.test(h)), parse: parseTap },
 ];
 
@@ -172,9 +207,16 @@ function detectAt(abs: string): Parser | undefined {
 }
 
 // Which format a file on disk is, or undefined when nothing claims it. Lets a
-// caller keep a source on the kind of report it started as.
-export function formatIdAt(abs: string): string | undefined {
-    return detectAt(abs)?.id;
+// caller keep a source on the kind of report it started as. `scope` matches
+// detectParser: a scan judges the head, while a file being opened as a source
+// is read whole, so a report whose format only shows up later still has one.
+export function formatIdAt(abs: string, scope: "head" | "full" = "head"): string | undefined {
+    if (scope === "head") return detectAt(abs)?.id;
+    try {
+        return detectParser(readFileSync(abs, "utf8"), "full")?.id;
+    } catch {
+        return undefined;
+    }
 }
 
 // One key per file, whatever spelling the caller used. A symlink, a Windows

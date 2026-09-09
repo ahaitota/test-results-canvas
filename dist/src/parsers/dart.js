@@ -23,6 +23,10 @@ export function parseDart(text) {
         const type = str(event, "type");
         if (type === "done") {
             sawDone = true;
+            // `success` is how the runner reports the verdict; null means the
+            // run was interrupted, which is not a run to present as finished.
+            if (typeof event.success !== "boolean")
+                throw new SyntaxError("dart run did not report whether it succeeded");
             failedRun = event.success === false;
             continue;
         }
@@ -38,8 +42,9 @@ export function parseDart(text) {
             const test = rec(event.test);
             const id = num(test, "id");
             const name = str(test, "name");
+            // An event this cannot read is a test the run cannot account for.
             if (id == null || !name)
-                continue;
+                throw new SyntaxError("dart testStart is missing its id or name");
             const suiteId = num(test, "suiteID");
             const path = suiteId == null ? undefined : suites.get(suiteId);
             tests.set(id, {

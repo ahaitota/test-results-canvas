@@ -24,6 +24,19 @@ const SAMPLES: [string, string][] = [
   ["tap", `TAP version 13\n1..1\nok 1 - a\n`],
 ];
 
+test("detection reads a stream's first event, not any key that looks like one", () => {
+  // An application's own JSON holding a matching key nested somewhere would
+  // otherwise claim the file and blank the panel with an empty run.
+  assert.equal(id(`{"metadata":{"Action":"pass"}}`), undefined);
+  assert.equal(id(`{"plugin":{"type":"suite","event":"ok"}}`), undefined);
+  assert.equal(id(`{"tool":{},"results":{"tests":[{"name":"health","status":"passed"}]}}`), undefined);
+  // And key order is the runner's business.
+  assert.equal(id(`{"event":"started","type":"suite","test_count":1}`), "rust");
+  // Dart and Rust both open with a "suite" event; what it carries tells them
+  // apart, not which parser is asked first.
+  assert.equal(id(`{"type":"suite","suite":{"id":0,"path":"test/a_test.dart"}}`), "dart");
+});
+
 test("detectParser routes each format to its own parser", () => {
   for (const [expected, text] of SAMPLES) assert.equal(id(text), expected, expected);
 });
@@ -142,6 +155,13 @@ test("parseResults rejects XML that is not well formed", () => {
   // The declaration, a doctype and comments around the root are still fine.
   const framed = `<?xml version="1.0"?>\n<!DOCTYPE testsuites>\n<!-- run -->\n<testsuites><testsuite name="s"><testcase name="x" /></testsuite></testsuites>\n<!-- end -->\n`;
   assert.equal(parseResults(framed)?.length, 1);
+  // A doctype whose internal subset quotes a "]" is still one doctype.
+  assert.equal(parseResults(`<!DOCTYPE testsuites [<!ENTITY x "a]b">]>\n<testsuites><testsuite name="s"><testcase name="x" /></testsuite></testsuites>`)?.length, 1);
+  // Numeric character references mean the character they encode.
+  assert.deepEqual(parseResults(`<testsuites><testsuite name="s"><testcase name="a&#66;c" /></testsuite></testsuites>`)?.map((r) => r.name), ["aBc"]);
+  assert.deepEqual(parseResults(`<testsuites><testsuite name="s"><testcase name="a&#x42;c" /></testsuite></testsuites>`)?.map((r) => r.name), ["aBc"]);
+  // Out of Unicode's range, so there is no character to put there.
+  assert.deepEqual(parseResults(`<testsuites><testsuite name="s"><testcase name="a&#9999999;c" /></testsuite></testsuites>`)?.map((r) => r.name), ["ac"]);
 });
 
 test("parseResults rejects XML that was caught half-written", () => {

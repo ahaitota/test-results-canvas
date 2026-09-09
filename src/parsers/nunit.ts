@@ -5,16 +5,17 @@ import { attr, parseXml, child, childText } from "../xml.js";
 import type { XmlElement } from "../xml.js";
 import { joinMessage } from "./json.js";
 
-function status(result: string | undefined): TestStatus {
-    const r = String(result || "").toLowerCase();
-    // NUnit 2 spells the same outcomes Success/Failure on <test-case>.
-    if (r === "passed" || r === "success") return "pass";
-    if (r === "failed" || r === "failure" || r === "error") return "fail";
-    // A warning is a test that ran and did not fail; counting it as skipped
-    // would take it out of the pass rate it belongs in. Its diagnostics are
-    // kept on the row.
-    if (r === "warning") return "pass";
-    return "skip";
+// The outcomes NUnit writes, across versions 2 and 3. Anything else is not a
+// result this report can be read without: defaulting it to "skip" would take a
+// failure off the run.
+const STATUS = new Map<string, TestStatus>([
+    ["passed", "pass"], ["success", "pass"], ["warning", "pass"],
+    ["failed", "fail"], ["failure", "fail"], ["error", "fail"],
+    ["skipped", "skip"], ["ignored", "skip"], ["inconclusive", "skip"], ["notrunnable", "skip"],
+]);
+
+function status(result: string | undefined): TestStatus | undefined {
+    return STATUS.get(String(result || "").toLowerCase());
 }
 
 function seconds(value: string | undefined): number | undefined {
@@ -22,9 +23,26 @@ function seconds(value: string | undefined): number | undefined {
     return Number.isFinite(n) ? Math.round(n * 1000) : undefined;
 }
 
-function emit(el: XmlElement, suite: string | undefined, out: TestResult[]): void {
+// One <test-case>, which must be readable in full: a case with no name or an
+// outcome this does not know is one the run cannot account for, and dropping it
+// would leave a shorter, greener report behind.
+function emitCase(el: XmlElement, suite: string | undefined, out: TestResult[]): void {
     const name = attr(el.attrs, "name");
-    if (!name) return;
+    const outcome = status(attr(el.attrs, "result"));
+    if (!name || !outcome) {
+        throw new SyntaxError("nunit test-case is missing its name or a known result");
+    }
+    const failure = child(el, "failure");
+    emitRow(el, name, failure ? "fail" : outcome, suite, out);
+}
+
+// A suite reports itself under whatever outcome it carries.
+function emitSuite(el: XmlElement, suite: string | undefined, out: TestResult[]): void {
+    const name = attr(el.attrs, "name");
+    if (name) emitRow(el, name, "fail", suite, out);
+}
+
+function emitRow(el: XmlElement, name: string, status: TestStatus, suite: string | undefined, out: TestResult[]): void {
     const failure = child(el, "failure");
     const detail = failure ?? child(el, "reason");
     // A warning records itself as an assertion rather than a reason, and that
@@ -32,7 +50,7 @@ function emit(el: XmlElement, suite: string | undefined, out: TestResult[]): voi
     const assertion = child(child(el, "assertions"), "assertion");
     out.push({
         name,
-        status: status(attr(el.attrs, "result")),
+        status,
         durationMs: seconds(attr(el.attrs, "duration") ?? attr(el.attrs, "time")),
         message: joinMessage(childText(detail, "message") ?? childText(assertion, "message"), childText(failure, "stack-trace")),
         className: attr(el.attrs, "classname"),
@@ -69,7 +87,7 @@ function walk(el: XmlElement, suite: string | undefined, out: TestResult[]): num
     let failures = 0;
     for (const c of el.children) {
         if (c.name === "test-case") {
-            emit(c, suite, out);
+            emitCase(c, suite, out);
             if (out[out.length - 1]?.status === "fail") failures++;
             continue;
         }
@@ -84,7 +102,7 @@ function walk(el: XmlElement, suite: string | undefined, out: TestResult[]): num
         // and a fixture that blows up in OneTimeSetUp -- or an assembly that
         // fails to load -- has no case to carry its failure at all.
         if (ownFailure(c) || (failed && !inherited && !inner)) {
-            emit(c, suite, out);
+            emitSuite(c, suite, out);
             failures++;
         }
         failures += inner;

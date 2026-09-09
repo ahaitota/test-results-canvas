@@ -21,6 +21,22 @@ export function arr(from: Rec | undefined, key: string): unknown[] {
     return Array.isArray(v) ? v : [];
 }
 
+// The first JSON object a line-delimited stream holds. A head can stop
+// mid-line, so an unparseable line is stepped over rather than failing the
+// whole read. Detection uses this rather than searching the raw text: a key
+// nested inside some other document says nothing about what the document IS.
+export function firstJsonObject(text: string): Rec | undefined {
+    for (const line of String(text || "").split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("{")) continue;
+        try {
+            const parsed = rec(JSON.parse(trimmed));
+            if (parsed) return parsed;
+        } catch { /* truncated, or not an object */ }
+    }
+    return undefined;
+}
+
 // Objects from a JSONL/NDJSON stream. Runners interleave plain text (build
 // errors, panics) with their JSON events, so a line that is not an object is
 // skipped -- but a line that *starts* like one and will not parse means the file

@@ -123,6 +123,16 @@ test("parseNUnit reports a run that failed before any suite did", () => {
   assert.equal(rows[0].message, "Could not load file or assembly");
 });
 
+test("parseNUnit rejects a case missing its name or a known result, and lets a failure speak", () => {
+  const wrap = (cases: string) => `<test-run id="1"><test-suite name="s">${cases}</test-suite></test-run>`;
+  // The nameless failure would otherwise vanish, leaving one passing test.
+  assert.throws(() => parseNUnit(wrap(`<test-case name="ok" result="Passed" /><test-case result="Failed"><failure><message>boom</message></failure></test-case>`)));
+  assert.throws(() => parseNUnit(wrap(`<test-case name="a" result="Exploded" />`)));
+  // A case carrying a failure failed, whatever its result attribute claims.
+  const rows = parseNUnit(wrap(`<test-case name="a" result="Passed"><failure><message>boom</message></failure></test-case>`));
+  assert.deepEqual(rows.map((r) => [r.name, r.status]), [["a", "fail"]]);
+});
+
 test("parseNUnit counts a warning as a test that ran, keeping what it warned about", () => {
   // A warning is not a failure and not a test nobody ran; calling it skipped
   // takes it out of the pass rate it belongs in.
@@ -190,6 +200,13 @@ test("parseXunit rejects a record missing its name or outcome, and never calls a
   // A record that carries a failure failed, whatever it says of itself.
   const rows = parseXunit(assembly(`<test name="boom" result="Skip"><failure><message>bad</message></failure></test>`));
   assert.deepEqual(rows.map((r) => [r.name, r.status]), [["boom", "fail"]]);
+});
+
+test("parseXunit rejects an assembly declaring errors it does not record", () => {
+  // An assembly-level error is a failure no test carries, so one it counts but
+  // does not write down is a failure that would simply vanish.
+  assert.throws(() => parseXunit(`<assemblies><assembly name="a.dll" errors="1" passed="1" failed="0" skipped="0"><collection name="c"><test name="ok" result="Pass" /></collection></assembly></assemblies>`));
+  assert.equal(parseXunit(`<assemblies><assembly name="a.dll" errors="0" passed="1" failed="0" skipped="0"><collection name="c"><test name="ok" result="Pass" /></collection></assembly></assemblies>`).length, 1);
 });
 
 test("parseXunit rejects an assembly whose own counters do not match its tests", () => {
@@ -330,7 +347,8 @@ const CTEST = `<?xml version="1.0" encoding="UTF-8"?>
       <Name>subtracts</Name><Path>./calc</Path>
       <Results>
         <NamedMeasurement type="numeric/double" name="Execution Time"><Value>0.015</Value></NamedMeasurement>
-        <NamedMeasurement type="text/string" name="Exception"><Value>SegFault</Value></NamedMeasurement>
+        <NamedMeasurement type="text/string" name="Exit Code"><Value>SegFault</Value></NamedMeasurement>
+        <NamedMeasurement type="text/string" name="Completion Status"><Value>SegFault</Value></NamedMeasurement>
         <Measurement><Value>assertion failed</Value></Measurement>
       </Results>
     </Test>
@@ -349,10 +367,17 @@ test("parseCTest reads outcomes and ignores the TestList entries", () => {
   assert.equal(rows[1].message, "SegFault\nassertion failed");
 });
 
+test("parseCTest keeps the output when the reason is only that the test ended", () => {
+  // A test that runs to the end and returns non-zero completes, so its
+  // "Completion Status" says nothing the status column doesn't already.
+  const xml = `<Site><Testing><Test Status="failed"><Name>a</Name><Results><NamedMeasurement name="Completion Status"><Value>Completed</Value></NamedMeasurement><Measurement><Value>assertion failed</Value></Measurement></Results></Test></Testing></Site>`;
+  assert.equal(parseCTest(xml)[0].message, "assertion failed");
+});
+
 test("parseCTest rejects a result missing its name or a known status", () => {
   // Dropping either would take a failure off the run and leave a shorter,
   // greener report behind.
-  assert.throws(() => parseCTest(`<Site><Testing><Test Status="failed"><Results><NamedMeasurement name="Exception"><Value>boom</Value></NamedMeasurement></Results></Test></Testing></Site>`));
+  assert.throws(() => parseCTest(`<Site><Testing><Test Status="failed"><Results><Measurement><Value>boom</Value></Measurement></Results></Test></Testing></Site>`));
   assert.throws(() => parseCTest(`<Site><Testing><Test Status="exploded"><Name>a</Name></Test></Testing></Site>`));
   // The outcomes CTest does write are all read.
   const rows = parseCTest(`<Site><Testing><Test Status="notrun"><Name>a</Name></Test><Test Status="disabled"><Name>b</Name></Test></Testing></Site>`);
@@ -434,6 +459,10 @@ ok 2 - never ran
 `);
   assert.deepEqual(rows.map((r) => [r.name, r.status]), [["connected", "pass"], ["Bail out!", "fail"]]);
   assert.equal(rows[1].message, "database unavailable");
+});
+
+test("parseTap rejects a stream cut inside a diagnostic block", () => {
+  assert.throws(() => parseTap("TAP version 13\n1..1\nok 1 - green\n  ---\n  message: still being written\n"));
 });
 
 test("parseTap fails a stream that ends short of its plan", () => {
@@ -540,6 +569,19 @@ test("parseCtrf rejects a report with no results.tests array", () => {
   assert.throws(() => parseCtrf(`{"reportFormat":"CTRF","results":{}}`));
   assert.throws(() => parseCtrf(`{"reportFormat":"CTRF","results":{"tests":{}}}`));
   assert.throws(() => parseCtrf(`{"reportFormat":"CTRF","results":[]}`));
+});
+
+test("parseCtrf rejects a summary that disagrees with the tests it holds", () => {
+  const report = (summary: string, tests: string) => `{"reportFormat":"CTRF","results":{"tool":{"name":"jest"},"summary":${summary},"tests":[${tests}]}}`;
+  // A summary claiming a failure none of its tests admit to is the same
+  // disagreement as a missing row, pointing the other way.
+  assert.throws(() => parseCtrf(report(`{"tests":1,"passed":1,"failed":1}`, `{"name":"a","status":"passed"}`)));
+  assert.equal(parseCtrf(report(`{"tests":1,"passed":0,"failed":1}`, `{"name":"a","status":"failed"}`)).length, 1);
+});
+
+test("parseCtrf reads a suite path as well as a suite name", () => {
+  const rows = parseCtrf(`{"reportFormat":"CTRF","results":{"tool":{"name":"jest"},"tests":[{"name":"a","status":"passed","suite":["root","calc"]}]}}`);
+  assert.equal(rows[0].suite, "root > calc");
 });
 
 test("parseCtrf returns nothing for a report with no tests", () => {
@@ -653,6 +695,15 @@ test("parseAllure reports a fixture that failed in a container", () => {
   assert.equal(rows[0].durationMs, 15);
 });
 
+test("parseAllure rejects a fixture it cannot read, which would be a lost failure", () => {
+  // The broken teardown with no name is exactly the failure that would
+  // otherwise leave the folder looking green.
+  assert.throws(() => parseAllure(JSON.stringify({
+    uuid: "c", children: ["r"], afters: [{ status: "broken", statusDetails: { message: "cleanup failed" } }],
+  })));
+  assert.throws(() => parseAllure(JSON.stringify({ uuid: "c", children: [], befores: [{ name: "setup", status: "exploded" }] })));
+});
+
 test("parseAllure still rejects a result that only looks like a container", () => {
   // No befores/afters/children, so this is a result missing its status -- not a
   // container, and not something to pass over in silence.
@@ -721,6 +772,17 @@ test("parseGoTest rejects a stream that ends with a test still running", () => {
   ].map((e) => JSON.stringify(e)).join("\n")));
 });
 
+test("parseGoTest rejects a second run appended to a finished one", () => {
+  // A package reports its own outcome last, so anything after that belongs to
+  // another run -- and which rows belong to which is then anyone's guess.
+  assert.throws(() => parseGoTest([
+    { Action: "run", Package: "p", Test: "TestA" },
+    { Action: "pass", Package: "p", Test: "TestA", Elapsed: 0.01 },
+    { Action: "pass", Package: "p", Elapsed: 0.1 },
+    { Action: "run", Package: "p", Test: "TestB" },
+  ].map((e) => JSON.stringify(e)).join("\n")));
+});
+
 test("parseGoTest rejects a stream cut between two tests", () => {
   // TestA is complete, so only the package's missing terminal event shows that
   // the run had not finished.
@@ -771,7 +833,7 @@ test("parseRustJson reads test events and splits the module path", () => {
   assert.equal(rows[0].durationMs, 42);
   assert.equal(rows[0].className, "calc");
   assert.equal(rows[0].method, "adds");
-  assert.equal(rows[1].message, "assertion failed: 1 == 2\n");
+  assert.equal(rows[1].message, "assertion failed: 1 == 2");
 });
 
 test("parseDart fails a test whose error arrives after it was reported done", () => {
@@ -797,6 +859,20 @@ test("parseDart reports a failed run that no test admits to", () => {
   assert.deepEqual(rows.map((r) => [r.name, r.status]), [["adds", "pass"], ["dart test run failed", "fail"]]);
 });
 
+test("parseDart rejects a run that did not report whether it succeeded", () => {
+  // `success` is the verdict; null means the run was interrupted, which is not
+  // a run to present as finished.
+  assert.throws(() => parseDart([
+    { type: "testStart", test: { id: 1, name: "a" }, time: 0 },
+    { type: "testDone", testID: 1, result: "success", hidden: false, time: 1 },
+    { type: "done", time: 2 },
+  ].map((e) => JSON.stringify(e)).join("\n")));
+});
+
+test("parseDart rejects a testStart it cannot read", () => {
+  assert.throws(() => parseDart(`{"type":"testStart","test":{"id":1},"time":0}\n{"type":"done","success":true,"time":1}`));
+});
+
 test("parseDart rejects a stream that ends with a test still running", () => {
   assert.throws(() => parseDart([
     { type: "suite", suite: { id: 0, path: "test/calc_test.dart" } },
@@ -804,6 +880,19 @@ test("parseDart rejects a stream that ends with a test still running", () => {
     { type: "testDone", testID: 1, result: "success", hidden: false, time: 5 },
     { type: "testStart", test: { id: 2, name: "subtracts", suiteID: 0 }, time: 6 },
   ].map((e) => JSON.stringify(e)).join("\n")));
+});
+
+test("parseRustJson leaves a timed-out test running rather than failing it twice", () => {
+  // libtest reports a timeout to say a test is taking a while; its outcome
+  // still follows. Counting it invented a row and broke the suite's own count.
+  const rows = parseRustJson([
+    { type: "suite", event: "started", test_count: 1 },
+    { type: "test", event: "started", name: "calc::slow" },
+    { type: "test", event: "timeout", name: "calc::slow" },
+    { type: "test", event: "ok", name: "calc::slow", exec_time: 61 },
+    { type: "suite", event: "ok", passed: 1 },
+  ].map((e) => JSON.stringify(e)).join("\n"));
+  assert.deepEqual(rows.map((r) => [r.name, r.status]), [["calc::slow", "pass"]]);
 });
 
 test("parseRustJson rejects a stream that ends with a test still running", () => {
