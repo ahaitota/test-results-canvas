@@ -15,7 +15,7 @@ export declare function looksLikeResults(text: unknown): boolean;
 export declare function parseResults(text: string): TestResult[] | null;
 export declare function parseResultsAt(abs: string): TestResult[] | null;
 export declare function expandsDirectory(abs: string): boolean;
-export declare function formatIdAt(abs: string, scope?: "head" | "full"): string | undefined;
+export declare function formatIdAt(abs: string): string | undefined;
 export declare function canonicalPath(p: string): string;
 export declare function runKey(abs: string): string;
 export declare function canonicalResultPaths(paths: readonly string[]): string[];

@@ -3,7 +3,7 @@
 //
 // Order is specificity, not preference: the first parser whose signature appears
 // in the file's head wins, so add narrower dialects above broader ones.
-import { readFileSync, realpathSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { HEAD_BYTES, readHead } from "../head.js";
 import { attr, rootTag, hasElement, isWellFormed } from "../xml.js";
@@ -174,28 +174,26 @@ export function expandsDirectory(abs) {
         return false;
     return parser.groups?.(abs) ?? true;
 }
-// The parser that claims the file at `abs`, read from its head alone.
+// The parser that claims the file at `abs`. Judged on its head, and on the
+// whole file only when the head claims nothing and there is more of it to read:
+// grouping and format identity have to agree with what parsing will pick, or a
+// report whose identity appears late is taken for two sources and every row it
+// holds is counted twice.
 function detectAt(abs) {
     try {
-        return detectParser(readHead(abs));
+        const found = detectParser(readHead(abs));
+        if (found || statSync(abs).size <= HEAD_BYTES)
+            return found;
+        return detectParser(readFileSync(abs, "utf8"), "full");
     }
     catch {
         return undefined;
     }
 }
 // Which format a file on disk is, or undefined when nothing claims it. Lets a
-// caller keep a source on the kind of report it started as. `scope` matches
-// detectParser: a scan judges the head, while a file being opened as a source
-// is read whole, so a report whose format only shows up later still has one.
-export function formatIdAt(abs, scope = "head") {
-    if (scope === "head")
-        return detectAt(abs)?.id;
-    try {
-        return detectParser(readFileSync(abs, "utf8"), "full")?.id;
-    }
-    catch {
-        return undefined;
-    }
+// caller keep a source on the kind of report it started as.
+export function formatIdAt(abs) {
+    return detectAt(abs)?.id;
 }
 // One key per file, whatever spelling the caller used. A symlink, a Windows
 // 8.3 short name or a mixed-case alias on a case-insensitive filesystem all

@@ -311,4 +311,48 @@ test.describe("cross-language report formats", () => {
     await expect(page.getByTestId("test-row")).toHaveCount(2);
     await expect(page.getByTestId("test-name").filter({ hasText: "subtracts" })).toBeVisible();
   });
+
+  test("opens an Allure folder whose results only identify themselves late", async ({ page, makeServer }, testInfo) => {
+    // Same run, but nothing in the first 8 KiB of either file says so. Grouping
+    // has to agree with parsing, or each file is taken for a source of its own
+    // and the pair of them expands to every row twice over.
+    const dir = testInfo.outputPath("allure-late");
+    mkdirSync(dir, { recursive: true });
+    const pad = "x".repeat(9000);
+    const first = join(dir, "aaa-result.json");
+    const second = join(dir, "bbb-result.json");
+    writeFileSync(first, `{"description":"${pad}","uuid":"aaa","name":"adds","status":"passed"}`, "utf8");
+    writeFileSync(second, `{"description":"${pad}","uuid":"bbb","name":"subtracts","status":"failed"}`, "utf8");
+
+    const s = await makeServer({ name: "Allure", resultsFiles: [first, second], watch: false });
+    await openCanvas(page, s);
+
+    await expect(page.getByTestId("test-row")).toHaveCount(2);
+  });
+
+  test("merged sources in one folder follow a re-run that renames every file", async ({ page, makeServer }, testInfo) => {
+    // Two projects writing timestamped reports into one folder: the old pair is
+    // gone, so both sources have to re-anchor -- and onto one file each, not
+    // both onto the newest.
+    const dir = testInfo.outputPath("merged-renamed");
+    mkdirSync(dir, { recursive: true });
+    const suite = (name: string) => `<testsuites><testsuite name="s"><testcase name="${name}" /></testsuite></testsuites>`;
+    const billing = join(dir, "billing-1.xml");
+    const shipping = join(dir, "shipping-1.xml");
+    writeFileSync(billing, suite("billingOld"), "utf8");
+    writeFileSync(shipping, suite("shippingOld"), "utf8");
+
+    const s = await makeServer({ name: "Solution", resultsFiles: [billing, shipping], watch: true });
+    await openCanvas(page, s);
+    await expect(page.getByTestId("test-row")).toHaveCount(2);
+
+    rmSync(billing);
+    rmSync(shipping);
+    writeFileSync(join(dir, "billing-2.xml"), suite("billingNew"), "utf8");
+    writeFileSync(join(dir, "shipping-2.xml"), suite("shippingNew"), "utf8");
+
+    await expect(page.getByTestId("test-name").filter({ hasText: "billingNew" })).toBeVisible();
+    await expect(page.getByTestId("test-name").filter({ hasText: "shippingNew" })).toBeVisible();
+    await expect(page.getByTestId("test-row")).toHaveCount(2);
+  });
 });

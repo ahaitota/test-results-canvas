@@ -100,11 +100,6 @@ export function resultsFilesIn(dir: string, accept?: (abs: string) => boolean): 
     return found.sort((a, b) => b.mtimeMs - a.mtimeMs || a.path.localeCompare(b.path)).map((f) => f.path);
 }
 
-// Newest results file directly inside a directory, or null.
-export function newestResultsFileIn(dir: string, accept?: (abs: string) => boolean): string | null {
-    return resultsFilesIn(dir, accept)[0] ?? null;
-}
-
 export function normalizeStatus(raw: unknown): TestStatus {
     const s = String(raw || "").toLowerCase();
     if (s === "pass" || s === "passed" || s === "ok" || s === "success") return "pass";
@@ -817,7 +812,7 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         if (rows === null) return null;
         const label = labelForPath(abs, discovered, listLocalNames());
         discovered.set(label, abs);
-        return { source: { label, path: abs, count: rows.length }, rows, expands: expandsDirectory(abs), format: formatIdAt(abs, "full"), key: canonicalPath(abs), dirSourced };
+        return { source: { label, path: abs, count: rows.length }, rows, expands: expandsDirectory(abs), format: formatIdAt(abs), key: canonicalPath(abs), dirSourced };
     }
 
     // The first of these paths that parses in full. Head detection is not
@@ -910,7 +905,7 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
         entry.rows = rows;
         entry.source = { label, path: abs, count: rows.length };
         entry.expands = expandsDirectory(abs);
-        entry.format = formatIdAt(abs, "full") ?? entry.format;
+        entry.format = formatIdAt(abs) ?? entry.format;
         entry.key = canonicalPath(abs);
         return true;
     }
@@ -1043,6 +1038,10 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
                 changed = follow(resultsFilesIn(dir, sameFormat(entry.format)));
             }
         } else {
+            // The files these sources already hold, so two of them in one folder
+            // cannot re-derive onto the same replacement and collapse the merge
+            // into one run shown twice.
+            const claimed = new Set(here.map((e) => e.key ?? canonicalPath(e.source.path)));
             for (const entry of here) {
                 // A folder-expanding source (Allure) reads every result beside
                 // it, so a brand-new sibling changed it even though the file it
@@ -1050,12 +1049,23 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
                 if (!entry.expands && !touched(entry)) continue;
                 // It is only ANCHORED on that file, though. A re-run that
                 // deletes the old results and writes new ones leaves the anchor
-                // pointing at nothing, so follow the folder to a sibling of the
-                // same kind rather than going stale on a file that is gone.
-                const anchor = entry.expands && !existsSync(entry.source.path)
-                    ? newestResultsFileIn(dir, expandsDirectory) ?? entry.source.path
-                    : entry.source.path;
-                if (reparse(entry, anchor)) changed = true;
+                // pointing at nothing, so take a sibling of the same kind that
+                // no other source here has taken -- newest first, one each, so a
+                // merge of N runs comes back as N runs.
+                let anchor = entry.source.path;
+                if (!existsSync(anchor)) {
+                    const free = resultsFilesIn(dir, entry.expands ? expandsDirectory : sameFormat(entry.format))
+                        .find((p) => !claimed.has(canonicalPath(p)));
+                    if (free) {
+                        claimed.add(canonicalPath(free));
+                        anchor = free;
+                    }
+                }
+                const before = entry.source.path;
+                if (reparse(entry, anchor)) {
+                    changed = true;
+                    if (anchor !== before) moved = true;
+                }
             }
         }
         if (!changed) return;
@@ -1113,8 +1123,10 @@ export async function createResultsServer(options: ResultsServerOptions = {}) {
                 // explicitly named file is accepted by content, so a rewrite of
                 // `junit.report` must not be discarded for its extension. Same
                 // for a file a seed is still waiting for. The filter only bounds
-                // what a scan may DISCOVER.
-                if (!isWatchedFile(dir, name) && !RESULT_EXTS.some((e) => name.toLowerCase().endsWith(e))) return;
+                // what a scan may DISCOVER, and it is asked first: an Allure run
+                // writes thousands of recognized files, and canonicalizing each
+                // one costs a synchronous realpath on the event loop.
+                if (!RESULT_EXTS.some((e) => name.toLowerCase().endsWith(e)) && !isWatchedFile(dir, name)) return;
                 // Debounced per watched folder, collecting the names that moved
                 // in it. Keying by folder rather than by file is what keeps a
                 // burst -- an Allure run writes one JSON per test -- to a single
