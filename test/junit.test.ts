@@ -81,6 +81,18 @@ test("parseJUnit unescapes XML entities in messages", () => {
   assert.equal(rows[0].message, "a < b & c\nstack > here");
 });
 
+test("parseJUnit unwraps CDATA around failure text", () => {
+  // Surefire, pytest and Jest all wrap failure output in CDATA. Its content is
+  // literal, so it is kept exactly as written -- but the wrapper is markup and
+  // has no business on screen.
+  const rows = parseJUnit(
+    `<testsuite name="s"><testcase name="x">` +
+    `<failure message="assert failed"><![CDATA[expected <1> & got "2"]]></failure>` +
+    `</testcase></testsuite>`
+  );
+  assert.equal(rows[0].message, `assert failed\nexpected <1> & got "2"`);
+});
+
 test("parseJUnit leaves durationMs undefined when time is absent", () => {
   const rows = parseJUnit(`<testsuite name="s"><testcase name="x" classname="X" /></testsuite>`);
   assert.equal(rows[0].durationMs, undefined);

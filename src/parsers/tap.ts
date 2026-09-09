@@ -66,10 +66,13 @@ interface Frame {
     last?: number;
     plans: number;
     seen: number;
-    // Every explicit point number, checked when the scope closes rather than as
-    // each point arrives: a plan is allowed to trail its points, so the bounds
-    // are not known until the end.
+    // Every point's number, checked when the scope closes rather than as each
+    // point arrives: a plan is allowed to trail its points, so the bounds are
+    // not known until the end. An unnumbered point takes the next number in
+    // sequence, exactly as TAP says it does, so it is recorded too -- otherwise
+    // a duplicate or a gap around it goes unnoticed.
     numbers: number[];
+    next: number;
 }
 
 // Why a scope is not a valid, complete TAP stream, or null when it is.
@@ -99,7 +102,7 @@ function faultRow(frame: Frame, suite: string | undefined): TestResult | null {
 export function parseTap(text: string): TestResult[] {
     const out: TestResult[] = [];
     // stack[0] is the stream itself; the rest are open subtests.
-    const stack: Frame[] = [{ indent: -1, plans: 0, seen: 0, numbers: [] }];
+    const stack: Frame[] = [{ indent: -1, plans: 0, seen: 0, numbers: [], next: 1 }];
     const suiteOf = () => {
         const names = stack.map((f) => f.name).filter(Boolean);
         return names.length ? names.join(" > ") : undefined;
@@ -148,7 +151,7 @@ export function parseTap(text: string): TestResult[] {
         }
         const sub = SUBTEST.exec(line);
         if (sub) {
-            stack.push({ indent, name: sub[1].trim(), plans: 0, seen: 0, numbers: [] });
+            stack.push({ indent, name: sub[1].trim(), plans: 0, seen: 0, numbers: [], next: 1 });
             continue;
         }
         // "Bail out!" abandons the run: everything after it is unreached, and a
@@ -176,7 +179,9 @@ export function parseTap(text: string): TestResult[] {
         popTo(indent);
         const frame = stack[stack.length - 1];
         frame.seen++;
-        if (point[2] !== undefined) frame.numbers.push(Number(point[2]));
+        const number = point[2] !== undefined ? Number(point[2]) : frame.next;
+        frame.numbers.push(number);
+        frame.next = number + 1;
         const { status: forced, reason, name } = directive(point[3] ?? "");
         const status: TestStatus = forced ?? (point[1] ? "fail" : "pass");
         last = {

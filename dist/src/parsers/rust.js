@@ -16,9 +16,13 @@ function status(event) {
 export function parseRustJson(text) {
     const out = [];
     const running = new Set();
+    const found = { pass: 0, fail: 0, skip: 0 };
+    const declared = { pass: 0, fail: 0, skip: 0 };
     let suitesStarted = 0;
     let suitesEnded = 0;
     let expected = 0;
+    let counted = true;
+    let failedSuite = false;
     for (const event of jsonLines(text)) {
         const type = str(event, "type");
         if (type === "suite") {
@@ -27,9 +31,30 @@ export function parseRustJson(text) {
             if (str(event, "event") === "started") {
                 suitesStarted++;
                 expected += num(event, "test_count") ?? 0;
+                continue;
             }
+            // libtest closes a suite with its verdict and its own tally. A word
+            // this does not know is not a verdict, so the run has no outcome.
+            const verdict = str(event, "event") ?? "";
+            if (verdict !== "ok" && verdict !== "failed") {
+                throw new SyntaxError(`libtest suite ended with an unknown event "${verdict}"`);
+            }
+            suitesEnded++;
+            if (verdict === "failed")
+                failedSuite = true;
+            const names = ["passed", "failed", "ignored"];
+            const parts = names.map((n) => num(event, n));
+            // Written together, so a set with a hole in it is malformed rather
+            // than a writer that simply does not tally.
+            if (parts.some((n) => n != null) && parts.some((n) => n == null)) {
+                throw new SyntaxError("libtest suite ended with an incomplete tally");
+            }
+            if (parts.some((n) => n == null))
+                counted = false;
             else {
-                suitesEnded++;
+                declared.pass += parts[0];
+                declared.fail += parts[1];
+                declared.skip += parts[2];
             }
             continue;
         }
@@ -45,6 +70,7 @@ export function parseRustJson(text) {
             continue;
         }
         running.delete(name);
+        found[outcome]++;
         const secs = num(event, "exec_time");
         const path = name.split("::");
         out.push({
@@ -61,12 +87,27 @@ export function parseRustJson(text) {
     // A test that started and never reported an outcome means the stream stops
     // mid-run, so what it does hold is not the whole run.
     if (running.size)
-        throw new SyntaxError("libtest stream ends with a test still running"); // Each suite closes with its own terminal event, and says up front how many
+        throw new SyntaxError("libtest stream ends with a test still running");
+    // libtest always opens with a suite, so test events without one are a
+    // capture that began after the run did.
+    if (out.length && !suitesStarted)
+        throw new SyntaxError("libtest stream has no suite to account for its tests");
+    // Each suite closes with its own terminal event, and says up front how many
     // tests to expect -- both of which a snapshot taken between tests fails.
     if (suitesStarted !== suitesEnded)
         throw new SyntaxError("libtest stream ends before the suite finished");
     if (suitesStarted && expected !== out.length)
         throw new SyntaxError(`libtest suite declared ${expected} tests, reported ${out.length}`);
+    // And it tallies them per outcome, so a failure replaced by a pass is
+    // caught where a total that still adds up would not notice.
+    if (suitesStarted && counted && ["pass", "fail", "skip"].some((s) => declared[s] !== found[s])) {
+        throw new SyntaxError(`libtest suite declared ${declared.pass}/${declared.fail}/${declared.skip} pass/fail/ignored, reported ${found.pass}/${found.fail}/${found.skip}`);
+    }
+    // The suite says it failed and no test admits to it: something failed
+    // outside the tests, and a green run would be the wrong thing to show.
+    if (failedSuite && !out.some((r) => r.status === "fail")) {
+        out.push({ name: "libtest suite failed", status: "fail", message: "the suite reported itself as failed with no failing test", framework: "libtest" });
+    }
     return out;
 }
 //# sourceMappingURL=rust.js.map

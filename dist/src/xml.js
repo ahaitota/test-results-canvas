@@ -2,8 +2,26 @@
 // parser -- just enough to walk tags in document order, treating comments, CDATA
 // and doctypes as opaque, and to read attributes without tripping over a ">"
 // inside a quoted value.
+// Text taken straight out of a document, with CDATA sections unwrapped: their
+// content is literal, so it is kept as written while the text around it is
+// unescaped. Runners wrap failure output in CDATA constantly -- leaving the
+// wrapper in would put "<![CDATA[" in front of every stack trace on screen.
 export function xmlUnescape(s) {
-    return String(s ?? "")
+    const text = String(s ?? "");
+    let out = "";
+    let i = 0;
+    for (let open = text.indexOf(CDATA_OPEN); open >= 0; open = text.indexOf(CDATA_OPEN, i)) {
+        const close = text.indexOf("]]>", open + CDATA_OPEN.length);
+        if (close < 0)
+            break;
+        out += unescapeText(text.slice(i, open)) + text.slice(open + CDATA_OPEN.length, close);
+        i = close + 3;
+    }
+    return out + unescapeText(text.slice(i));
+}
+const CDATA_OPEN = "<![CDATA[";
+function unescapeText(s) {
+    return s
         .replace(/&lt;/g, "<")
         .replace(/&gt;/g, ">")
         .replace(/&quot;/g, '"')

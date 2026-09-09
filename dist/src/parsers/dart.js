@@ -18,9 +18,16 @@ export function parseDart(text) {
     let events = 0;
     let sawDone = false;
     let failedRun = false;
+    let suitesSeen = 0;
+    let expectedSuites;
     for (const event of jsonLines(text)) {
         events++;
         const type = str(event, "type");
+        // `done` is the last event of a run, so anything behind it belongs to
+        // another one appended to the same file -- and which run each row came
+        // from is then anyone's guess.
+        if (sawDone)
+            throw new SyntaxError("dart test stream continues after the run finished");
         if (type === "done") {
             sawDone = true;
             // `success` is how the runner reports the verdict; null means the
@@ -30,7 +37,19 @@ export function parseDart(text) {
             failedRun = event.success === false;
             continue;
         }
+        // The runner opens by saying how many suites it will report. It says it
+        // once, as a count, or the run cannot be checked for a suite that never
+        // reported at all.
+        if (type === "allSuites") {
+            const count = num(event, "count");
+            if (expectedSuites != null || count == null || !Number.isInteger(count) || count < 0) {
+                throw new SyntaxError("dart run did not say how many suites it would report");
+            }
+            expectedSuites = count;
+            continue;
+        }
         if (type === "suite") {
+            suitesSeen++;
             const suite = rec(event.suite);
             const id = num(suite, "id");
             const path = str(suite, "path");
@@ -88,6 +107,11 @@ export function parseDart(text) {
     // between two tests however tidy the tests themselves look.
     if (events && !sawDone)
         throw new SyntaxError("dart test stream has no done event");
+    // And it opens by saying how many suites it will report: a run missing one
+    // is missing every test in it.
+    if (expectedSuites != null && suitesSeen !== expectedSuites) {
+        throw new SyntaxError(`dart run declared ${expectedSuites} suites, reported ${suitesSeen}`);
+    }
     const out = finished.map((entry) => {
         // An error reported after the test passed still failed it: it is the
         // whole reason the protocol allows a late one.

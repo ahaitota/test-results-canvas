@@ -47,7 +47,7 @@ test("a UTF-8 BOM does not stop a report being read", () => {
   const bom = "\uFEFF";
   assert.equal(id(`${bom}<?xml version="1.0"?><testsuites><testcase name="x" /></testsuites>`), "junit");
   assert.equal(parseResults(`${bom}<?xml version="1.0"?><testsuites><testcase name="x" /></testsuites>`)?.length, 1);
-  assert.equal(parseResults(`${bom}{"reportFormat":"CTRF","results":{"tool":{"name":"jest"},"tests":[{"name":"a","status":"passed"}]}}`)?.length, 1);
+  assert.equal(parseResults(`${bom}{"reportFormat":"CTRF","results":{"tool":{"name":"jest"},"summary":{"tests":1,"passed":1,"failed":0,"skipped":0,"pending":0,"other":0},"tests":[{"name":"a","status":"passed"}]}}`)?.length, 1);
 });
 
 test("looksLikeResults rejects files that are not reports", () => {
@@ -203,7 +203,7 @@ test("a report is detected against all of itself once it has been read", () => {
   const padding = "x".repeat(9000);
   const junit = `<!-- ${padding} -->\n<testsuites><testsuite name="s"><testcase name="late" /></testsuite></testsuites>`;
   assert.equal(parseResults(junit)?.length, 1);
-  const ctrf = `{"metadata":"${padding}","reportFormat":"CTRF","results":{"tool":{"name":"jest"},"tests":[{"name":"late","status":"passed"}]}}`;
+  const ctrf = `{"metadata":"${padding}","reportFormat":"CTRF","results":{"tool":{"name":"jest"},"summary":{"tests":1,"passed":1,"failed":0,"skipped":0,"pending":0,"other":0},"tests":[{"name":"late","status":"passed"}]}}`;
   assert.equal(parseResults(ctrf)?.length, 1);
   const allure = `{"description":"${padding}","uuid":"a","name":"late","status":"passed"}`;
   assert.equal(parseResults(allure)?.length, 1);
@@ -242,7 +242,7 @@ test("parseResults rejects a file whose declared format is malformed", () => {
 });
 
 test("parseResults still returns rows for a report that ran no tests", () => {
-  assert.deepEqual(parseResults(`{"reportFormat":"CTRF","results":{"tests":[]}}`), []);
+  assert.deepEqual(parseResults(`{"reportFormat":"CTRF","results":{"summary":{"tests":0,"passed":0,"failed":0,"skipped":0,"pending":0,"other":0},"tests":[]}}`), []);
 });
 
 test("RESULT_EXTS covers every discovered extension without dropping the originals", () => {

@@ -227,7 +227,7 @@ test.describe("cross-language report formats", () => {
     await openCanvas(page, s);
     await expect(page.getByTestId("test-name").filter({ hasText: "fromJUnit" })).toBeVisible();
 
-    writeFileSync(ctrf, `{"reportFormat":"CTRF","results":{"tool":{"name":"jest"},"tests":[{"name":"fromCTRF","status":"passed"}]}}`, "utf8");
+    writeFileSync(ctrf, `{"reportFormat":"CTRF","results":{"tool":{"name":"jest"},"summary":{"tests":1,"passed":1,"failed":0,"skipped":0,"pending":0,"other":0},"tests":[{"name":"fromCTRF","status":"passed"}]}}`, "utf8");
 
     await expect(page.getByTestId("test-name").filter({ hasText: "fromCTRF" })).toBeVisible();
     await expect(page.getByTestId("test-name").filter({ hasText: "fromJUnit" })).toHaveCount(0);
@@ -312,6 +312,138 @@ test.describe("cross-language report formats", () => {
     await expect(page.getByTestId("test-name").filter({ hasText: "subtracts" })).toBeVisible();
   });
 
+  test("a directory source caught mid-rewrite keeps its run, not an older green one", async ({ page, makeServer }, testInfo) => {
+    // The folder's newest report is the failing one on screen. While the runner
+    // rewrites it, falling back down the folder would replace a failing run
+    // with the passing run it superseded -- the worst thing the panel can show.
+    const dir = testInfo.outputPath("mid-rewrite");
+    mkdirSync(dir, { recursive: true });
+    const older = join(dir, "old.xml");
+    const current = join(dir, "current.xml");
+    writeFileSync(older, `<testsuites><testsuite name="s"><testcase name="oldPass" /></testsuite></testsuites>`, "utf8");
+    writeFileSync(current, `<testsuites><testsuite name="s"><testcase name="broke"><failure message="boom" /></testcase></testsuite></testsuites>`, "utf8");
+    const old = new Date(Date.now() - 60_000);
+    utimesSync(older, old, old);
+
+    const s = await makeServer({ resultsDir: dir, watch: true });
+    await openCanvas(page, s);
+    await expect(page.getByTestId("test-name").filter({ hasText: "broke" })).toBeVisible();
+
+    // Recognizable as a report, and cut off mid-document.
+    writeFileSync(current, `<testsuites><testsuite name="s"><testcase name="broke"`, "utf8");
+    // Long enough for the debounce and a poll to have come and gone.
+    await page.waitForTimeout(1500);
+
+    await expect(page.getByTestId("test-name").filter({ hasText: "oldPass" })).toHaveCount(0);
+    await expect(page.getByTestId("test-name").filter({ hasText: "broke" })).toBeVisible();
+  });
+
+  test("a directory source does not fall back to a run older than the one it shows", async ({ page, makeServer }, testInfo) => {
+    // The failing report is deleted before its replacement lands. What is left
+    // in the folder finished BEFORE it, so taking it would answer a run being
+    // replaced with the passing run it already superseded.
+    const dir = testInfo.outputPath("no-going-back");
+    mkdirSync(dir, { recursive: true });
+    const older = join(dir, "old.xml");
+    const current = join(dir, "current.xml");
+    writeFileSync(older, `<testsuites><testsuite name="s"><testcase name="oldPass" /></testsuite></testsuites>`, "utf8");
+    writeFileSync(current, `<testsuites><testsuite name="s"><testcase name="broke"><failure message="boom" /></testcase></testsuite></testsuites>`, "utf8");
+    const old = new Date(Date.now() - 60_000);
+    utimesSync(older, old, old);
+
+    const s = await makeServer({ resultsDir: dir, watch: true });
+    await openCanvas(page, s);
+    await expect(page.getByTestId("test-name").filter({ hasText: "broke" })).toBeVisible();
+
+    rmSync(current);
+    await page.waitForTimeout(1500);
+    await expect(page.getByTestId("test-name").filter({ hasText: "oldPass" })).toHaveCount(0);
+
+    // The replacement does land eventually, and is newer, so it is taken.
+    writeFileSync(join(dir, "next.xml"), `<testsuites><testsuite name="s"><testcase name="fromNextRun" /></testsuite></testsuites>`, "utf8");
+    await expect(page.getByTestId("test-name").filter({ hasText: "fromNextRun" })).toBeVisible();
+  });
+
+  test("merged sources re-anchor when the replacements arrive after the deletion", async ({ page, makeServer }, testInfo) => {
+    const dir = testInfo.outputPath("staggered");
+    mkdirSync(dir, { recursive: true });
+    const suite = (name: string) => `<testsuites><testsuite name="s"><testcase name="${name}" /></testsuite></testsuites>`;
+    const billing = join(dir, "billing-1.xml");
+    const shipping = join(dir, "shipping-1.xml");
+    writeFileSync(billing, suite("billingOld"), "utf8");
+    writeFileSync(shipping, suite("shippingOld"), "utf8");
+
+    const s = await makeServer({ name: "Solution", resultsFiles: [billing, shipping], watch: true });
+    await openCanvas(page, s);
+    await expect(page.getByTestId("test-row")).toHaveCount(2);
+
+    // The deletion is seen on its own, so the batch that brings the
+    // replacements names neither of the files the sources are anchored on.
+    rmSync(billing);
+    rmSync(shipping);
+    await page.waitForTimeout(1200);
+    writeFileSync(join(dir, "billing-2.xml"), suite("billingNew"), "utf8");
+    writeFileSync(join(dir, "shipping-2.xml"), suite("shippingNew"), "utf8");
+
+    await expect(page.getByTestId("test-name").filter({ hasText: "billingNew" })).toBeVisible();
+    await expect(page.getByTestId("test-name").filter({ hasText: "shippingNew" })).toBeVisible();
+  });
+
+  test("a merge is not restored, or recorded, one member short", async ({ page, makeServer }, testInfo) => {
+    // Three members, because a merge that decays to two is still a named merge:
+    // publishing it would also record those two AS the group, and the third
+    // member would be forgotten even after it came back.
+    const dir = testInfo.outputPath("restore-partial");
+    mkdirSync(dir, { recursive: true });
+    const suite = (name: string) => `<testsuites><testsuite name="s"><testcase name="${name}" /></testsuite></testsuites>`;
+    const a = join(dir, "a.xml");
+    const b = join(dir, "b.xml");
+    const c = join(dir, "c.xml");
+    writeFileSync(a, suite("fromA"), "utf8");
+    writeFileSync(b, suite("fromB"), "utf8");
+    writeFileSync(c, suite("fromC"), "utf8");
+
+    const s = await makeServer({ name: "Solution", resultsFiles: [a, b, c], watch: false });
+    await openCanvas(page, s);
+    const picker = page.getByTestId("file-select");
+    await picker.selectOption("a.xml");
+    await expect(page.getByTestId("test-row")).toHaveCount(1);
+
+    // C is mid-write when the merge is asked for again.
+    writeFileSync(c, `<testsuites><testsuite name="s"><testcase name="fromC"`, "utf8");
+    await picker.selectOption("Solution");
+
+    // Two thirds of a merge must not be published as the merge.
+    await expect(page.getByTestId("test-name").filter({ hasText: "fromA" })).toBeVisible();
+    await expect(page.getByTestId("test-row")).toHaveCount(1);
+
+    // Once C is whole again the merge comes back in full, so nothing was lost.
+    writeFileSync(c, suite("fromC"), "utf8");
+    await picker.selectOption("Solution");
+    await expect(page.getByTestId("group-counts")).toHaveText("3 files \u00B7 3 tests");
+  });
+
+  test("picking a file caught mid-write leaves the run that is on screen", async ({ page, makeServer }, testInfo) => {
+    const dir = testInfo.outputPath("pick-partial");
+    mkdirSync(dir, { recursive: true });
+    const suite = (name: string) => `<testsuites><testsuite name="s"><testcase name="${name}" /></testsuite></testsuites>`;
+    const a = join(dir, "a.xml");
+    const b = join(dir, "b.xml");
+    writeFileSync(a, suite("fromA"), "utf8");
+    writeFileSync(b, suite("fromB"), "utf8");
+
+    const s = await makeServer({ name: "Solution", resultsFiles: [a, b], watch: false });
+    await openCanvas(page, s);
+    await expect(page.getByTestId("test-row")).toHaveCount(2);
+
+    writeFileSync(b, `<testsuites><testsuite name="s"><testcase name="fromB"`, "utf8");
+    await page.getByTestId("file-select").selectOption("b.xml");
+
+    // The merge is still what is loaded, and the picker still says so.
+    await expect(page.getByTestId("test-row")).toHaveCount(2);
+    await expect(page.getByTestId("file-select")).toHaveValue("Solution");
+  });
+
   test("opens an Allure folder whose results only identify themselves late", async ({ page, makeServer }, testInfo) => {
     // Same run, but nothing in the first 8 KiB of either file says so. Grouping
     // has to agree with parsing, or each file is taken for a source of its own
@@ -354,5 +486,14 @@ test.describe("cross-language report formats", () => {
     await expect(page.getByTestId("test-name").filter({ hasText: "billingNew" })).toBeVisible();
     await expect(page.getByTestId("test-name").filter({ hasText: "shippingNew" })).toBeVisible();
     await expect(page.getByTestId("test-row")).toHaveCount(2);
+
+    // And the merge still names what it now holds: drilling into one member and
+    // picking the group again must not restore it from the files that are gone.
+    const picker = page.getByTestId("file-select");
+    await picker.selectOption("shipping-2.xml");
+    await expect(page.getByTestId("test-row")).toHaveCount(1);
+
+    await picker.selectOption("Solution");
+    await expect(page.getByTestId("group-counts")).toHaveText("2 files \u00B7 2 tests");
   });
 });

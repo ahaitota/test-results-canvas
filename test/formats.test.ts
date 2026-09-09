@@ -147,6 +147,17 @@ test("parseNUnit counts a warning as a test that ran, keeping what it warned abo
   assert.equal(rows[0].message, "rounding drifted");
 });
 
+test("parseNUnit reconciles the counters the run declares", () => {
+  // Counted from the <test-case> elements, which is what NUnit counts -- the
+  // suite-level rows this parser adds are failures NUnit counts nowhere.
+  const run = (counts: string, cases: string) => `<test-run ${counts}><test-suite type="TestFixture" name="F">${cases}</test-suite></test-run>`;
+  const passing = `<test-case name="a" result="Passed" />`;
+  assert.throws(() => parseNUnit(run(`passed="1" failed="1"`, passing)));
+  assert.equal(parseNUnit(run(`passed="1" failed="0"`, passing)).length, 1);
+  // A warning is its own counter, and is not a test that failed or was skipped.
+  assert.equal(parseNUnit(run(`passed="1" warnings="1"`, `${passing}<test-case name="w" result="Warning" />`)).length, 2);
+});
+
 test("parseNUnit reads NUnit 2 result/time spellings", () => {
   const rows = parseNUnit(`<test-results><test-suite name="Old"><results>
     <test-case name="Legacy" result="Success" time="0.100" />
@@ -219,6 +230,15 @@ test("parseXunit rejects an assembly whose own counters do not match its tests",
   assert.equal(parseXunit(assembly(`passed="1" failed="0" skipped="0" notrun="1"`, `${one}<test name="pending" result="NotRun" />`)).length, 2);
   // A report that does not count itself is left alone.
   assert.equal(parseXunit(assembly(`total="1"`, one)).length, 1);
+  // The counters are checked one by one: a total that still adds up hides a
+  // failure that has arrived as a pass.
+  assert.throws(() => parseXunit(assembly(`total="2" passed="1" failed="1" skipped="0"`, `${one}<test name="subtracts" result="Pass" />`)));
+  // A total on its own still says how many tests there should have been.
+  assert.throws(() => parseXunit(assembly(`total="2"`, one)));
+  // Counters come as a set, so a hole in one -- or a value that is not a
+  // number -- is a report that cannot be checked against itself.
+  assert.throws(() => parseXunit(assembly(`passed="1" skipped="0"`, one)));
+  assert.throws(() => parseXunit(assembly(`passed="one" failed="0" skipped="0"`, one)));
 });
 
 test("parseXunit reads the v3 per-test source path and timestamps", () => {
@@ -297,6 +317,20 @@ test("parseTestNG skips configuration methods and keeps class/suite context", ()
   assert.equal(rows[1].message, "java.lang.AssertionError\nexpected [1] but found [2]\nat com.example.CalcTest.subtracts");
 });
 
+test("parseTestNG reconciles the counters against the tests, not the fixtures", () => {
+  // TestNG counts its passed/failed/skipped TEST collections: configuration
+  // methods are held apart and never counted, and a retried attempt is counted
+  // as a retry rather than as a skip.
+  const results = (counts: string, methods: string) => `<testng-results ${counts}><suite name="s"><test name="t"><class name="C">${methods}</class></test></suite></testng-results>`;
+  const passing = `<test-method name="a" status="PASS" />`;
+  assert.throws(() => parseTestNG(results(`passed="1" failed="1"`, passing)));
+  assert.equal(parseTestNG(results(`passed="1" failed="0"`, passing)).length, 1);
+  // A failed setup is shown as a row but is not one of the counted tests.
+  assert.equal(parseTestNG(results(`passed="1" failed="0"`, `${passing}<test-method name="setUp" status="FAIL" is-config="true" />`)).length, 2);
+  // A retried attempt is written as a skip but counted under `retried`.
+  assert.equal(parseTestNG(results(`passed="1" skipped="0"`, `${passing}<test-method name="flaky" status="SKIP" retried="true" />`)).length, 2);
+});
+
 test("parseTestNG keeps a failed configuration method, which is the run's real failure", () => {
   const rows = parseTestNG(`<testng-results total="2">
   <suite name="Default suite">
@@ -338,6 +372,7 @@ const CTEST = `<?xml version="1.0" encoding="UTF-8"?>
     <TestList>
       <Test>./calc/adds</Test>
       <Test>./calc/subtracts</Test>
+      <Test>./calc/divides</Test>
     </TestList>
     <Test Status="passed">
       <Name>adds</Name><Path>./calc</Path>
@@ -382,6 +417,14 @@ test("parseCTest rejects a result missing its name or a known status", () => {
   // The outcomes CTest does write are all read.
   const rows = parseCTest(`<Site><Testing><Test Status="notrun"><Name>a</Name></Test><Test Status="disabled"><Name>b</Name></Test></Testing></Site>`);
   assert.deepEqual(rows.map((r) => [r.name, r.status]), [["a", "skip"], ["b", "skip"]]);
+});
+
+test("parseCTest rejects a report holding fewer results than its TestList", () => {
+  // CTest writes the list and the results from one and the same set of tests,
+  // so a short one means the file was cut off partway through them.
+  const report = (results: string) => `<Site><Testing><TestList><Test>./a</Test><Test>./b</Test></TestList>${results}</Testing></Site>`;
+  assert.throws(() => parseCTest(report(`<Test Status="passed"><Name>a</Name></Test>`)));
+  assert.equal(parseCTest(report(`<Test Status="passed"><Name>a</Name></Test><Test Status="failed"><Name>b</Name></Test>`)).length, 2);
 });
 
 test("parseCTest returns nothing when no test ran", () => {
@@ -514,6 +557,15 @@ ok 1 - calc
   assert.deepEqual(rows.map((r) => [r.name, r.suite]), [["adds", "calc"], ["TAP stream not valid", "calc"], ["calc", undefined]]);
 });
 
+test("parseTap numbers an unnumbered point the way TAP says it is numbered", () => {
+  // The implicit point takes number 2, so the explicit "2" behind it repeats a
+  // point and nothing ever reports number 3.
+  const rows = parseTap("TAP version 13\n1..3\nok 1 - first\nok - implicit second\nok 2 - duplicate second\n");
+  assert.equal(rows[rows.length - 1].name, "TAP stream not valid");
+  // Numbered implicitly all the way through, the same stream is complete.
+  assert.deepEqual(parseTap("TAP version 13\n1..3\nok - a\nok - b\nok - c\n").map((r) => r.name), ["a", "b", "c"]);
+});
+
 test("parseTap leaves a bail out to speak for the tests that never ran", () => {
   const rows = parseTap("TAP version 13\n1..3\nok 1 - connected\nBail out! database unavailable\n");
   assert.deepEqual(rows.map((r) => r.name), ["connected", "Bail out!"]);
@@ -530,7 +582,7 @@ const CTRF = JSON.stringify({
   specVersion: "0.0.0",
   results: {
     tool: { name: "jest" },
-    summary: { tests: 3, passed: 1, failed: 1, skipped: 1 },
+    summary: { tests: 3, passed: 1, failed: 1, skipped: 1, pending: 0, other: 0 },
     tests: [
       { name: "adds", status: "passed", duration: 42, suite: "calc", filePath: "src/calc.test.ts", start: 1704103200000, stop: 1704103200042 },
       { name: "subtracts", status: "failed", duration: 15, message: "Expected 1 got 2", trace: "at calc.test.ts:5" },
@@ -559,7 +611,7 @@ test("parseCtrf rejects a test record without a name or a known status", () => {
 });
 
 test("parseCtrf rejects a report whose summary counts more tests than it holds", () => {
-  assert.throws(() => parseCtrf(`{"reportFormat":"CTRF","results":{"tool":{"name":"jest"},"summary":{"tests":2,"passed":1,"failed":1},"tests":[{"name":"adds","status":"passed"}]}}`));
+  assert.throws(() => parseCtrf(`{"reportFormat":"CTRF","results":{"tool":{"name":"jest"},"summary":{"tests":2,"passed":1,"failed":1,"skipped":0,"pending":0,"other":0},"tests":[{"name":"adds","status":"passed"}]}}`));
 });
 
 test("parseCtrf rejects a report with no results.tests array", () => {
@@ -572,20 +624,39 @@ test("parseCtrf rejects a report with no results.tests array", () => {
 });
 
 test("parseCtrf rejects a summary that disagrees with the tests it holds", () => {
+  const counts = (over: Record<string, number>) => JSON.stringify({ tests: 1, passed: 0, failed: 0, skipped: 0, pending: 0, other: 0, ...over });
   const report = (summary: string, tests: string) => `{"reportFormat":"CTRF","results":{"tool":{"name":"jest"},"summary":${summary},"tests":[${tests}]}}`;
   // A summary claiming a failure none of its tests admit to is the same
   // disagreement as a missing row, pointing the other way.
-  assert.throws(() => parseCtrf(report(`{"tests":1,"passed":1,"failed":1}`, `{"name":"a","status":"passed"}`)));
-  assert.equal(parseCtrf(report(`{"tests":1,"passed":0,"failed":1}`, `{"name":"a","status":"failed"}`)).length, 1);
+  assert.throws(() => parseCtrf(report(counts({ passed: 1, failed: 1 }), `{"name":"a","status":"passed"}`)));
+  assert.equal(parseCtrf(report(counts({ failed: 1 }), `{"name":"a","status":"failed"}`)).length, 1);
+  // A counter the schema requires, missing or not a number, leaves the tests
+  // with nothing to be checked against.
+  assert.throws(() => parseCtrf(report(`{"tests":1,"passed":1}`, `{"name":"a","status":"passed"}`)));
+  assert.throws(() => parseCtrf(report(counts({ passed: 1 }).replace(`"passed":1`, `"passed":"1"`), `{"name":"a","status":"passed"}`)));
 });
 
 test("parseCtrf reads a suite path as well as a suite name", () => {
-  const rows = parseCtrf(`{"reportFormat":"CTRF","results":{"tool":{"name":"jest"},"tests":[{"name":"a","status":"passed","suite":["root","calc"]}]}}`);
+  const rows = parseCtrf(`{"reportFormat":"CTRF","results":{"tool":{"name":"jest"},"summary":{"tests":1,"passed":1,"failed":0,"skipped":0,"pending":0,"other":0},"tests":[{"name":"a","status":"passed","suite":["root","calc"]}]}}`);
   assert.equal(rows[0].suite, "root > calc");
 });
 
 test("parseCtrf returns nothing for a report with no tests", () => {
-  assert.deepEqual(parseCtrf(`{"reportFormat":"CTRF","results":{"tests":[]}}`), []);
+  assert.deepEqual(parseCtrf(`{"reportFormat":"CTRF","results":{"summary":{"tests":0,"passed":0,"failed":0,"skipped":0,"pending":0,"other":0},"tests":[]}}`), []);
+});
+
+test("parseCtrf rejects a report with no summary to check itself against", () => {
+  // The schema requires one, and without it nothing in the file says whether
+  // the tests it lists are all the tests there were.
+  assert.throws(() => parseCtrf(`{"reportFormat":"CTRF","results":{"tests":[{"name":"a","status":"passed"}]}}`));
+});
+
+test("parseCtrf reconciles every counter its summary declares", () => {
+  // A total that still adds up hides a failure replaced by a pass.
+  const report = (summary: string) => `{"reportFormat":"CTRF","results":{"summary":${summary},"tests":[{"name":"a","status":"passed"}]}}`;
+  assert.throws(() => parseCtrf(report(`{"tests":1,"passed":0,"failed":0,"skipped":1,"pending":0,"other":0}`)));
+  assert.throws(() => parseCtrf(report(`{"tests":1,"passed":0,"failed":0,"skipped":0,"pending":1,"other":0}`)));
+  assert.equal(parseCtrf(report(`{"tests":1,"passed":1,"failed":0,"skipped":0,"pending":0,"other":0}`)).length, 1);
 });
 
 test("parseCtrf throws on malformed JSON so the registry can reject the file", () => {
@@ -621,12 +692,22 @@ test("parseAllure derives duration from start/stop and reads labels", () => {
 });
 
 test("parseAllure treats broken as a failure and unknown as a skip", () => {
-  const rows = parseAllure(JSON.stringify([
+  // One object per file, which is how Allure writes them.
+  const rows = [
     { uuid: "b", name: "broke", status: "broken" },
     { uuid: "c", name: "unclear", status: "unknown" },
     { uuid: "d", name: "ok", status: "passed" },
-  ]));
+  ].flatMap((r) => parseAllure(JSON.stringify(r)));
   assert.deepEqual(statuses(rows), ["fail", "skip", "pass"]);
+});
+
+test("parseAllure rejects a file that is not one result or container", () => {
+  // An empty array contributes no rows and no complaint, so an Allure folder
+  // holding one would look like a run those tests were never part of.
+  assert.throws(() => parseAllure(`[]`));
+  assert.throws(() => parseAllure(`[{"uuid":"a","name":"x","status":"passed"}]`));
+  // A container whose fixtures are not a list would lose the failure inside it.
+  assert.throws(() => parseAllure(`{"uuid":"c","children":["a"],"afters":{"name":"cleanup","status":"broken"}}`));
 });
 
 // --- go test -json ---------------------------------------------------------
@@ -882,6 +963,46 @@ test("parseDart rejects a stream that ends with a test still running", () => {
   ].map((e) => JSON.stringify(e)).join("\n")));
 });
 
+test("parseDart rejects a second run appended to a finished one", () => {
+  // `done` ends a run, so events behind it belong to another -- and the first
+  // run's own done would vouch for tests that were never part of it.
+  assert.throws(() => parseDart([
+    { type: "suite", suite: { id: 0, path: "test/calc_test.dart" } },
+    { type: "testStart", test: { id: 1, name: "adds", suiteID: 0 }, time: 1 },
+    { type: "testDone", testID: 1, result: "success", hidden: false, time: 2 },
+    { type: "done", success: true, time: 3 },
+    { type: "testStart", test: { id: 2, name: "subtracts", suiteID: 0 }, time: 4 },
+    { type: "testDone", testID: 2, result: "success", hidden: false, time: 5 },
+  ].map((e) => JSON.stringify(e)).join("\n")));
+});
+
+test("parseDart rejects a run missing one of the suites it announced", () => {
+  const events = (count: number) => [
+    { type: "allSuites", count },
+    { type: "suite", suite: { id: 0, path: "test/calc_test.dart" } },
+    { type: "testStart", test: { id: 1, name: "adds", suiteID: 0 }, time: 1 },
+    { type: "testDone", testID: 1, result: "success", hidden: false, time: 2 },
+    { type: "done", success: true, time: 3 },
+  ].map((e) => JSON.stringify(e)).join("\n");
+  // A suite that never reported is every test in it missing from the run.
+  assert.throws(() => parseDart(events(2)));
+  assert.equal(parseDart(events(1)).length, 1);
+});
+
+test("parseDart rejects an allSuites count it cannot read", () => {
+  // Without a usable count there is nothing to notice a missing suite with.
+  const withCount = (count: string) => [
+    `{"type":"allSuites","count":${count}}`,
+    `{"type":"suite","suite":{"id":0,"path":"a_test.dart"}}`,
+    `{"type":"testStart","test":{"id":1,"name":"a","suiteID":0}}`,
+    `{"type":"testDone","testID":1,"result":"success","hidden":false}`,
+    `{"type":"done","success":true}`,
+  ].join("\n");
+  assert.throws(() => parseDart(withCount(`"1"`)));
+  assert.throws(() => parseDart(withCount(`null`)));
+  assert.equal(parseDart(withCount(`1`)).length, 1);
+});
+
 test("parseRustJson leaves a timed-out test running rather than failing it twice", () => {
   // libtest reports a timeout to say a test is taking a while; its outcome
   // still follows. Counting it invented a row and broke the suite's own count.
@@ -890,7 +1011,7 @@ test("parseRustJson leaves a timed-out test running rather than failing it twice
     { type: "test", event: "started", name: "calc::slow" },
     { type: "test", event: "timeout", name: "calc::slow" },
     { type: "test", event: "ok", name: "calc::slow", exec_time: 61 },
-    { type: "suite", event: "ok", passed: 1 },
+    { type: "suite", event: "ok", passed: 1, failed: 0, ignored: 0 },
   ].map((e) => JSON.stringify(e)).join("\n"));
   assert.deepEqual(rows.map((r) => [r.name, r.status]), [["calc::slow", "pass"]]);
 });
@@ -905,7 +1026,34 @@ test("parseRustJson rejects a stream that ends with a test still running", () =>
 });
 
 test("parseRustJson returns nothing for a suite that ran no test", () => {
-  assert.deepEqual(parseRustJson(`{"type":"suite","event":"started","test_count":0}\n{"type":"suite","event":"ok","passed":0}`), []);
+  assert.deepEqual(parseRustJson(`{"type":"suite","event":"started","test_count":0}\n{"type":"suite","event":"ok","passed":0,"failed":0,"ignored":0}`), []);
+});
+
+test("parseRustJson reports a suite that failed with no failing test", () => {
+  // libtest says the suite failed; something outside the tests did. A green run
+  // would be the wrong thing to show, and the tally may not be there to catch it.
+  const rows = parseRustJson(`{"type":"suite","event":"started","test_count":1}\n{"type":"test","event":"ok","name":"only_pass"}\n{"type":"suite","event":"failed"}`);
+  assert.deepEqual(rows.map((r) => r.status), ["pass", "fail"]);
+});
+
+test("parseRustJson rejects test events with no suite, and a half-written tally", () => {
+  // libtest always opens with a suite, so events without one are a capture that
+  // began after the run did.
+  assert.throws(() => parseRustJson(`{"type":"test","event":"ok","name":"only_pass"}`));
+  // The counters are written together; a set with a hole in it is malformed.
+  assert.throws(() => parseRustJson(`{"type":"suite","event":"started","test_count":1}\n{"type":"test","event":"ok","name":"a"}\n{"type":"suite","event":"ok","passed":1,"ignored":0}`));
+});
+
+test("parseRustJson reconciles the tally the suite closes with", () => {
+  // The count still adds up, so only the per-outcome tally notices that the
+  // failure libtest recorded has arrived as a pass.
+  const one = (event: string) => `{"type":"suite","event":"started","test_count":1}\n{"type":"test","name":"calc::adds","event":"${event}"}\n{"type":"suite","event":"failed","passed":0,"failed":1,"ignored":0}`;
+  assert.throws(() => parseRustJson(one("ok")));
+  assert.equal(parseRustJson(one("failed")).length, 1);
+  // A verdict libtest does not write is not a verdict at all.
+  assert.throws(() => parseRustJson(`{"type":"suite","event":"started","test_count":0}\n{"type":"suite","event":"interrupted"}`));
+  // Older writers close without a tally, which is not a disagreement.
+  assert.equal(parseRustJson(`{"type":"suite","event":"started","test_count":1}\n{"type":"test","name":"a","event":"ok"}\n{"type":"suite","event":"ok"}`).length, 1);
 });
 
 test("parseRustJson rejects a suite that never closed or fell short of its count", () => {

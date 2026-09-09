@@ -87,7 +87,7 @@ function faultRow(frame, suite) {
 export function parseTap(text) {
     const out = [];
     // stack[0] is the stream itself; the rest are open subtests.
-    const stack = [{ indent: -1, plans: 0, seen: 0, numbers: [] }];
+    const stack = [{ indent: -1, plans: 0, seen: 0, numbers: [], next: 1 }];
     const suiteOf = () => {
         const names = stack.map((f) => f.name).filter(Boolean);
         return names.length ? names.join(" > ") : undefined;
@@ -138,7 +138,7 @@ export function parseTap(text) {
         }
         const sub = SUBTEST.exec(line);
         if (sub) {
-            stack.push({ indent, name: sub[1].trim(), plans: 0, seen: 0, numbers: [] });
+            stack.push({ indent, name: sub[1].trim(), plans: 0, seen: 0, numbers: [], next: 1 });
             continue;
         }
         // "Bail out!" abandons the run: everything after it is unreached, and a
@@ -167,8 +167,9 @@ export function parseTap(text) {
         popTo(indent);
         const frame = stack[stack.length - 1];
         frame.seen++;
-        if (point[2] !== undefined)
-            frame.numbers.push(Number(point[2]));
+        const number = point[2] !== undefined ? Number(point[2]) : frame.next;
+        frame.numbers.push(number);
+        frame.next = number + 1;
         const { status: forced, reason, name } = directive(point[3] ?? "");
         const status = forced ?? (point[1] ? "fail" : "pass");
         last = {

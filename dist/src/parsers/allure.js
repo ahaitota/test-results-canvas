@@ -45,6 +45,12 @@ function isContainer(t) {
 function fixtures(t, out) {
     const owner = str(t, "name");
     for (const key of ["befores", "afters"]) {
+        const raw = t?.[key];
+        // Present but not a list of fixtures: `arr()` would read it as none at
+        // all, and the failed teardown inside it would leave no trace.
+        if (raw !== undefined && !Array.isArray(raw)) {
+            throw new SyntaxError(`allure container ${key} is not an array`);
+        }
         for (const entry of arr(t, key)) {
             const fixture = rec(entry);
             const name = str(fixture, "name");
@@ -74,39 +80,41 @@ function fixtures(t, out) {
     }
 }
 export function parseAllure(text) {
-    const parsed = JSON.parse(text);
-    const entries = Array.isArray(parsed) ? parsed : [parsed];
-    const out = [];
-    for (const entry of entries) {
-        const t = rec(entry);
-        if (isContainer(t)) {
-            fixtures(t, out);
-            continue;
-        }
-        const name = str(t, "name") ?? str(t, "fullName");
-        const outcome = str(t, "status");
-        // Every result file is required input: one that carries no identity,
-        // name or recognized status is not a result this run can be read
-        // without, so it fails rather than quietly contributing no row.
-        if (!t || !str(t, "uuid") || !name || !outcome || !ALLURE_STATUS.has(outcome.toLowerCase())) {
-            throw new SyntaxError("allure result is missing its uuid, name or status");
-        }
-        const label = labels(t);
-        const start = num(t, "start");
-        const stop = num(t, "stop");
-        const details = rec(t?.statusDetails);
-        out.push({
-            name,
-            status: status(outcome),
-            durationMs: start != null && stop != null ? stop - start : undefined,
-            message: joinMessage(str(details, "message"), str(details, "trace")),
-            className: label.get("testClass"),
-            suite: label.get("suite") ?? label.get("parentSuite"),
-            framework: label.get("framework"),
-            startTime: isoFromEpoch(start),
-            endTime: isoFromEpoch(stop),
-        });
+    const t = rec(JSON.parse(text));
+    // One object per file. Allure writes exactly one result or one container,
+    // so anything else -- an empty array most of all -- is a file this run
+    // cannot be read from, not a file holding nothing.
+    if (!t) {
+        throw new SyntaxError("allure file is not a result or container object");
     }
+    const out = [];
+    if (isContainer(t)) {
+        fixtures(t, out);
+        return out;
+    }
+    const name = str(t, "name") ?? str(t, "fullName");
+    const outcome = str(t, "status");
+    // Every result file is required input: one that carries no identity,
+    // name or recognized status is not a result this run can be read
+    // without, so it fails rather than quietly contributing no row.
+    if (!str(t, "uuid") || !name || !outcome || !ALLURE_STATUS.has(outcome.toLowerCase())) {
+        throw new SyntaxError("allure result is missing its uuid, name or status");
+    }
+    const label = labels(t);
+    const start = num(t, "start");
+    const stop = num(t, "stop");
+    const details = rec(t.statusDetails);
+    out.push({
+        name,
+        status: status(outcome),
+        durationMs: start != null && stop != null ? stop - start : undefined,
+        message: joinMessage(str(details, "message"), str(details, "trace")),
+        className: label.get("testClass"),
+        suite: label.get("suite") ?? label.get("parentSuite"),
+        framework: label.get("framework"),
+        startTime: isoFromEpoch(start),
+        endTime: isoFromEpoch(stop),
+    });
     return out;
 }
 // A file Allure groups by folder. It only does that for its own naming, so a

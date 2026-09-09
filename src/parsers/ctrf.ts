@@ -32,7 +32,10 @@ export function parseCtrf(text: string): TestResult[] {
     }
     const tool = str(rec(results.tool), "name");
     const out: TestResult[] = [];
-    let failed = 0;
+    // Counted under CTRF's own status names rather than the three this panel
+    // shows: pending and other both render as "skip", so tallying the rendered
+    // status could not tell one counter from the other.
+    const found = new Map<string, number>();
     for (const entry of results.tests) {
         const t = rec(entry);
         const name = str(t, "name");
@@ -42,7 +45,8 @@ export function parseCtrf(text: string): TestResult[] {
         if (!t || !name || !outcome || !STATUS.has(outcome.toLowerCase())) {
             throw new SyntaxError("ctrf test is missing its name or a known status");
         }
-        if (outcome.toLowerCase() === "failed") failed++;
+        const key = outcome.toLowerCase();
+        found.set(key, (found.get(key) ?? 0) + 1);
         out.push({
             name,
             status: status(outcome),
@@ -57,18 +61,30 @@ export function parseCtrf(text: string): TestResult[] {
             endTime: iso(num(t, "stop")),
         });
     }
-    // The report counts itself, so a mismatch means rows went missing between
-    // the runner writing the summary and this file being read -- and a summary
-    // claiming failures none of its tests admit to is the same disagreement
-    // pointing the other way.
+    // The schema requires the summary and every one of its counters. A count
+    // that disagrees means rows went missing between the runner writing it and
+    // this file being read -- or that a failure has been replaced by a pass,
+    // which a total on its own would not notice. One that is absent or is not a
+    // number leaves nothing to check the tests against at all.
     const summary = rec(results.summary);
+    if (!summary) {
+        throw new SyntaxError("ctrf report has no results.summary");
+    }
     const declared = num(summary, "tests");
-    if (declared != null && declared !== out.length) {
+    if (declared == null) {
+        throw new SyntaxError("ctrf summary has no numeric test count");
+    }
+    if (declared !== out.length) {
         throw new SyntaxError(`ctrf summary declared ${declared} tests, found ${out.length}`);
     }
-    const declaredFailed = num(summary, "failed");
-    if (declaredFailed != null && declaredFailed !== failed) {
-        throw new SyntaxError(`ctrf summary declared ${declaredFailed} failures, found ${failed}`);
+    for (const name of STATUS) {
+        const count = num(summary, name);
+        if (count == null) {
+            throw new SyntaxError(`ctrf summary has no numeric ${name} count`);
+        }
+        if (count !== (found.get(name) ?? 0)) {
+            throw new SyntaxError(`ctrf summary declared ${count} ${name}, found ${found.get(name) ?? 0}`);
+        }
     }
     return out;
 }

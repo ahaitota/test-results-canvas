@@ -114,15 +114,32 @@ export function parseNUnit(xml: string): TestResult[] {
     const root = parseXml(xml);
     const out: TestResult[] = [];
     walk(root, undefined, out);
+    // NUnit 3 counts its own <test-case> elements, one counter per raw result.
+    // Tallied from the cases rather than from the rows, because the rows also
+    // carry suite-level failures NUnit counts nowhere.
+    const run = root.name === "test-run" ? root : child(root, "test-run");
+    if (run) {
+        const cases = new Map<string, number>();
+        countCases(run, cases);
+        for (const name of ["passed", "failed", "skipped", "inconclusive", "warnings"]) {
+            const declared = Number(attr(run.attrs, name));
+            // `warnings` is spelled plural in the counter and singular in a
+            // result, and the rest match their result word exactly.
+            const found = cases.get(name === "warnings" ? "warning" : name) ?? 0;
+            if (Number.isFinite(declared) && declared !== found) {
+                throw new SyntaxError(`nunit run declared ${declared} ${name}, found ${found}`);
+            }
+        }
+    }
     // Nothing beneath owned the failure, which a report can manage when the run
     // failed before any suite did. Better one row saying so than an empty run
     // that reads as green.
     if (!out.length) {
-        const run = child(root, "test-run") ?? child(root, "test-results");
-        if (run && status(attr(run.attrs, "result")) === "fail") {
-            const failure = child(run, "failure");
+        const failedRun = run ?? child(root, "test-results");
+        if (failedRun && status(attr(failedRun.attrs, "result")) === "fail") {
+            const failure = child(failedRun, "failure");
             out.push({
-                name: attr(run.attrs, "name") ?? "test run",
+                name: attr(failedRun.attrs, "name") ?? "test run",
                 status: "fail",
                 message: joinMessage(childText(failure, "message"), childText(failure, "stack-trace")),
                 framework: "NUnit",
@@ -130,4 +147,15 @@ export function parseNUnit(xml: string): TestResult[] {
         }
     }
     return out;
+}
+
+// Every <test-case> under `el`, tallied by the raw result NUnit wrote.
+function countCases(el: XmlElement, into: Map<string, number>): void {
+    for (const child of el.children) {
+        if (child.name === "test-case") {
+            const result = String(attr(child.attrs, "result") ?? "").toLowerCase();
+            into.set(result, (into.get(result) ?? 0) + 1);
+        }
+        countCases(child, into);
+    }
 }

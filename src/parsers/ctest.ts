@@ -21,6 +21,7 @@ export function parseCTest(xml: string): TestResult[] {
     const out: TestResult[] = [];
     for (const testing of findAll(parseXml(xml), "Testing")) {
         const startTime = childText(testing, "StartDateTime");
+        let found = 0;
         for (const test of testing.children) {
             // <TestList> repeats every test as a bare <Test>name</Test>; only the
             // outcome elements carry a Status.
@@ -45,6 +46,18 @@ export function parseCTest(xml: string): TestResult[] {
                 framework: "CTest",
                 startTime,
             });
+            found++;
+        }
+        // CTest writes <TestList> and the detailed results from one and the
+        // same list, so the two always agree in a whole report -- and fixtures
+        // and `-R` filtering are already reflected in both. A short one is a
+        // report cut off partway through its results.
+        const list = child(testing, "TestList");
+        if (list) {
+            const listed = list.children.filter((t) => t.name === "Test").length;
+            if (listed !== found) {
+                throw new SyntaxError(`ctest listed ${listed} tests, reported ${found}`);
+            }
         }
     }
     return out;

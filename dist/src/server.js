@@ -667,13 +667,22 @@ export async function createResultsServer(options = {}) {
             })();
         return target && existsSync(target.path) ? target : null;
     }
+    // When the report at `abs` was last written, or 0 when that cannot be read.
+    function writtenAt(abs) {
+        try {
+            return statSync(abs).mtimeMs;
+        }
+        catch {
+            return 0;
+        }
+    }
     function buildEntry(abs, dirSourced = false) {
         const rows = parseResultsAt(abs);
         if (rows === null)
             return null;
         const label = labelForPath(abs, discovered, listLocalNames());
         discovered.set(label, abs);
-        return { source: { label, path: abs, count: rows.length }, rows, expands: expandsDirectory(abs), format: formatIdAt(abs), key: canonicalPath(abs), dirSourced };
+        return { source: { label, path: abs, count: rows.length }, rows, expands: expandsDirectory(abs), format: formatIdAt(abs), key: canonicalPath(abs), dirSourced, mtimeMs: writtenAt(abs) };
     }
     // The first of these paths that parses in full. Head detection is not
     // enough to choose by: a report caught mid-write is recognizable long
@@ -769,6 +778,7 @@ export async function createResultsServer(options = {}) {
         entry.expands = expandsDirectory(abs);
         entry.format = formatIdAt(abs) ?? entry.format;
         entry.key = canonicalPath(abs);
+        entry.mtimeMs = writtenAt(abs);
         return true;
     }
     // Accepts only reports of the format a source was read as, so re-deriving
@@ -859,11 +869,19 @@ export async function createResultsServer(options = {}) {
         if (!here.length)
             return;
         let changed = false, moved = false;
-        // Compared as canonical identities for the same reason the watcher
-        // accepts an event at all: the spelling in the event need not be the
-        // one the source was opened with.
-        const changedKeys = new Set([...changedNames].map((n) => canonicalPath(join(dir, n))));
-        const touched = (entry) => changedKeys.has(entry.key ?? canonicalPath(entry.source.path));
+        // Cheapest first. A folder-expanding source takes in every result beside
+        // it, so anything that moved in the folder moved it, and a source is
+        // usually rewritten under the very name it was opened with. Only when
+        // neither holds are the queued names canonicalized -- the spelling in an
+        // event need not be the one the source was opened with, but a synchronous
+        // realpath each is not free when an Allure run queues thousands.
+        let changedKeys = null;
+        const touched = (entry) => {
+            if (entry.expands || changedNames.has(basename(entry.source.path)))
+                return true;
+            changedKeys ??= new Set([...changedNames].map((n) => canonicalPath(join(dir, n))));
+            return changedKeys.has(entry.key ?? canonicalPath(entry.source.path));
+        };
         if (here.length === 1) {
             const entry = here[0];
             const before = entry.source.path;
@@ -871,8 +889,16 @@ export async function createResultsServer(options = {}) {
             // where it already points when none do. One path per run, for the
             // same reason firstReadable() takes one: a folder-expanding format
             // parses every sibling on each attempt.
+            //
+            // Never backwards, though: a candidate written before the report on
+            // screen is a run that finished earlier, so taking it would answer a
+            // report being replaced with the one it already superseded -- and
+            // that older run is usually the greener one.
+            const since = entry.mtimeMs ?? 0;
             const follow = (candidates) => {
                 for (const candidate of canonicalResultPaths(candidates)) {
+                    if (candidate !== before && writtenAt(candidate) < since)
+                        continue;
                     if (!reparse(entry, candidate))
                         continue;
                     moved = candidate !== before;
@@ -903,7 +929,11 @@ export async function createResultsServer(options = {}) {
             // resolve onto the same newest file and quietly collapse into one,
             // losing the rest of the merge — so they re-parse their own path.
             if (entry.dirSourced) {
-                changed = follow(resultsFilesIn(dir));
+                // Its own report being rewritten IS the update, exactly as for a
+                // named source. Re-deriving here would hand the panel the next
+                // file down the folder while this one is mid-write -- an older
+                // run, and a greener one, replacing the run it superseded.
+                changed = rewritten ? reparse(entry, before) : follow(resultsFilesIn(dir));
             }
             else if (rewritten) {
                 changed = reparse(entry, before);
@@ -917,24 +947,41 @@ export async function createResultsServer(options = {}) {
             // cannot re-derive onto the same replacement and collapse the merge
             // into one run shown twice.
             const claimed = new Set(here.map((e) => e.key ?? canonicalPath(e.source.path)));
+            // Read once for the whole refresh, identity and format included:
+            // every source that has to re-anchor picks from this same list, and
+            // working it out per source means a directory scan, a realpath and a
+            // detection read each time round.
+            let siblings = null;
+            const candidates = () => (siblings ??= resultsFilesIn(dir).map((path) => ({
+                path,
+                key: canonicalPath(path),
+                format: formatIdAt(path),
+                expands: expandsDirectory(path),
+                mtimeMs: writtenAt(path),
+            })));
             for (const entry of here) {
                 // A folder-expanding source (Allure) reads every result beside
                 // it, so a brand-new sibling changed it even though the file it
-                // is named after did not.
-                if (!entry.expands && !touched(entry))
+                // is named after did not. A source whose file is GONE always gets
+                // a look too: a replacement written after the deletion was seen
+                // arrives in a batch that names neither of them.
+                const missing = !existsSync(entry.source.path);
+                if (!entry.expands && !missing && !touched(entry))
                     continue;
                 // It is only ANCHORED on that file, though. A re-run that
                 // deletes the old results and writes new ones leaves the anchor
                 // pointing at nothing, so take a sibling of the same kind that
                 // no other source here has taken -- newest first, one each, so a
-                // merge of N runs comes back as N runs.
+                // merge of N runs comes back as N runs. Never one written before
+                // the run this source is showing: that one finished earlier.
                 let anchor = entry.source.path;
-                if (!existsSync(anchor)) {
-                    const free = resultsFilesIn(dir, entry.expands ? expandsDirectory : sameFormat(entry.format))
-                        .find((p) => !claimed.has(canonicalPath(p)));
+                if (missing) {
+                    const since = entry.mtimeMs ?? 0;
+                    const free = candidates().find((c) => !claimed.has(c.key) && c.mtimeMs >= since
+                        && (entry.expands ? c.expands : entry.format !== undefined && c.format === entry.format));
                     if (free) {
-                        claimed.add(canonicalPath(free));
-                        anchor = free;
+                        claimed.add(free.key);
+                        anchor = free.path;
                     }
                 }
                 const before = entry.source.path;
@@ -947,6 +994,12 @@ export async function createResultsServer(options = {}) {
         }
         if (!changed)
             return;
+        // Sources that re-anchored leave the group pointing at files that are
+        // gone, so drilling into one and going back would restore a merge that
+        // no longer resolves. Only while the group is what is on screen: after
+        // drilling in, `entries` is the one file, not the merge.
+        if (moved && groupName && groupDef)
+            groupDef = { name: groupDef.name, paths: entries.map((e) => e.source.path) };
         rebuild();
         // A moved report means the coverage beside it moved too. An explicitly
         // named report is left alone — the caller chose it.
@@ -1180,21 +1233,30 @@ export async function createResultsServer(options = {}) {
     // which is what the <select> expects to see back. `groupDef` survives, so
     // the merge stays listed and can be picked again.
     function loadSingle(abs, label) {
+        const entry = buildEntry(abs);
+        // A file caught mid-write is not something to replace a complete run
+        // with: blanking the panel loses what is on screen and stops watching
+        // for the rest of it. The selection is refused instead.
+        if (!entry)
+            return false;
         // A deliberate choice retires whatever an unfulfilled seed was still
         // waiting for: it must not arrive later and take the panel back.
         awaitedSeed = null;
-        const entry = buildEntry(abs);
-        // Registered but unparseable: keep the old behaviour of showing an empty
-        // run rather than refusing the selection outright.
-        applySources(entry ? [entry] : [], null);
+        applySources([entry], null);
         file = label;
         attachCoverage(abs);
+        return true;
     }
     // Re-open the group after drilling into one of its files. Re-collected from
     // disk rather than cached, so a member rewritten meanwhile comes back
     // current. False when nothing resolves any more, leaving the view alone.
     function restoreGroup(def) {
         const built = collectSources(def.paths);
+        // A member that is there but unreadable is a report caught mid-write:
+        // restoring around it would publish a merge one whole project short and
+        // then record that shorter set as the group, losing the member for good.
+        if (built.skipped.some((s) => s.reason !== "no such file"))
+            return false;
         // A member deleted since the group was opened drops out; the rest still
         // merge, and the per-source counts in the header show what came back.
         if (!built.entries.length)
@@ -1560,7 +1622,11 @@ export async function createResultsServer(options = {}) {
                 res.end(JSON.stringify({ ok: false, error: "unknown file" }));
                 return;
             }
-            loadSingle(abs, name);
+            if (!loadSingle(abs, name)) {
+                res.writeHead(400, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ ok: false, error: "that file could not be read as a test-results file" }));
+                return;
+            }
             broadcast();
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ ok: true, file: name }));
@@ -1671,7 +1737,8 @@ export async function createResultsServer(options = {}) {
             const abs = resolveResultPath(name, discovered);
             if (!abs)
                 return false;
-            loadSingle(abs, name);
+            if (!loadSingle(abs, name))
+                return false;
             broadcast();
             return true;
         },
