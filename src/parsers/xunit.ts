@@ -1,0 +1,133 @@
+// xUnit.net v2/v3 result XML: <assemblies> / <assembly> / <collection> / <test>.
+
+import type { TestResult, TestStatus } from "../types.js";
+import { attr, numAttr, parseXml, child, childText, findAll } from "../xml.js";
+import type { XmlElement } from "../xml.js";
+import { joinMessage } from "./json.js";
+
+// The outcomes the xUnit schema defines. A record outside them is not one this
+// report can be read without, so it is rejected rather than defaulted -- the
+// default was "skip", which quietly turned a failure into a test nobody ran.
+const RESULTS = new Map<string, TestStatus>([["pass", "pass"], ["fail", "fail"], ["skip", "skip"], ["notrun", "skip"]]);
+
+function emit(el: XmlElement, assembly: XmlElement, collection: string | undefined, out: TestResult[]): void {
+    const name = attr(el.attrs, "name");
+    const outcome = attr(el.attrs, "result");
+    const status = RESULTS.get(String(outcome ?? "").toLowerCase());
+    if (!name || !status) {
+        throw new SyntaxError("xunit test is missing its name or a known result");
+    }
+    const failure = child(el, "failure");
+    const time = parseFloat(attr(el.attrs, "time") ?? "");
+    // v3 timestamps each test; v2 only dated the assembly, so that is the
+    // fallback rather than the source.
+    const date = attr(assembly.attrs, "run-date");
+    const clock = attr(assembly.attrs, "run-time");
+    const assemblyStart = date && clock ? `${date}T${clock}` : undefined;
+    out.push({
+        name,
+        // A record carrying a failure failed, whatever it says of itself.
+        status: failure ? "fail" : status,
+        durationMs: Number.isFinite(time) ? Math.round(time * 1000) : undefined,
+        message: joinMessage(childText(failure, "message"), childText(failure, "stack-trace"), childText(el, "reason")),
+        className: attr(el.attrs, "type"),
+        method: attr(el.attrs, "method") ?? name,
+        suite: collection,
+        // The one field that links a test to a path without guessing, which is
+        // what diff mode wants first.
+        file: attr(el.attrs, "source-file"),
+        framework: "xUnit.net",
+        storage: attr(assembly.attrs, "name"),
+        startTime: attr(el.attrs, "start-rtf") ?? assemblyStart,
+        endTime: attr(el.attrs, "finish-rtf"),
+    });
+}
+
+// One of an assembly's counters. A counter that is there but is not a number is
+// a report that cannot be checked against itself, which is not a report to
+// present as a run.
+function counter(assembly: XmlElement, name: string): number | undefined {
+    const raw = attr(assembly.attrs, name);
+    if (raw === undefined) return undefined;
+    const n = numAttr(assembly.attrs, name);
+    if (n === undefined) throw new SyntaxError(`xunit assembly has a ${name} counter that is not a number`);
+    return n;
+}
+
+// What an assembly says each outcome holds. Undefined when the report does not
+// count itself at all. Not-run is left out: the schema counts it separately
+// from the tests that ran, and so does the check below.
+function declaredOutcomes(assembly: XmlElement): Record<TestStatus, number> | undefined {
+    const names = ["passed", "failed", "skipped"];
+    const parts = names.map((n) => counter(assembly, n));
+    if (parts.every((n) => n === undefined)) return undefined;
+    // The schema writes them together, so a set with a hole in it is malformed
+    // rather than a report that simply does not count itself.
+    const missing = names.filter((_, i) => parts[i] === undefined);
+    if (missing.length) throw new SyntaxError(`xunit assembly counts itself but has no ${missing.join("/")}`);
+    const [passed, failed, skipped] = parts as number[];
+    return { pass: passed, fail: failed, skip: skipped };
+}
+
+export function parseXunit(xml: string): TestResult[] {
+    const out: TestResult[] = [];
+    for (const assembly of findAll(parseXml(xml), "assembly")) {
+        let errors = 0;
+        // <errors> sits outside every collection: fixture and assembly cleanup
+        // blow up there, and nothing else in the report records that failure.
+        for (const error of child(assembly, "errors")?.children ?? []) {
+            if (error.name !== "error") continue;
+            errors++;
+            const failure = child(error, "failure");
+            out.push({
+                name: attr(error.attrs, "name") ?? attr(error.attrs, "type") ?? "assembly error",
+                status: "fail",
+                message: joinMessage(attr(failure?.attrs, "exception-type"), childText(failure, "message"), childText(failure, "stack-trace")),
+                suite: attr(error.attrs, "type"),
+                framework: "xUnit.net",
+                storage: attr(assembly.attrs, "name"),
+            });
+        }
+        // The assembly counts its errors too, and they are failures no test
+        // carries -- so one it declares but does not record is a lost failure.
+        const declaredErrors = counter(assembly, "errors");
+        if (declaredErrors !== undefined && declaredErrors !== errors) {
+            throw new SyntaxError(`xunit assembly declared ${declaredErrors} errors, found ${errors}`);
+        }
+        const found: Record<TestStatus, number> = { pass: 0, fail: 0, skip: 0 };
+        // Counted apart from the tests that ran, because the schema counts it
+        // apart: `total` is how many RAN, and a NotRun test is one the runner
+        // was asked to leave alone. Its row still reads as a skip on screen.
+        let notRun = 0;
+        for (const collection of assembly.children) {
+            if (collection.name !== "collection") continue;
+            for (const test of findAll(collection, "test")) {
+                emit(test, assembly, attr(collection.attrs, "name"), out);
+                const status = out[out.length - 1].status;
+                const raw = String(attr(test.attrs, "result") ?? "").toLowerCase();
+                if (status !== "fail" && raw === "notrun") notRun++;
+                else found[status]++;
+            }
+        }
+        // The assembly counts itself, in total and per outcome. Both are
+        // checked: a total on its own does not notice a failure that has
+        // arrived as a pass, and outcomes on their own are not written by every
+        // version.
+        const tests = found.pass + found.fail + found.skip;
+        const total = counter(assembly, "total");
+        if (total !== undefined && total !== tests) {
+            throw new SyntaxError(`xunit assembly declared ${total} tests, found ${tests}`);
+        }
+        const declared = declaredOutcomes(assembly);
+        if (declared && (["pass", "fail", "skip"] as const).some((s) => declared[s] !== found[s])) {
+            throw new SyntaxError(`xunit assembly declared ${declared.pass}/${declared.fail}/${declared.skip} pass/fail/skip, found ${found.pass}/${found.fail}/${found.skip}`);
+        }
+        // v3 spells it `not-run`; `notrun` is accepted as well so a writer using
+        // the older spelling is not read as having lost those tests.
+        const declaredNotRun = counter(assembly, "not-run") ?? counter(assembly, "notrun");
+        if (declaredNotRun !== undefined && declaredNotRun !== notRun) {
+            throw new SyntaxError(`xunit assembly declared ${declaredNotRun} not run, found ${notRun}`);
+        }
+    }
+    return out;
+}

@@ -9,4 +9,19 @@ export interface XmlTag {
     start: number;
     end: number;
 }
-export declare function scanTags(xml: string): Generator<XmlTag>;
+export declare function decodeText(raw: string): string;
+export interface XmlElement {
+    name: string;
+    attrs: string;
+    text: string;
+    children: XmlElement[];
+}
+export declare function parseXml(xml: string): XmlElement;
+export declare function child(el: XmlElement | undefined, name: string): XmlElement | undefined;
+export declare function childText(el: XmlElement | undefined, name: string): string | undefined;
+export declare function findAll(el: XmlElement, name: string): Generator<XmlElement>;
+export declare function rootTag(xml: string): XmlTag | undefined;
+export declare function hasElement(xml: string, name: string): boolean;
+export declare function attrsWellFormed(attrs: string): boolean;
+export declare function isWellFormed(xml: string): boolean;
+export declare function scanTags(xml: string): Generator<XmlTag, boolean>;

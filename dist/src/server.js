@@ -4,8 +4,8 @@ import { createServer } from "node:http";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, basename, relative, isAbsolute, resolve as resolvePath } from "node:path";
 import { watch, readFileSync, writeFileSync, existsSync, readdirSync, statSync } from "node:fs";
-import { serializeTrx, parseTrx } from "./parsers/trx.js";
-import { parseJUnit } from "./parsers/junit.js";
+import { serializeTrx } from "./parsers/trx.js";
+import { looksLikeResults, parseResultsAt, canonicalResultPaths, RESULT_EXTS } from "./parsers/registry.js";
 import { labelForPath } from "./labels.js";
 import { mergeSources } from "./sources.js";
 import { readHead } from "./head.js";
@@ -47,36 +47,39 @@ function findExtensionRoot(start) {
 const EXTENSION_ROOT = findExtensionRoot(__dirname);
 const SAMPLES_DIR = join(EXTENSION_ROOT, "samples");
 const DEFAULT_FILE = "results.trx";
-export const RESULT_EXTS = [".trx", ".xml"];
-// Cheap content check so we only treat genuine test-results XML as results.
-export function looksLikeResults(xml) {
-    const head = String(xml || "").slice(0, 8192);
-    return /<testsuites?[\s>]/i.test(head) || /<TestRun[\s>]/i.test(head) || /<UnitTestResult[\s>]/i.test(head);
-}
-// Newest results file directly inside a directory (non-recursive).
-export function newestResultsFileIn(dir) {
-    let best = null, bestMtime = -1;
+// Which extensions a directory scan may look at, and what counts as a report,
+// both come from the parser registry: a format is recognised by its content,
+// never by its name.
+export { looksLikeResults, RESULT_EXTS };
+// Results files directly inside a directory (non-recursive), newest first and
+// then by path, so the order is stable across runs. Head detection only:
+// whether a candidate parses in FULL is for the caller to find out, since a
+// report caught mid-write is recognisable long before it is complete.
+export function resultsFilesIn(dir) {
     let names;
     try {
         names = readdirSync(dir);
     }
     catch {
-        return null;
+        return [];
     }
+    const found = [];
     for (const n of names) {
         if (!RESULT_EXTS.some((e) => n.toLowerCase().endsWith(e)))
             continue;
         const abs = resolvePath(dir, n);
         try {
             const st = statSync(abs);
-            if (st.isFile() && st.mtimeMs > bestMtime && looksLikeResults(readHead(abs))) {
-                best = abs;
-                bestMtime = st.mtimeMs;
-            }
+            if (st.isFile() && looksLikeResults(readHead(abs)))
+                found.push({ path: abs, mtimeMs: st.mtimeMs });
         }
         catch { /* ignore unreadable */ }
     }
-    return best;
+    return found.sort((a, b) => b.mtimeMs - a.mtimeMs || a.path.localeCompare(b.path)).map((f) => f.path);
+}
+// Newest results file directly inside a directory (non-recursive).
+export function newestResultsFileIn(dir) {
+    return resultsFilesIn(dir)[0] ?? null;
 }
 export function normalizeStatus(raw) {
     const s = String(raw || "").toLowerCase();
@@ -120,32 +123,20 @@ function resolveResultPath(name, discovered) {
     const full = join(EXTENSION_ROOT, base);
     return existsSync(full) ? full : null;
 }
-// Parse a named file, auto-detecting TRX vs JUnit by content.
+// Parse a named file. The registry detects the format from the file's content,
+// so any report it knows is read the same way.
 function loadFile(name, discovered) {
     const full = resolveResultPath(name, discovered);
     if (!full)
         return [];
-    try {
-        const xml = readFileSync(full, "utf8");
-        return /<testsuites?[\s>]/i.test(xml) ? parseJUnit(xml) : parseTrx(xml);
-    }
-    catch {
-        return [];
-    }
+    return parseResultsAt(full) ?? [];
 }
 // Parse an absolute path, or null when it is missing, unreadable, or not a
 // results file at all. Distinct from loadFile()'s empty array: a source set has
 // to tell "this file reported no tests" from "this path is not a report".
+// Formats that take in their whole folder (Allure) are expanded around `abs`.
 function parseResultsFile(abs) {
-    try {
-        const xml = readFileSync(abs, "utf8");
-        if (!looksLikeResults(xml))
-            return null;
-        return /<testsuites?[\s>]/i.test(xml) ? parseJUnit(xml) : parseTrx(xml);
-    }
-    catch {
-        return null;
-    }
+    return parseResultsAt(abs);
 }
 // Persist results as TRX, but only for writable local .trx files (never a
 // discovered project file — that's the agent's own output).
@@ -223,6 +214,10 @@ export async function createResultsServer(options = {}) {
     let groupDef = null;
     // One watcher per directory the sources live in.
     const watchers = new Map();
+    // A folder the caller explicitly asked for, kept whether or not a report in
+    // it has resolved yet. It is what a watcher has to hold on to so an empty or
+    // half-written folder can still recover once a run lands in it.
+    let awaitedDir = null;
     // Held at this level so closing the server can cancel a reload that was
     // already queued. Keyed by absolute path, so two sources in one folder
     // debounce independently.
@@ -677,6 +672,11 @@ export async function createResultsServer(options = {}) {
         const built = [];
         const skipped = [];
         const seen = new Set();
+        // A format that takes in its whole folder (Allure) is one run however
+        // many of its own files name it, so those collapse to a single source
+        // before anything is parsed -- adding them separately would read the
+        // folder once per member and merge N copies of every row.
+        const distinct = new Set(canonicalResultPaths(files.map((f) => resolvePath(f))));
         for (const raw of files) {
             const abs = resolvePath(raw);
             if (seen.has(abs)) {
@@ -684,6 +684,10 @@ export async function createResultsServer(options = {}) {
                 continue;
             }
             seen.add(abs);
+            if (existsSync(abs) && !distinct.has(abs)) {
+                skipped.push({ path: raw, reason: "another source already covers this run" });
+                continue;
+            }
             if (!existsSync(abs)) {
                 skipped.push({ path: raw, reason: "no such file" });
                 continue;
@@ -742,6 +746,25 @@ export async function createResultsServer(options = {}) {
     // not re-read four untouched files because the fifth was rewritten.
     function refreshDir(dir, changedName) {
         const here = entries.filter((e) => dirname(e.source.path) === dir);
+        // Nothing here yet, but the caller asked for this folder: whatever just
+        // landed may be the run it was waiting for. Taken newest-first until one
+        // parses in full, on the same terms as the original seed.
+        if (!here.length) {
+            if (dir !== awaitedDir)
+                return;
+            for (const candidate of resultsFilesIn(dir)) {
+                const entry = buildEntry(candidate);
+                if (!entry)
+                    continue;
+                applySources([entry], null);
+                groupDef = null;
+                if (!explicitCoverage)
+                    attachCoverageForSources();
+                broadcast();
+                return;
+            }
+            return;
+        }
         let changed = false, moved = false;
         if (here.length === 1) {
             // Alone in its folder, a source follows that folder's newest report:
@@ -801,6 +824,12 @@ export async function createResultsServer(options = {}) {
     // points at any more is dropped.
     function syncWatchers() {
         const wanted = new Set(entries.map((e) => dirname(e.source.path)));
+        // A folder the caller asked for is watched even before anything in it
+        // resolves: `dotnet test` creates TestResults/ on its first run, and a
+        // report caught mid-write becomes readable moments later. Without this
+        // the panel has nothing to recover from and stays empty for good.
+        if (awaitedDir)
+            wanted.add(awaitedDir);
         for (const [dir, w] of watchers) {
             if (wanted.has(dir))
                 continue;
@@ -841,8 +870,23 @@ export async function createResultsServer(options = {}) {
             }
             if (!abs && input.resultsDir) {
                 const d = resolvePath(String(input.resultsDir));
-                if (existsSync(d))
-                    abs = newestResultsFileIn(d);
+                // Remembered whether or not a report resolves, so a folder that
+                // is empty, or holds only a report still being written, is still
+                // watched and recovers on its own once one lands.
+                awaitedDir = d;
+                if (existsSync(d)) {
+                    // Newest-first until one parses IN FULL. Detection only reads
+                    // a candidate's opening bytes, and the parsers reject a report
+                    // that is incomplete -- so the newest file can be recognisable
+                    // and still unreadable, and the finished run behind it is what
+                    // the panel should show rather than nothing at all.
+                    for (const candidate of resultsFilesIn(d)) {
+                        if (parseResultsAt(candidate) !== null) {
+                            abs = candidate;
+                            break;
+                        }
+                    }
+                }
             }
             const entry = abs ? buildEntry(abs) : null;
             if (entry) {
@@ -856,8 +900,14 @@ export async function createResultsServer(options = {}) {
         // Honoured even when no results file resolved: the agent may be pointing
         // the panel at coverage for a run whose report it could not find.
         explicitCoverage = seedCoverage(input, entries[0]?.source.path ?? null);
-        if (!loaded)
+        if (!loaded) {
+            // applySources starts the watchers for a seed that landed; one that
+            // did not has to start its own, or the folder it is waiting on is
+            // never looked at again.
+            if (watchEnabled)
+                syncWatchers();
             return null;
+        }
         if (!explicitCoverage)
             attachCoverageForSources();
         return entries[0].source.path;

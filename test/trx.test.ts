@@ -96,6 +96,20 @@ test("parseTrx joins Message and StackTrace into one message", () => {
   assert.equal(row.message, "boom\nat foo (a.cs:10)");
 });
 
+test("parseTrx unwraps CDATA around the failure message", () => {
+  // `dotnet test` wraps assertion output in CDATA whenever it contains markup.
+  const xml = `<?xml version="1.0"?>
+<TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Results>
+    <UnitTestResult testName="x" outcome="Failed" testId="t1">
+      <Output><ErrorInfo><Message><![CDATA[expected <1> & got "2"]]></Message></ErrorInfo></Output>
+    </UnitTestResult>
+  </Results>
+</TestRun>`;
+  const [row] = parseTrx(xml);
+  assert.equal(row.message, `expected <1> & got "2"`);
+});
+
 test("TRX round-trip preserves XML-special characters", () => {
   const [row] = parseTrx(serializeTrx([
     { name: 'a & b <c>', status: "fail", message: 'x < y & "z"' },

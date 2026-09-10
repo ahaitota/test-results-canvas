@@ -1,0 +1,132 @@
+// Dart/Flutter `test --reporter=json`: a JSONL event stream where a test is a
+// testStart/error*/testDone triple keyed by test id.
+//
+// The protocol allows an asynchronous `error` to arrive AFTER a test's
+// testDone, with no second testDone behind it, so a test stays addressable by
+// its id until the run's own `done` event and its rows are only finalised then.
+
+import type { TestResult, TestStatus } from "../types.js";
+import { jsonLines, rec, str, num, joinMessage } from "./json.js";
+
+interface Entry {
+    row: TestResult;
+    startedAt?: number;
+    errors: string[];
+    done: boolean;
+}
+
+function status(result: string | undefined, skipped: unknown): TestStatus {
+    if (skipped === true) return "skip";
+    return result === "success" ? "pass" : "fail";
+}
+
+export function parseDart(text: string): TestResult[] {
+    const suites = new Map<number, string>();
+    const tests = new Map<number, Entry>();
+    // testDone order, which is the order the runner reported them in.
+    const finished: Entry[] = [];
+    let events = 0;
+    let sawDone = false;
+    let failedRun = false;
+    let suitesSeen = 0;
+    let expectedSuites: number | undefined;
+
+    for (const event of jsonLines(text)) {
+        events++;
+        const type = str(event, "type");
+        // `done` is the last event of a run, so anything behind it belongs to
+        // another one appended to the same file -- and which run each row came
+        // from is then anyone's guess.
+        if (sawDone) throw new SyntaxError("dart test stream continues after the run finished");
+        if (type === "done") {
+            sawDone = true;
+            // `success` is how the runner reports the verdict; null means the
+            // run was interrupted, which is not a run to present as finished.
+            if (typeof event.success !== "boolean") throw new SyntaxError("dart run did not report whether it succeeded");
+            failedRun = event.success === false;
+            continue;
+        }
+        // The runner opens by saying how many suites it will report. It says it
+        // once, as a count, or the run cannot be checked for a suite that never
+        // reported at all.
+        if (type === "allSuites") {
+            const count = num(event, "count");
+            if (expectedSuites != null || count == null || !Number.isInteger(count) || count < 0) {
+                throw new SyntaxError("dart run did not say how many suites it would report");
+            }
+            expectedSuites = count;
+            continue;
+        }
+        if (type === "suite") {
+            suitesSeen++;
+            const suite = rec(event.suite);
+            const id = num(suite, "id");
+            const path = str(suite, "path");
+            if (id != null && path) suites.set(id, path);
+            continue;
+        }
+        if (type === "testStart") {
+            const test = rec(event.test);
+            const id = num(test, "id");
+            const name = str(test, "name");
+            // An event this cannot read is a test the run cannot account for.
+            if (id == null || !name) throw new SyntaxError("dart testStart is missing its id or name");
+            const suiteId = num(test, "suiteID");
+            const path = suiteId == null ? undefined : suites.get(suiteId);
+            tests.set(id, {
+                row: { name, status: "pass", suite: path, file: path, framework: "dart test" },
+                startedAt: num(event, "time"),
+                errors: [],
+                done: false,
+            });
+            continue;
+        }
+        if (type === "error") {
+            const entry = tests.get(num(event, "testID") ?? -1);
+            if (entry) entry.errors.push(joinMessage(str(event, "error"), str(event, "stackTrace")) ?? "");
+            continue;
+        }
+        if (type !== "testDone") continue;
+        const id = num(event, "testID") ?? -1;
+        const entry = tests.get(id);
+        if (!entry) continue;
+        entry.done = true;
+        // Hidden entries are the runner's own loading/compiling steps.
+        if (event.hidden === true) {
+            tests.delete(id);
+            continue;
+        }
+        const at = num(event, "time");
+        entry.row.status = status(str(event, "result"), event.skipped);
+        entry.row.durationMs = at != null && entry.startedAt != null ? at - entry.startedAt : undefined;
+        finished.push(entry);
+    }
+
+    // A test that started and never finished means the report was read
+    // mid-write; the tests that did finish are not the whole run.
+    for (const entry of tests.values()) {
+        if (!entry.done) throw new SyntaxError("dart test stream ends with a test still running");
+    }
+    // Dart closes a run with a "done" event, so a stream without one was read
+    // between two tests however tidy the tests themselves look.
+    if (events && !sawDone) throw new SyntaxError("dart test stream has no done event");
+    // And it opens by saying how many suites it will report: a run missing one
+    // is missing every test in it.
+    if (expectedSuites != null && suitesSeen !== expectedSuites) {
+        throw new SyntaxError(`dart run declared ${expectedSuites} suites, reported ${suitesSeen}`);
+    }
+
+    const out = finished.map((entry) => {
+        // An error reported after the test passed still failed it: it is the
+        // whole reason the protocol allows a late one.
+        if (entry.errors.length) entry.row.status = "fail";
+        entry.row.message = joinMessage(...entry.errors);
+        return entry.row;
+    });
+    // The runner says the run failed and no test admits to it -- a teardown or
+    // an unhandled error outside any test. Reporting it beats a green run.
+    if (failedRun && !out.some((r) => r.status === "fail")) {
+        out.push({ name: "dart test run failed", status: "fail", message: "the runner reported the run as failed with no failing test", framework: "dart test" });
+    }
+    return out;
+}

@@ -1,0 +1,334 @@
+// Format detection and the file-level entry points of the parser registry.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { mkdtempSync, writeFileSync, readdirSync, readFileSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { detectParser, looksLikeResults, parseResults, parseResultsAt, canonicalResultPaths, expandsDirectory, runKey, RESULT_EXTS } from "../src/parsers/registry.js";
+
+const id = (text: string) => detectParser(text)?.id;
+
+const SAMPLES: [string, string][] = [
+  ["trx", `<?xml version="1.0"?><TestRun id="x"><Results /></TestRun>`],
+  ["junit", `<testsuites><testsuite name="s"><testcase name="a" /></testsuite></testsuites>`],
+  ["nunit", `<test-run id="2"><test-suite name="s"><test-case name="a" result="Passed" /></test-suite></test-run>`],
+  ["xunit", `<assemblies><assembly name="a.dll"><collection name="c"><test name="a" result="Pass" /></collection></assembly></assemblies>`],
+  ["testng", `<testng-results total="1"><suite name="s" /></testng-results>`],
+  ["ctest", `<Site Name="ci"><Testing><Test Status="passed"><Name>a</Name></Test></Testing></Site>`],
+  ["ctrf", `{"reportFormat":"CTRF","results":{"tests":[{"name":"a","status":"passed"}]}}`],
+  ["allure", `{"uuid":"1","name":"a","status":"passed"}`],
+  ["gotest", `{"Action":"run","Package":"p","Test":"T"}`],
+  ["dart", `{"protocolVersion":"0.1.1","type":"start","time":0}`],
+  ["rust", `{"type":"suite","event":"started","test_count":1}`],
+  ["tap", `TAP version 13\n1..1\nok 1 - a\n`],
+];
+
+test("detection reads a stream's first event, not any key that looks like one", () => {
+  // An application's own JSON holding a matching key nested somewhere would
+  // otherwise claim the file and blank the panel with an empty run.
+  assert.equal(id(`{"metadata":{"Action":"pass"}}`), undefined);
+  assert.equal(id(`{"plugin":{"type":"suite","event":"ok"}}`), undefined);
+  assert.equal(id(`{"tool":{},"results":{"tests":[{"name":"health","status":"passed"}]}}`), undefined);
+  // And key order is the runner's business.
+  assert.equal(id(`{"event":"started","type":"suite","test_count":1}`), "rust");
+  // Dart and Rust both open with a "suite" event; what it carries tells them
+  // apart, not which parser is asked first.
+  assert.equal(id(`{"type":"suite","suite":{"id":0,"path":"test/a_test.dart"}}`), "dart");
+});
+
+test("detectParser routes each format to its own parser", () => {
+  for (const [expected, text] of SAMPLES) assert.equal(id(text), expected, expected);
+});
+
+test("a UTF-8 BOM does not stop a report being read", () => {
+  // Windows tooling writes one routinely: it decodes to a leading U+FEFF that
+  // is outside the XML document, and that JSON.parse rejects outright.
+  const bom = "\uFEFF";
+  assert.equal(id(`${bom}<?xml version="1.0"?><testsuites><testcase name="x" /></testsuites>`), "junit");
+  assert.equal(parseResults(`${bom}<?xml version="1.0"?><testsuites><testcase name="x" /></testsuites>`)?.length, 1);
+  assert.equal(parseResults(`${bom}{"reportFormat":"CTRF","results":{"tool":{"name":"jest"},"summary":{"tests":1,"passed":1,"failed":0,"skipped":0,"pending":0,"other":0},"tests":[{"name":"a","status":"passed"}]}}`)?.length, 1);
+});
+
+test("looksLikeResults rejects files that are not reports", () => {
+  const notReports = [
+    `{"name":"pkg","version":"1.0.0","scripts":{"test":"node --test"}}`,
+    `{"compilerOptions":{"strict":true}}`,
+    "<html><body>ok</body></html>",
+    "TF: src/calc.ts\nDA:1,1\nend_of_record\n",
+    "",
+  ];
+  for (const text of notReports) assert.equal(looksLikeResults(text), false, text.slice(0, 20));
+});
+
+test("looksLikeResults rejects the coverage reports that share a folder with a run", () => {
+  // Cobertura/JaCoCo/LCOV live beside the results and are also .xml/.info, so a
+  // results scan must never claim one of them.
+  const dir = join(dirname(fileURLToPath(import.meta.url)), "..", "e2e", "fixtures", "coverage");
+  const names = readdirSync(dir);
+  assert.ok(names.length > 0);
+  for (const name of names) assert.equal(looksLikeResults(readFileSync(join(dir, name), "utf8")), false, name);
+});
+
+test("looksLikeResults rejects reports from runners this canvas does not parse", () => {
+  // Each of these carries the generic keys a loose predicate would match, and
+  // sits in the same folder as the run's real report -- so claiming one would
+  // let it win the "newest report" race and blank the panel.
+  const lookalikes = [
+    // jest --json / vitest --reporter=json: fullName + status, no uuid.
+    `{"numFailedTests":1,"testResults":[{"assertionResults":[{"fullName":"calc adds","status":"passed"}]}]}`,
+    // playwright --reporter=json: specs nest "tests" that nest "results".
+    `{"config":{},"suites":[{"specs":[{"title":"adds","tests":[{"results":[{"status":"passed"}]}]}]}]}`,
+    // A Windows side-by-side manifest saved as .xml.
+    `<?xml version="1.0"?><assembly manifestVersion="1.0"><assemblyIdentity name="app" /></assembly>`,
+  ];
+  for (const text of lookalikes) assert.equal(looksLikeResults(text), false, text.slice(0, 30));
+});
+
+test("parseResultsAt rejects an Allure folder holding a sibling caught mid-write", () => {
+  // The run is the whole folder, so the readable subset is not the run: showing
+  // it would report an outcome that is not known yet as green. Failing here
+  // leaves the last complete run on screen.
+  const dir = mkdtempSync(join(tmpdir(), "allure-partial-"));
+  const one = join(dir, "aaa-result.json");
+  writeFileSync(one, `{"uuid":"aaa","name":"adds","status":"passed"}`, "utf8");
+  writeFileSync(join(dir, "bbb-result.json"), `{"uuid":"bbb","name":"subt`, "utf8");
+  assert.equal(parseResultsAt(one), null);
+});
+
+test("detection reads the root element, so report content cannot pick the parser", () => {
+  // A failure message that quotes markup is still just text. Searching raw bytes
+  // for "<testsuite>" would hand this NUnit report to the JUnit parser, which
+  // finds nothing in it.
+  const nunit = `<?xml version="1.0"?>
+<test-run id="1">
+  <test-suite type="TestFixture" name="Markup">
+    <test-case name="Reports" result="Failed" duration="0.01">
+      <failure><message><![CDATA[expected no <testsuite> element]]></message></failure>
+    </test-case>
+  </test-suite>
+</test-run>`;
+  assert.equal(id(nunit), "nunit");
+  assert.deepEqual(parseResults(nunit)?.map((r) => [r.name, r.status]), [["Reports", "fail"]]);
+  // Same for a TRX whose captured output mentions a JUnit document.
+  assert.equal(id(`<TestRun id="1"><Output>wrote <testsuites></Output></TestRun>`), "trx");
+});
+
+test("CTest is not confused with the other documents rooted at <Site>", () => {
+  assert.equal(id(`<Site Name="ci"><Build><Log>ok</Log></Build></Site>`), undefined);
+});
+
+test("expandsDirectory marks the sources a sibling change belongs to", () => {
+  // The watcher uses this to know that a brand-new Allure result changed the
+  // source named after a different file in that folder.
+  const dir = mkdtempSync(join(tmpdir(), "expands-"));
+  const allure = join(dir, "aaa-result.json");
+  const junit = join(dir, "run.xml");
+  writeFileSync(allure, `{"uuid":"aaa","name":"adds","status":"passed"}`, "utf8");
+  writeFileSync(junit, `<testsuites><testsuite name="s"><testcase name="c" /></testsuite></testsuites>`, "utf8");
+  assert.equal(expandsDirectory(allure), true);
+  assert.equal(expandsDirectory(junit), false);
+  assert.equal(expandsDirectory(join(dir, "gone.xml")), false);
+});
+
+test("parseResults rejects XML that is not well formed", () => {
+  // An unquoted attribute value: attr() can only skip what it cannot read, so
+  // this used to parse to a run whose tests had lost their names.
+  assert.equal(parseResults(`<testsuites><testsuite name="s"><testcase name=x /></testsuite></testsuites>`), null);
+  // Two document elements is two documents, or one appended to.
+  assert.equal(parseResults(`<testsuite name="a"><testcase name="x" /></testsuite><testsuite name="b"><testcase name="y" /></testsuite>`), null);
+  // An end tag carrying attributes, and a value that never closes.
+  assert.equal(parseResults(`<testsuites><testsuite name="s"></testsuite name="s"></testsuites>`), null);
+  assert.equal(parseResults(`<testsuites><testsuite name="s><testcase name="x" /></testsuite></testsuites>`), null);
+  // A repeated attribute: attr() returns the first, so the row would silently
+  // take one of two conflicting names.
+  assert.equal(parseResults(`<testsuites><testsuite name="a" name="b"><testcase name="x" /></testsuite></testsuites>`), null);
+  // "</a/>" is not an end tag.
+  assert.equal(parseResults(`<testsuites><testsuite name="s"><testcase name="x"></testcase/></testsuite></testsuites>`), null);
+  // Only whitespace, comments, PIs and a doctype may sit outside the root.
+  assert.equal(parseResults(`garbage<testsuites><testcase name="x" /></testsuites>`), null);
+  assert.equal(parseResults(`<testsuites><testcase name="x" /></testsuites>tail`), null);
+  // "<>" is not a tag, and a bare "<" in text must be escaped.
+  assert.equal(parseResults(`<testsuites><><testcase name="x" /></testsuites>`), null);
+  // CDATA is not allowed outside the document element.
+  assert.equal(parseResults(`<![CDATA[garbage]]><testsuites><testcase name="x" /></testsuites>`), null);
+  // The declaration, a doctype and comments around the root are still fine.
+  const framed = `<?xml version="1.0"?>\n<!DOCTYPE testsuites>\n<!-- run -->\n<testsuites><testsuite name="s"><testcase name="x" /></testsuite></testsuites>\n<!-- end -->\n`;
+  assert.equal(parseResults(framed)?.length, 1);
+  // A doctype whose internal subset quotes a "]" is still one doctype.
+  assert.equal(parseResults(`<!DOCTYPE testsuites [<!ENTITY x "a]b">]>\n<testsuites><testsuite name="s"><testcase name="x" /></testsuite></testsuites>`)?.length, 1);
+  // Numeric character references mean the character they encode.
+  assert.deepEqual(parseResults(`<testsuites><testsuite name="s"><testcase name="a&#66;c" /></testsuite></testsuites>`)?.map((r) => r.name), ["aBc"]);
+  assert.deepEqual(parseResults(`<testsuites><testsuite name="s"><testcase name="a&#x42;c" /></testsuite></testsuites>`)?.map((r) => r.name), ["aBc"]);
+  // Out of Unicode's range, so there is no character to put there.
+  assert.deepEqual(parseResults(`<testsuites><testsuite name="s"><testcase name="a&#9999999;c" /></testsuite></testsuites>`)?.map((r) => r.name), ["ac"]);
+});
+
+test("parseResults rejects XML that was caught half-written", () => {
+  // Truncated mid-document: parseXml is deliberately lenient, so without a
+  // structural check these would replace a finished run with a shorter one.
+  assert.equal(parseResults(`<test-run><test-suite name="s">`), null);
+  assert.equal(parseResults(`<test-run><test-suite name="s"><test-case name="a" result="Passed" />`), null);
+  assert.equal(parseResults(`<testsuites><testsuite name="s"><testcase name="a" /><!-- cut`), null);
+  // The complete document is still accepted.
+  assert.deepEqual(parseResults(`<test-run><test-suite name="s"><test-case name="a" result="Passed" /></test-suite></test-run>`)?.length, 1);
+});
+
+test("looksLikeResults rejects an Allure container, which carries no status of its own", () => {
+  // Containers sit in the results folder and are newer than the results they
+  // group, so claiming one would blank the run.
+  assert.equal(looksLikeResults(`{"uuid":"c","children":["r"],"name":"suite","befores":[{"name":"setup","status":"passed"}]}`), false);
+  assert.equal(looksLikeResults(`{"uuid":"r","name":"adds","status":"passed"}`), true);
+});
+
+test("canonicalResultPaths collapses an Allure folder to a single run", () => {
+  const dir = mkdtempSync(join(tmpdir(), "allure-canon-"));
+  const one = join(dir, "aaa-result.json");
+  const two = join(dir, "bbb-result.json");
+  writeFileSync(one, `{"uuid":"aaa","name":"adds","status":"passed"}`, "utf8");
+  writeFileSync(two, `{"uuid":"bbb","name":"subtracts","status":"failed"}`, "utf8");
+  const junit = join(dir, "junit.xml");
+  writeFileSync(junit, `<testsuites><testsuite name="s"><testcase name="c" /></testsuite></testsuites>`, "utf8");
+
+  // Both result files expand to the same set, so keeping both would merge every
+  // row twice and parse the folder once per member.
+  assert.deepEqual(canonicalResultPaths([one, two, junit]), [one, junit]);
+  assert.deepEqual(parseResultsAt(one)?.length, 2);
+});
+
+test("a report is detected against all of itself once it has been read", () => {
+  // A long leading comment or metadata field pushes the identifying markup past
+  // the window a directory scan reads, but a file that has been read whole is
+  // matched against all of it.
+  const padding = "x".repeat(9000);
+  const junit = `<!-- ${padding} -->\n<testsuites><testsuite name="s"><testcase name="late" /></testsuite></testsuites>`;
+  assert.equal(parseResults(junit)?.length, 1);
+  const ctrf = `{"metadata":"${padding}","reportFormat":"CTRF","results":{"tool":{"name":"jest"},"summary":{"tests":1,"passed":1,"failed":0,"skipped":0,"pending":0,"other":0},"tests":[{"name":"late","status":"passed"}]}}`;
+  assert.equal(parseResults(ctrf)?.length, 1);
+  const allure = `{"description":"${padding}","uuid":"a","name":"late","status":"passed"}`;
+  assert.equal(parseResults(allure)?.length, 1);
+  // A directory scan still only judges the opening bytes, since that is all it
+  // reads of a candidate.
+  assert.equal(looksLikeResults(junit.slice(0, 8192)), false);
+});
+
+test("an Allure report under a custom name is its own run, not the folder's", () => {
+  // expandAllure only groups Allure's own naming, so the key has to agree:
+  // sharing the folder's key would let one such file shadow every other
+  // candidate in it while parsing only itself.
+  const dir = mkdtempSync(join(tmpdir(), "allure-named-"));
+  const older = join(dir, "old.json");
+  const newer = join(dir, "new.json");
+  writeFileSync(older, `{"uuid":"o","name":"complete","status":"passed"}`, "utf8");
+  writeFileSync(newer, `{"uuid":"n","name":"partial","status":"passed"`, "utf8");
+  assert.notEqual(runKey(newer), runKey(older));
+  assert.deepEqual(canonicalResultPaths([newer, older]), [newer, older]);
+  // And the folder's own naming still groups.
+  const grouped = join(dir, "aaa-result.json");
+  const sibling = join(dir, "bbb-result.json");
+  writeFileSync(grouped, `{"uuid":"g","name":"grouped","status":"passed"}`, "utf8");
+  writeFileSync(sibling, `{"uuid":"s","name":"sibling","status":"passed"}`, "utf8");
+  assert.equal(runKey(grouped), runKey(sibling));
+  assert.deepEqual(canonicalResultPaths([grouped, sibling]), [grouped]);
+});
+
+test("parseResults rejects a file whose declared format is malformed", () => {
+  // Detected as CTRF by its head, but the document is truncated: a broken report
+  // must not surface as a run in which nothing failed.
+  assert.equal(parseResults(`{"reportFormat":"CTRF","results":{"tests":[{"name":"a",`), null);
+  // A CTRF report missing the structure its own reportFormat promises.
+  assert.equal(parseResults(`{"reportFormat":"CTRF"}`), null);
+  assert.equal(parseResults("random log line\n"), null);
+});
+
+test("parseResults still returns rows for a report that ran no tests", () => {
+  assert.deepEqual(parseResults(`{"reportFormat":"CTRF","results":{"summary":{"tests":0,"passed":0,"failed":0,"skipped":0,"pending":0,"other":0},"tests":[]}}`), []);
+});
+
+test("every format still accepts a complete report that uses all of its outcomes", () => {
+  // The counter reconciliation each parser now does is only safe if a VALID
+  // report still passes it. Rejecting a real run is as bad as a false green --
+  // the panel simply refuses to show what happened -- and the failure mode is
+  // invisible unless a case exercises every outcome category at once.
+  const valid: [string, string, string[]][] = [
+    ["xunit", `<assemblies><assembly name="a.dll" total="3" passed="1" failed="1" skipped="1" not-run="1" errors="0"><collection name="c"><test name="p" result="Pass"/><test name="f" result="Fail"><failure><message>boom</message></failure></test><test name="s" result="Skip"><reason>why</reason></test><test name="n" result="NotRun"/></collection></assembly></assemblies>`, ["pass", "fail", "skip", "skip"]],
+    ["nunit", `<test-run total="4" passed="1" failed="1" skipped="1" inconclusive="1" warnings="1" result="Failed"><test-suite type="TestFixture" name="F"><test-case name="p" result="Passed"/><test-case name="f" result="Failed"><failure><message>boom</message></failure></test-case><test-case name="s" result="Skipped"/><test-case name="i" result="Inconclusive"/><test-case name="w" result="Warning"/></test-suite></test-run>`, ["pass", "fail", "skip", "skip", "pass"]],
+    ["testng", `<testng-results total="3" passed="1" failed="1" skipped="1" ignored="0"><suite name="s"><test name="t"><class name="C"><test-method name="p" status="PASS"/><test-method name="f" status="FAIL"/><test-method name="s" status="SKIP"/><test-method name="setUp" status="FAIL" is-config="true"/><test-method name="flaky" status="SKIP" retried="true"/></class></test></suite></testng-results>`, ["pass", "fail", "skip", "fail", "skip"]],
+    ["ctest", `<Site><Testing><TestList><Test>./p</Test><Test>./f</Test><Test>./s</Test></TestList><Test Status="passed"><Name>p</Name></Test><Test Status="failed"><Name>f</Name></Test><Test Status="notrun"><Name>s</Name></Test></Testing></Site>`, ["pass", "fail", "skip"]],
+    ["ctrf", `{"reportFormat":"CTRF","specVersion":"1.0.0","results":{"tool":{"name":"jest"},"summary":{"tests":5,"passed":1,"failed":1,"skipped":1,"pending":1,"other":1,"start":0,"stop":1},"tests":[{"name":"p","status":"passed"},{"name":"f","status":"failed"},{"name":"s","status":"skipped"},{"name":"pe","status":"pending"},{"name":"o","status":"other"}]}}`, ["pass", "fail", "skip", "skip", "skip"]],
+    ["rust", `{"type":"suite","event":"started","test_count":3}\n{"type":"test","event":"ok","name":"p"}\n{"type":"test","event":"failed","name":"f"}\n{"type":"test","event":"ignored","name":"i"}\n{"type":"suite","event":"failed","passed":1,"failed":1,"ignored":1,"measured":0,"filtered_out":0}`, ["pass", "fail", "skip"]],
+    ["dart", `{"type":"start","time":0}\n{"type":"allSuites","count":1}\n{"type":"suite","suite":{"id":0,"path":"a_test.dart"}}\n{"type":"testStart","test":{"id":1,"name":"p","suiteID":0}}\n{"type":"testDone","testID":1,"result":"success","hidden":false}\n{"type":"testStart","test":{"id":2,"name":"f","suiteID":0}}\n{"type":"testDone","testID":2,"result":"failure","hidden":false}\n{"type":"testStart","test":{"id":3,"name":"s","suiteID":0}}\n{"type":"testDone","testID":3,"result":"success","skipped":true,"hidden":false}\n{"type":"done","success":false}`, ["pass", "fail", "skip"]],
+    ["gotest", `{"Action":"run","Package":"p","Test":"A"}\n{"Action":"pass","Package":"p","Test":"A"}\n{"Action":"run","Package":"p","Test":"B"}\n{"Action":"fail","Package":"p","Test":"B"}\n{"Action":"run","Package":"p","Test":"C"}\n{"Action":"skip","Package":"p","Test":"C"}\n{"Action":"fail","Package":"p","Elapsed":0.1}`, ["pass", "fail", "skip"]],
+    ["tap", `TAP version 13\n1..3\nok 1 - p\nnot ok 2 - f\nok 3 - s # SKIP why\n`, ["pass", "fail", "skip"]],
+  ];
+  for (const [name, text, statuses] of valid) {
+    assert.deepEqual(parseResults(text)?.map((r) => r.status), statuses, name);
+  }
+});
+
+test("RESULT_EXTS covers every discovered extension without dropping the originals", () => {
+  assert.deepEqual([...RESULT_EXTS].sort(), [".jsonl", ".json", ".ndjson", ".tap", ".trx", ".xml"].sort());
+});
+
+test("parseResultsAt merges an Allure run's fixture failures with its results", () => {
+  // The teardown that broke is the only failure in the folder; a run that
+  // reported it nowhere would read as all green.
+  const dir = mkdtempSync(join(tmpdir(), "allure-fixtures-"));
+  const one = join(dir, "aaa-result.json");
+  writeFileSync(one, `{"uuid":"aaa","name":"adds","status":"passed"}`, "utf8");
+  writeFileSync(join(dir, "ccc-container.json"), JSON.stringify({
+    uuid: "ccc",
+    name: "DatabaseFixture",
+    children: ["aaa"],
+    afters: [{ name: "disconnect", status: "broken", statusDetails: { message: "already closed" } }],
+  }), "utf8");
+  assert.deepEqual(parseResultsAt(one)?.map((r) => [r.name, r.status]), [["adds", "pass"], ["disconnect", "fail"]]);
+});
+
+test("runKey names one run however the caller spelled the path", () => {
+  const dir = mkdtempSync(join(tmpdir(), "spelling-"));
+  const abs = join(dir, "run.xml");
+  writeFileSync(abs, `<testsuites><testsuite name="s"><testcase name="c" /></testsuite></testsuites>`, "utf8");
+  const shouted = abs.toUpperCase();
+  // Asked of the filesystem rather than assumed from the platform: macOS can be
+  // formatted either way, and on a case-sensitive volume that alias is a
+  // genuinely different file that must keep its own key.
+  const alias = existsSync(shouted);
+  assert.equal(runKey(abs) === runKey(shouted), alias);
+  assert.equal(canonicalResultPaths([abs, shouted]).length, alias ? 1 : 2);
+  // A path spelled the long way round is the same run everywhere.
+  assert.equal(runKey(join(dir, "sub", "..", "run.xml")), runKey(abs));
+});
+
+test("canonicalResultPaths collapses a whole Allure folder to one attempt", () => {
+  // Every result in the folder expands to the same run, and parsing it is
+  // reading all of them: walking the candidates one by one would parse the
+  // directory once per file in it.
+  const dir = mkdtempSync(join(tmpdir(), "allure-many-"));
+  const paths: string[] = [];
+  for (let i = 0; i < 200; i++) {
+    const abs = join(dir, `${String(i).padStart(3, "0")}-result.json`);
+    writeFileSync(abs, `{"uuid":"u${i}","name":"test ${i}","status":"passed"}`, "utf8");
+    paths.push(abs);
+  }
+  assert.deepEqual(canonicalResultPaths(paths), [paths[0]]);
+});
+
+test("parseResultsAt reads a file from disk and returns null for a missing one", () => {
+  const dir = mkdtempSync(join(tmpdir(), "results-"));
+  const abs = join(dir, "run.tap");
+  writeFileSync(abs, "TAP version 13\n1..2\nok 1 - a\nnot ok 2 - b\n", "utf8");
+  assert.deepEqual(parseResultsAt(abs)?.map((r) => r.status), ["pass", "fail"]);
+  assert.equal(parseResultsAt(join(dir, "nope.tap")), null);
+});
+
+test("parseResultsAt merges a whole Allure results directory, in name order", () => {
+  const dir = mkdtempSync(join(tmpdir(), "allure-"));
+  const one = join(dir, "aaa-result.json");
+  writeFileSync(one, `{"uuid":"aaa","name":"adds","status":"passed"}`, "utf8");
+  writeFileSync(join(dir, "bbb-result.json"), `{"uuid":"bbb","name":"subtracts","status":"failed"}`, "utf8");
+  // Attachments and container files sit in the same folder and are not results.
+  writeFileSync(join(dir, "ccc-container.json"), `{"uuid":"ccc","children":[]}`, "utf8");
+  const rows = parseResultsAt(one);
+  assert.deepEqual(rows?.map((r) => [r.name, r.status]), [["adds", "pass"], ["subtracts", "fail"]]);
+});

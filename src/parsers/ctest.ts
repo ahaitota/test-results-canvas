@@ -1,0 +1,64 @@
+// CTest XML (Testing/*/Test.xml): <Site> / <Testing> / <Test Status="...">.
+
+import type { TestResult, TestStatus } from "../types.js";
+import { attr, parseXml, child, childText, findAll } from "../xml.js";
+import type { XmlElement } from "../xml.js";
+import { joinMessage } from "./json.js";
+
+// The outcomes CTest writes. Anything else is not a result this report can be
+// read without: defaulting it to "skip" would take a failure off the run.
+const STATUS = new Map<string, TestStatus>([["passed", "pass"], ["failed", "fail"], ["notrun", "skip"], ["disabled", "skip"]]);
+
+// CTest reports numbers as <NamedMeasurement name="..."><Value>.
+function measurement(results: XmlElement | undefined, name: string): string | undefined {
+    for (const m of results?.children ?? []) {
+        if (m.name === "NamedMeasurement" && attr(m.attrs, "name") === name) return childText(m, "Value");
+    }
+    return undefined;
+}
+
+export function parseCTest(xml: string): TestResult[] {
+    const out: TestResult[] = [];
+    for (const testing of findAll(parseXml(xml), "Testing")) {
+        const startTime = childText(testing, "StartDateTime");
+        let found = 0;
+        for (const test of testing.children) {
+            // <TestList> repeats every test as a bare <Test>name</Test>; only the
+            // outcome elements carry a Status.
+            const outcome = attr(test.attrs, "Status");
+            if (test.name !== "Test" || !outcome) continue;
+            const name = childText(test, "Name");
+            const status = STATUS.get(outcome.toLowerCase());
+            if (!name || !status) {
+                throw new SyntaxError("ctest result is missing its name or a known status");
+            }
+            const results = child(test, "Results");
+            const seconds = Number(measurement(results, "Execution Time"));
+            // CTest's reason for stopping. A test that ran to the end and then
+            // returned non-zero says "Completed", which is no reason at all.
+            const reason = measurement(results, "Completion Status");
+            out.push({
+                name,
+                status,
+                durationMs: Number.isFinite(seconds) ? Math.round(seconds * 1000) : undefined,
+                message: status === "fail" ? joinMessage(reason === "Completed" ? undefined : reason, childText(child(results, "Measurement"), "Value")) : undefined,
+                suite: childText(test, "Path"),
+                framework: "CTest",
+                startTime,
+            });
+            found++;
+        }
+        // CTest writes <TestList> and the detailed results from one and the
+        // same list, so the two always agree in a whole report -- and fixtures
+        // and `-R` filtering are already reflected in both. A short one is a
+        // report cut off partway through its results.
+        const list = child(testing, "TestList");
+        if (list) {
+            const listed = list.children.filter((t) => t.name === "Test").length;
+            if (listed !== found) {
+                throw new SyntaxError(`ctest listed ${listed} tests, reported ${found}`);
+            }
+        }
+    }
+    return out;
+}

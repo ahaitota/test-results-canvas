@@ -1,21 +1,22 @@
 # Test Results canvas (Copilot extension)
 
 A GitHub Copilot **canvas extension** that shows your test runs as a live UI panel
-inside the Copilot app. It renders **.NET TRX** and **JUnit XML** reports with
-pass/fail/skip status, per-test duration, failure messages, filtering/search, and
-a summary — and it updates live over SSE every time you re-run the tests.
+inside the Copilot app. It renders test reports from most language ecosystems
+(TRX, JUnit/NUnit/xUnit/TestNG/CTest XML, TAP, CTRF, Allure, and the native JSON
+streams of `go test`, Dart and Rust) with pass/fail/skip status, per-test
+duration, failure messages, filtering/search, and a summary — and it updates live
+over SSE every time you re-run the tests.
 
 Once installed, you don't have to do anything special. In **any** project:
 
 1. You write code and ask Copilot to run the tests (`dotnet test`, `mvn test`,
-   `pytest --junitxml=...`, `npm test`, etc.).
-2. A tool hook notices the run, finds the fresh `.trx`/`.xml` report in your
-   working directory, and tells the agent to open this canvas with that file.
+   `pytest --junitxml=...`, `npm test`, `go test -json`, etc.).
+2. A tool hook notices the run, finds the fresh report in your working directory,
+   and tells the agent to open this canvas with that file.
 3. The **Test Results** panel appears automatically and then live-refreshes on
    every subsequent run — no reopening.
 
-Supported report formats: `.trx` (VSTest/`dotnet test --logger trx`) and JUnit
-`.xml` (Maven Surefire, Gradle, pytest, jest-junit, etc.).
+See [Supported report formats](#supported-report-formats) for the full list.
 
 It also shows **code coverage** when the run produced a report (Cobertura, LCOV
 or JaCoCo), in a **Coverage** tab beside **Tests**.
@@ -32,6 +33,51 @@ it with its default application. A merged run has no single file, so it gets one
 what the panel currently holds, are disabled when the results came from the
 agent's actions and no file backs them, and report a failed launch in the panel.
 
+
+## Supported report formats
+
+The format is detected from the file's **content**, never from its name, so a
+report can be called anything; the extensions below are only what a folder scan
+looks at. A folder scan judges a candidate by its opening bytes, since that is
+all it reads of one, but a file that has been read whole is matched against all
+of it — so a report can carry a long leading comment or metadata field. A
+leading UTF-8 BOM is ignored. XML dialects are told apart by their
+root element, so a failure message quoting `<testsuite>` cannot send an NUnit
+report to the JUnit parser. A file no parser claims — or one that claims a format
+but is incomplete: XML a conforming parser would reject, a JSONL event line that
+will not parse, an event stream missing its terminal run/package/suite event, or
+an Allure folder with a result that is unreadable or not a result — is ignored
+rather than shown as an empty or partly green passing run.
+
+| Format | Runners | How to produce it | Scanned as | Known limitations |
+| --- | --- | --- | --- | --- |
+| TRX | VSTest, `dotnet test` | `dotnet test --logger trx` | `.trx`, `.xml` | — |
+| JUnit XML | Surefire, Gradle, pytest, jest-junit, go-junit-report, … | `pytest --junitxml=report.xml` | `.xml` | every `<testcase>` needs a name |
+| NUnit 3 (and 2) | NUnit console/engine | `nunit3-console --result=nunit.xml` | `.xml` | properties and attachments are not shown; a `Warning` result counts as a test that ran, keeping what it warned about; a suite that fails in its own `OneTimeSetUp`/`OneTimeTearDown` is reported alongside its cases, while a failure NUnit marks as inherited (`site="Child"`/`"Parent"`) is left to the suite that owns it; `<test-run>`'s counters are checked against the `<test-case>` elements they count, not against those extra suite rows |
+| xUnit.net | xUnit v2/v3 | `dotnet test --logger "xunit;LogFilePath=xunit.xml"` | `.xml` | assembly-level `<errors>` (fixture and cleanup failures) are reported as failing rows; every test needs a name and a schema result, and the outcomes found must match the assembly's own `passed`/`failed`/`skipped` one by one when it declares them, with `total` counting the tests that RAN and `not-run` counted separately, as the schema defines them; v3's per-test `source-file`/`start-rtf`/`finish-rtf` are used when present, falling back to the assembly's `run-date`/`run-time` |
+| TestNG | TestNG, Maven | `test-output/testng-results.xml` | `.xml` | `is-config` setup/teardown methods are dropped unless they failed, since a failed one is the run's real failure; every other method needs a name and a `PASS`/`FAIL`/`SKIP` status; the `passed`/`failed`/`skipped` counters are checked against the test methods TestNG counts, which excludes configuration methods and retried attempts |
+| CTest | CMake / CTest | `ctest -T Test` → `Testing/<tag>/Test.xml` | `.xml` | one row per test binary, not per assertion; every result needs a `<Name>` and a known `Status`, and there must be one result per `<TestList>` entry, since CTest writes both from the same set of tests |
+| TAP 13/14 | node:test, prove, pytest-tap, tap.py, Catch2, … | `node --test --test-reporter=tap > run.tap` | `.tap` | the YAML block contributes `error`/`message`, `stack` and `duration_ms`; a stream must declare one `1..N` plan and number its points in order within it, and a `Bail out!` or any breach of that becomes a failed row |
+| CTRF JSON | any runner with a CTRF reporter (JS/TS, Python, Java, Go, .NET) | the reporter writes `ctrf-report.json` | `.json` | the report needs the `results.tests` array and the `results.summary` its schema requires, with every counter the schema lists; each test needs a name and a schema status, and each counter must match what the tests hold |
+| Allure 2 | Allure adapters | `allure-results/<uuid>-result.json` | `.json` | one result or container object per file, as Allure writes them; the whole results folder is merged in name order, then the fixtures that failed in its `*-container.json` files, since Allure records setup and teardown nowhere else; steps and attachments are ignored, and one unreadable result rejects the folder rather than showing the rest as the run |
+| `go test -json` | Go | `go test -json ./... > run.jsonl` | `.json`, `.jsonl`, `.ndjson` | the failure text is the test's raw output; a package that fails with no test to blame (a build or `TestMain` failure) becomes a row of its own; one run per file, since a package reports its own result last |
+| Dart test JSON | `dart test`, `flutter test` | `dart test --reporter=json > run.jsonl` | `.json`, `.jsonl`, `.ndjson` | hidden loading/compiling entries are dropped; an error reported after a test finished still fails it, and a run the runner calls failed gets a row when no test does; one run per file, and every suite `allSuites` announced has to report |
+| Rust libtest JSON | libtest, `cargo nextest` | `cargo nextest run --message-format libtest-json > run.jsonl` | `.json`, `.jsonl`, `.ndjson` | durations need `--report-time` (or nextest); the suite's closing `ok`/`failed` verdict and its `passed`/`failed`/`ignored` tally must match the tests reported, and a suite that says it failed with no failing test gets a row of its own |
+
+Not yet supported: Apple XCTest `.xcresult` exports and Bazel Build Event
+Protocol JSON.
+
+Adding a format is one module in `src/parsers/` plus one entry in
+`src/parsers/registry.ts`.
+
+A folder is read newest-first until a report parses in full, so a run still
+being written never hides the finished one behind it. The folder stays watched
+even when nothing in it can be read yet, so the first report to land shows up on
+its own.
+
+Recovering from a folder that does not exist when the panel opens, one deleted
+and recreated by a re-run, and the rest of the live-refresh behaviour under
+re-runs that rename their output, is tracked in #43.
 
 ## Install (once, per user — works in every project)
 ### Step 1:
@@ -88,8 +134,21 @@ src/
     virtual.ts           windowing: flattens the list and tracks row heights
     useResultsStream.ts  SSE subscription that drives live refresh
   parsers/
+    registry.ts          every format, matched on content; the only place the
+                         server asks "what is this file?"
     trx.ts               .NET TRX parser
     junit.ts             JUnit XML parser
+    nunit.ts             NUnit 3/2 XML parser
+    xunit.ts             xUnit.net XML parser
+    testng.ts            TestNG XML parser
+    ctest.ts             CTest XML parser
+    tap.ts               TAP 13/14 parser
+    ctrf.ts              CTRF JSON parser
+    allure.ts            Allure 2 result JSON (merges the results folder)
+    gotest.ts            `go test -json` event stream
+    dart.ts              Dart/Flutter test JSON event stream
+    rust.ts              Rust libtest/nextest JSON event stream
+    json.ts              shared JSON/JSONL helpers
   coverage/
     payload.ts           the SSE wire contract, shared with the client (host-free)
     types.ts             CoverageReport / CoverageFile model + tallying
@@ -122,6 +181,8 @@ src/
 test/
   trx.test.ts            unit tests for the TRX parser
   junit.test.ts          unit tests for the JUnit parser
+  formats.test.ts        unit tests for the other ten report formats
+  registry.test.ts       format detection, malformed input, multi-file runs
   labels.test.ts         unit tests for the label generator
   rowkey.test.ts         unit tests for row identity
   ask.test.ts            unit tests for prompt composition
