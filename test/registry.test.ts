@@ -245,6 +245,27 @@ test("parseResults still returns rows for a report that ran no tests", () => {
   assert.deepEqual(parseResults(`{"reportFormat":"CTRF","results":{"summary":{"tests":0,"passed":0,"failed":0,"skipped":0,"pending":0,"other":0},"tests":[]}}`), []);
 });
 
+test("every format still accepts a complete report that uses all of its outcomes", () => {
+  // The counter reconciliation each parser now does is only safe if a VALID
+  // report still passes it. Rejecting a real run is as bad as a false green --
+  // the panel simply refuses to show what happened -- and the failure mode is
+  // invisible unless a case exercises every outcome category at once.
+  const valid: [string, string, string[]][] = [
+    ["xunit", `<assemblies><assembly name="a.dll" total="3" passed="1" failed="1" skipped="1" not-run="1" errors="0"><collection name="c"><test name="p" result="Pass"/><test name="f" result="Fail"><failure><message>boom</message></failure></test><test name="s" result="Skip"><reason>why</reason></test><test name="n" result="NotRun"/></collection></assembly></assemblies>`, ["pass", "fail", "skip", "skip"]],
+    ["nunit", `<test-run total="4" passed="1" failed="1" skipped="1" inconclusive="1" warnings="1" result="Failed"><test-suite type="TestFixture" name="F"><test-case name="p" result="Passed"/><test-case name="f" result="Failed"><failure><message>boom</message></failure></test-case><test-case name="s" result="Skipped"/><test-case name="i" result="Inconclusive"/><test-case name="w" result="Warning"/></test-suite></test-run>`, ["pass", "fail", "skip", "skip", "pass"]],
+    ["testng", `<testng-results total="3" passed="1" failed="1" skipped="1" ignored="0"><suite name="s"><test name="t"><class name="C"><test-method name="p" status="PASS"/><test-method name="f" status="FAIL"/><test-method name="s" status="SKIP"/><test-method name="setUp" status="FAIL" is-config="true"/><test-method name="flaky" status="SKIP" retried="true"/></class></test></suite></testng-results>`, ["pass", "fail", "skip", "fail", "skip"]],
+    ["ctest", `<Site><Testing><TestList><Test>./p</Test><Test>./f</Test><Test>./s</Test></TestList><Test Status="passed"><Name>p</Name></Test><Test Status="failed"><Name>f</Name></Test><Test Status="notrun"><Name>s</Name></Test></Testing></Site>`, ["pass", "fail", "skip"]],
+    ["ctrf", `{"reportFormat":"CTRF","specVersion":"1.0.0","results":{"tool":{"name":"jest"},"summary":{"tests":5,"passed":1,"failed":1,"skipped":1,"pending":1,"other":1,"start":0,"stop":1},"tests":[{"name":"p","status":"passed"},{"name":"f","status":"failed"},{"name":"s","status":"skipped"},{"name":"pe","status":"pending"},{"name":"o","status":"other"}]}}`, ["pass", "fail", "skip", "skip", "skip"]],
+    ["rust", `{"type":"suite","event":"started","test_count":3}\n{"type":"test","event":"ok","name":"p"}\n{"type":"test","event":"failed","name":"f"}\n{"type":"test","event":"ignored","name":"i"}\n{"type":"suite","event":"failed","passed":1,"failed":1,"ignored":1,"measured":0,"filtered_out":0}`, ["pass", "fail", "skip"]],
+    ["dart", `{"type":"start","time":0}\n{"type":"allSuites","count":1}\n{"type":"suite","suite":{"id":0,"path":"a_test.dart"}}\n{"type":"testStart","test":{"id":1,"name":"p","suiteID":0}}\n{"type":"testDone","testID":1,"result":"success","hidden":false}\n{"type":"testStart","test":{"id":2,"name":"f","suiteID":0}}\n{"type":"testDone","testID":2,"result":"failure","hidden":false}\n{"type":"testStart","test":{"id":3,"name":"s","suiteID":0}}\n{"type":"testDone","testID":3,"result":"success","skipped":true,"hidden":false}\n{"type":"done","success":false}`, ["pass", "fail", "skip"]],
+    ["gotest", `{"Action":"run","Package":"p","Test":"A"}\n{"Action":"pass","Package":"p","Test":"A"}\n{"Action":"run","Package":"p","Test":"B"}\n{"Action":"fail","Package":"p","Test":"B"}\n{"Action":"run","Package":"p","Test":"C"}\n{"Action":"skip","Package":"p","Test":"C"}\n{"Action":"fail","Package":"p","Elapsed":0.1}`, ["pass", "fail", "skip"]],
+    ["tap", `TAP version 13\n1..3\nok 1 - p\nnot ok 2 - f\nok 3 - s # SKIP why\n`, ["pass", "fail", "skip"]],
+  ];
+  for (const [name, text, statuses] of valid) {
+    assert.deepEqual(parseResults(text)?.map((r) => r.status), statuses, name);
+  }
+});
+
 test("RESULT_EXTS covers every discovered extension without dropping the originals", () => {
   assert.deepEqual([...RESULT_EXTS].sort(), [".jsonl", ".json", ".ndjson", ".tap", ".trx", ".xml"].sort());
 });

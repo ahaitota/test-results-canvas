@@ -862,8 +862,10 @@ export async function createResultsServer(options = {}) {
         return true;
     }
     // Only the sources living in `dir` are touched: a five-project group must
-    // not re-read four untouched files because the fifth was rewritten.
-    function refreshDir(dir, changedNames) {
+    // not re-read four untouched files because the fifth was rewritten. `full`
+    // says the folder is being re-read because nothing said WHAT changed, so
+    // the names are every source's own rather than a record of what moved.
+    function refreshDir(dir, changedNames, full = false) {
         // A seed that could not be fulfilled when the panel opened gets first
         // refusal on the event, wherever the fallback sources happen to live.
         if (retryAwaitedSeed(dir))
@@ -941,8 +943,11 @@ export async function createResultsServer(options = {}) {
                 // Its own report being rewritten IS the update, exactly as for a
                 // named source. Re-deriving here would hand the panel the next
                 // file down the folder while this one is mid-write -- an older
-                // run, and a greener one, replacing the run it superseded.
-                changed = rewritten ? reparse(entry, before) : follow(resultsFilesIn(dir));
+                // run, and a greener one, replacing the run it superseded. On a
+                // full re-read nothing actually said this file changed, so the
+                // folder is what it follows, which is the whole point of a
+                // source that came from one.
+                changed = rewritten && !full ? reparse(entry, before) : follow(resultsFilesIn(dir));
             }
             else if (rewritten) {
                 changed = reparse(entry, before);
@@ -1122,7 +1127,7 @@ export async function createResultsServer(options = {}) {
             return;
         const here = entries.filter((e) => dirname(e.source.path) === dir);
         if (here.length)
-            refreshDir(dir, new Set(here.map((e) => basename(e.source.path))));
+            refreshDir(dir, new Set(here.map((e) => basename(e.source.path))), true);
     }
     // The watchers are a shortcut for the common case, not the source of truth.
     // A folder may not exist when the panel opens -- `dotnet test` creates
