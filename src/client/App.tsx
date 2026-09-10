@@ -2,7 +2,7 @@
 // expansion) and wires the live results stream to the header, toolbar and list.
 // Everything else lives in its own module; see derive.ts for the computations.
 // Behaviour-frozen against the e2e suite (data-testids unchanged).
-import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
+import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { TestStatus } from "../types";
 import type { GroupBy, SortBy } from "./format";
 import { sortView } from "./format";
@@ -107,10 +107,24 @@ export function App() {
     jumper.resetCursor();
   }, [state.results, grouping, sortBy, searchText, filterStatuses]);
 
+  // Each pick supersedes the one before it, so a slow refusal coming back after
+  // a later selection succeeded must not drag the picker back to it.
+  const pickSeq = useRef(0);
   const onPickFile = (e: Event) => {
     const v = (e.currentTarget as HTMLSelectElement).value;
+    const previous = state.file;
+    const seq = ++pickSeq.current;
     setState((s) => ({ ...s, file: v }));
-    fetch("/load?file=" + encodeURIComponent(v)).catch(() => {});
+    // A file caught mid-write is refused and the run on screen stays as it was,
+    // so the picker must not go on claiming to be showing something else.
+    const revert = () => {
+      if (seq === pickSeq.current) setState((s) => ({ ...s, file: previous }));
+    };
+    fetch("/load?file=" + encodeURIComponent(v))
+      .then((r) => {
+        if (!r.ok) revert();
+      })
+      .catch(revert);
   };
   const onFocusFiles = () => {
     fetch("/files")

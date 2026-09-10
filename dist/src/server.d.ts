@@ -4,8 +4,8 @@ import type { AgentTestRef } from "./diff/relevance.js";
 import type { CoverageLoadFailure, GitExec } from "./coverage/index.js";
 import type { Launch, RevealTarget } from "./reveal.js";
 import type { TestResult, TestStatus } from "./types.js";
-export { looksLikeResults, RESULT_EXTS };
-export declare function newestResultsFileIn(dir: string): string | null;
+export { RESULT_EXTS, looksLikeResults };
+export declare function resultsFilesIn(dir: string, accept?: (abs: string) => boolean): string[];
 export declare function normalizeStatus(raw: unknown): TestStatus;
 export interface SkippedPath {
     path: string;
