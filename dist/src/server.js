@@ -51,30 +51,35 @@ const DEFAULT_FILE = "results.trx";
 // both come from the parser registry: a format is recognised by its content,
 // never by its name.
 export { looksLikeResults, RESULT_EXTS };
-// Newest results file directly inside a directory (non-recursive).
-export function newestResultsFileIn(dir) {
-    let best = null, bestMtime = -1;
+// Results files directly inside a directory (non-recursive), newest first and
+// then by path, so the order is stable across runs. Head detection only:
+// whether a candidate parses in FULL is for the caller to find out, since a
+// report caught mid-write is recognisable long before it is complete.
+export function resultsFilesIn(dir) {
     let names;
     try {
         names = readdirSync(dir);
     }
     catch {
-        return null;
+        return [];
     }
+    const found = [];
     for (const n of names) {
         if (!RESULT_EXTS.some((e) => n.toLowerCase().endsWith(e)))
             continue;
         const abs = resolvePath(dir, n);
         try {
             const st = statSync(abs);
-            if (st.isFile() && st.mtimeMs > bestMtime && looksLikeResults(readHead(abs))) {
-                best = abs;
-                bestMtime = st.mtimeMs;
-            }
+            if (st.isFile() && looksLikeResults(readHead(abs)))
+                found.push({ path: abs, mtimeMs: st.mtimeMs });
         }
         catch { /* ignore unreadable */ }
     }
-    return best;
+    return found.sort((a, b) => b.mtimeMs - a.mtimeMs || a.path.localeCompare(b.path)).map((f) => f.path);
+}
+// Newest results file directly inside a directory (non-recursive).
+export function newestResultsFileIn(dir) {
+    return resultsFilesIn(dir)[0] ?? null;
 }
 export function normalizeStatus(raw) {
     const s = String(raw || "").toLowerCase();
@@ -209,6 +214,10 @@ export async function createResultsServer(options = {}) {
     let groupDef = null;
     // One watcher per directory the sources live in.
     const watchers = new Map();
+    // A folder the caller explicitly asked for, kept whether or not a report in
+    // it has resolved yet. It is what a watcher has to hold on to so an empty or
+    // half-written folder can still recover once a run lands in it.
+    let awaitedDir = null;
     // Held at this level so closing the server can cancel a reload that was
     // already queued. Keyed by absolute path, so two sources in one folder
     // debounce independently.
@@ -737,6 +746,25 @@ export async function createResultsServer(options = {}) {
     // not re-read four untouched files because the fifth was rewritten.
     function refreshDir(dir, changedName) {
         const here = entries.filter((e) => dirname(e.source.path) === dir);
+        // Nothing here yet, but the caller asked for this folder: whatever just
+        // landed may be the run it was waiting for. Taken newest-first until one
+        // parses in full, on the same terms as the original seed.
+        if (!here.length) {
+            if (dir !== awaitedDir)
+                return;
+            for (const candidate of resultsFilesIn(dir)) {
+                const entry = buildEntry(candidate);
+                if (!entry)
+                    continue;
+                applySources([entry], null);
+                groupDef = null;
+                if (!explicitCoverage)
+                    attachCoverageForSources();
+                broadcast();
+                return;
+            }
+            return;
+        }
         let changed = false, moved = false;
         if (here.length === 1) {
             // Alone in its folder, a source follows that folder's newest report:
@@ -796,6 +824,12 @@ export async function createResultsServer(options = {}) {
     // points at any more is dropped.
     function syncWatchers() {
         const wanted = new Set(entries.map((e) => dirname(e.source.path)));
+        // A folder the caller asked for is watched even before anything in it
+        // resolves: `dotnet test` creates TestResults/ on its first run, and a
+        // report caught mid-write becomes readable moments later. Without this
+        // the panel has nothing to recover from and stays empty for good.
+        if (awaitedDir)
+            wanted.add(awaitedDir);
         for (const [dir, w] of watchers) {
             if (wanted.has(dir))
                 continue;
@@ -836,8 +870,23 @@ export async function createResultsServer(options = {}) {
             }
             if (!abs && input.resultsDir) {
                 const d = resolvePath(String(input.resultsDir));
-                if (existsSync(d))
-                    abs = newestResultsFileIn(d);
+                // Remembered whether or not a report resolves, so a folder that
+                // is empty, or holds only a report still being written, is still
+                // watched and recovers on its own once one lands.
+                awaitedDir = d;
+                if (existsSync(d)) {
+                    // Newest-first until one parses IN FULL. Detection only reads
+                    // a candidate's opening bytes, and the parsers reject a report
+                    // that is incomplete -- so the newest file can be recognisable
+                    // and still unreadable, and the finished run behind it is what
+                    // the panel should show rather than nothing at all.
+                    for (const candidate of resultsFilesIn(d)) {
+                        if (parseResultsAt(candidate) !== null) {
+                            abs = candidate;
+                            break;
+                        }
+                    }
+                }
             }
             const entry = abs ? buildEntry(abs) : null;
             if (entry) {
@@ -851,8 +900,14 @@ export async function createResultsServer(options = {}) {
         // Honoured even when no results file resolved: the agent may be pointing
         // the panel at coverage for a run whose report it could not find.
         explicitCoverage = seedCoverage(input, entries[0]?.source.path ?? null);
-        if (!loaded)
+        if (!loaded) {
+            // applySources starts the watchers for a seed that landed; one that
+            // did not has to start its own, or the folder it is waiting on is
+            // never looked at again.
+            if (watchEnabled)
+                syncWatchers();
             return null;
+        }
         if (!explicitCoverage)
             attachCoverageForSources();
         return entries[0].source.path;
