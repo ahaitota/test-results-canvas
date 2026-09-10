@@ -212,6 +212,11 @@ export async function createResultsServer(options = {}) {
     // old watcher alive but silent, and the stamp is how that is noticed.
     const watchers = new Map();
     const watchStamps = new Map();
+    // How many times in a row a folder's watcher has refused to attach, and the
+    // earliest the poll should try it again. Without this a folder that can
+    // never be watched is re-read in full every 500ms for the life of the panel.
+    const watchFailures = new Map();
+    const watchRetryAt = new Map();
     // Verifies those watchers, and arms one for a folder that did not exist
     // when the panel opened.
     let resultsPoll = null;
@@ -1145,7 +1150,14 @@ export async function createResultsServer(options = {}) {
             return;
         }
         resultsPoll = setInterval(() => {
+            const now = Date.now();
             for (const dir of wantedDirs()) {
+                // A folder whose watcher will not attach -- a permissions
+                // failure, or a filesystem that does not support watching --
+                // must not be retried, logged and fully re-read every tick. It
+                // backs off to at most every 30s and keeps the poll cheap.
+                if ((watchRetryAt.get(dir) ?? 0) > now)
+                    continue;
                 const stamp = dirStamp(dir);
                 if (stamp === null) {
                     dropWatcher(dir);
@@ -1155,6 +1167,14 @@ export async function createResultsServer(options = {}) {
                     continue;
                 dropWatcher(dir);
                 startWatch(dir);
+                if (!watchers.has(dir)) {
+                    const failures = (watchFailures.get(dir) ?? 0) + 1;
+                    watchFailures.set(dir, failures);
+                    watchRetryAt.set(dir, now + Math.min(500 * 2 ** failures, 30_000));
+                    continue;
+                }
+                watchFailures.delete(dir);
+                watchRetryAt.delete(dir);
                 rescanDir(dir);
             }
         }, 500);

@@ -82,7 +82,8 @@ re-run.
 `resultsDir` and `resultsFile` differ in what they follow afterwards. A folder
 is the identity, so it moves to whatever report in it is newest and readable,
 even if the runner switched formats. A named file keeps the format it was opened
-as, so a stray report beside it cannot take its place.
+as, so a stray report beside it cannot take its place. Neither ever moves to a
+run that finished before the one on screen.
 
 ## Install (once, per user — works in every project)
 ### Step 1:

@@ -23,6 +23,9 @@ export function parseRustJson(text) {
     let expected = 0;
     let counted = true;
     let failedSuite = false;
+    let benches = 0;
+    let declaredBenches = 0;
+    let countedBenches = true;
     for (const event of jsonLines(text)) {
         const type = str(event, "type");
         if (type === "suite") {
@@ -56,6 +59,35 @@ export function parseRustJson(text) {
                 declared.fail += parts[1];
                 declared.skip += parts[2];
             }
+            // Benchmarks are tallied on their own, not under passed/failed.
+            const measured = num(event, "measured");
+            if (measured == null)
+                countedBenches = false;
+            else
+                declaredBenches += measured;
+            continue;
+        }
+        // A benchmark reports once, when it is done, and has no outcome of its
+        // own -- libtest counts it toward the suite's `test_count` and its
+        // `measured` tally rather than passed/failed. Dropping it made the
+        // suite's own count disagree and rejected a whole valid run.
+        if (type === "bench") {
+            const name = str(event, "name");
+            if (!name)
+                throw new SyntaxError("libtest bench record is missing its name");
+            benches++;
+            const median = num(event, "median");
+            const path = name.split("::");
+            out.push({
+                name,
+                status: "pass",
+                // libtest reports benchmark medians in nanoseconds.
+                durationMs: median == null ? undefined : median / 1e6,
+                className: path.length > 1 ? path.slice(0, -1).join("::") : undefined,
+                method: path[path.length - 1],
+                suite: path.length > 1 ? path[0] : undefined,
+                framework: "libtest",
+            });
             continue;
         }
         if (type !== "test")
@@ -102,6 +134,11 @@ export function parseRustJson(text) {
     // caught where a total that still adds up would not notice.
     if (suitesStarted && counted && ["pass", "fail", "skip"].some((s) => declared[s] !== found[s])) {
         throw new SyntaxError(`libtest suite declared ${declared.pass}/${declared.fail}/${declared.skip} pass/fail/ignored, reported ${found.pass}/${found.fail}/${found.skip}`);
+    }
+    // Benchmarks have their own counter, so one that went missing is caught
+    // even though the pass/fail/ignored tally still adds up.
+    if (suitesStarted && countedBenches && declaredBenches !== benches) {
+        throw new SyntaxError(`libtest suite declared ${declaredBenches} measured, reported ${benches}`);
     }
     // The suite says it failed and no test admits to it: something failed
     // outside the tests, and a green run would be the wrong thing to show.

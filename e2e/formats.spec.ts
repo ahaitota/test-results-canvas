@@ -533,4 +533,44 @@ test.describe("cross-language report formats", () => {
     await picker.selectOption("Solution");
     await expect(page.getByTestId("group-counts")).toHaveText("2 files \u00B7 2 tests");
   });
+
+  test("a folder whose newest report is still being written shows the finished one", async ({ page, makeServer }, testInfo) => {
+    // The parsers reject an incomplete report, so the newest file in a folder
+    // can be recognisable and still unreadable. Without trying the one behind
+    // it the panel would open on nothing at all.
+    const dir = testInfo.outputPath("mid-write-seed");
+    mkdirSync(dir, { recursive: true });
+    const done = join(dir, "old.xml");
+    const fresh = join(dir, "new.xml");
+    writeFileSync(done, `<testsuites><testsuite name="s"><testcase name="finished" /></testsuite></testsuites>`, "utf8");
+    // Newer, recognisable from its head, and cut off mid-document.
+    writeFileSync(fresh, `<testsuites><testsuite name="s"><testcase name="partial" />`, "utf8");
+    const old = new Date(Date.now() - 60_000);
+    utimesSync(done, old, old);
+
+    const s = await makeServer({ resultsDir: dir, watch: true });
+    await openCanvas(page, s);
+    await expect(page.getByTestId("test-name").filter({ hasText: "finished" })).toBeVisible();
+
+    // And once the newer one is whole, the folder moves on to it.
+    writeFileSync(fresh, `<testsuites><testsuite name="s"><testcase name="partial" /></testsuite></testsuites>`, "utf8");
+    await expect(page.getByTestId("test-name").filter({ hasText: "partial" })).toBeVisible();
+  });
+
+  test("a folder holding nothing readable yet recovers when a report lands", async ({ page, makeServer }, testInfo) => {
+    // Nothing parses when the panel opens, so nothing is seeded -- but the
+    // folder the caller named is watched all the same.
+    const dir = testInfo.outputPath("awaited-seed");
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, "run.xml");
+    writeFileSync(file, `<testsuites><testsuite name="s"><testcase name="adds" />`, "utf8");
+
+    const s = await makeServer({ resultsDir: dir, watch: true });
+    await openCanvas(page, s);
+    await expect(page.getByTestId("test-name").filter({ hasText: "adds" })).toHaveCount(0);
+
+    writeFileSync(file, `<testsuites><testsuite name="s"><testcase name="adds" /></testsuite></testsuites>`, "utf8");
+
+    await expect(page.getByTestId("test-name").filter({ hasText: "adds" })).toBeVisible();
+  });
 });

@@ -1069,6 +1069,21 @@ test("parseRustJson reconciles the tally the suite closes with", () => {
   assert.equal(parseRustJson(`{"type":"suite","event":"started","test_count":1}\n{"type":"test","name":"a","event":"ok"}\n{"type":"suite","event":"ok"}`).length, 1);
 });
 
+test("parseRustJson reads benchmark records and their own tally", () => {
+  // A benchmark reports once when it finishes, with no outcome of its own.
+  // libtest counts it toward `test_count` and `measured`, so dropping it made
+  // the suite's count disagree and rejected the whole run.
+  const run = (suite: string) => `{"type":"suite","event":"started","test_count":2}\n{"type":"test","name":"calc::adds","event":"ok"}\n{"type":"bench","name":"calc::bench_add","median":1234567,"deviation":1000}\n${suite}`;
+  const rows = parseRustJson(run(`{"type":"suite","event":"ok","passed":1,"failed":0,"ignored":0,"measured":1}`));
+  assert.deepEqual(rows.map((r) => [r.name, r.status]), [["calc::adds", "pass"], ["calc::bench_add", "pass"]]);
+  // The median is nanoseconds.
+  assert.equal(rows[1].durationMs, 1.234567);
+  // A benchmark the suite counted but did not report is still a missing record.
+  assert.throws(() => parseRustJson(run(`{"type":"suite","event":"ok","passed":1,"failed":0,"ignored":0,"measured":2}`)));
+  // A bench record with no name is one the run cannot account for.
+  assert.throws(() => parseRustJson(`{"type":"suite","event":"started","test_count":1}\n{"type":"bench","median":1}\n{"type":"suite","event":"ok","passed":0,"failed":0,"ignored":0,"measured":1}`));
+});
+
 test("parseRustJson rejects a suite that never closed or fell short of its count", () => {
   const finished = `{"type":"test","name":"calc::adds","event":"ok"}`;
   // Started, one test reported, no terminal suite event.
