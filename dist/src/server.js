@@ -220,6 +220,9 @@ export async function createResultsServer(options = {}) {
     // changed in it since the last refresh.
     const resultsTimers = new Map();
     const pendingNames = new Map();
+    // Folders whose pending batch holds an event that did not say what moved,
+    // so the batch has to be answered by re-reading the folder whole.
+    const pendingRescans = new Set();
     // What the caller asked to open when nothing usable was there yet -- a run
     // still being written, most often. Its folders are watched so the report
     // arrives on its own instead of needing the panel reopened. One at a time:
@@ -869,6 +872,9 @@ export async function createResultsServer(options = {}) {
         if (!here.length)
             return;
         let changed = false, moved = false;
+        // Every source that ended up on a different file, so the saved group can
+        // be kept pointing at what its members are now called.
+        const moves = [];
         // Cheapest first. A folder-expanding source takes in every result beside
         // it, so anything that moved in the folder moved it, and a source is
         // usually rewritten under the very name it was opened with. Only when
@@ -901,7 +907,10 @@ export async function createResultsServer(options = {}) {
                         continue;
                     if (!reparse(entry, candidate))
                         continue;
-                    moved = candidate !== before;
+                    if (candidate !== before) {
+                        moved = true;
+                        moves.push([before, candidate]);
+                    }
                     return true;
                 }
                 return reparse(entry, before);
@@ -987,19 +996,23 @@ export async function createResultsServer(options = {}) {
                 const before = entry.source.path;
                 if (reparse(entry, anchor)) {
                     changed = true;
-                    if (anchor !== before)
+                    if (anchor !== before) {
                         moved = true;
+                        moves.push([before, anchor]);
+                    }
                 }
             }
         }
         if (!changed)
             return;
-        // Sources that re-anchored leave the group pointing at files that are
-        // gone, so drilling into one and going back would restore a merge that
-        // no longer resolves. Only while the group is what is on screen: after
-        // drilling in, `entries` is the one file, not the merge.
-        if (moved && groupName && groupDef)
-            groupDef = { name: groupDef.name, paths: entries.map((e) => e.source.path) };
+        // A source that re-anchored leaves the saved group naming a file that is
+        // gone, so restoring it later would fail or come back short. Only the
+        // member that moved is replaced: the panel may be drilled into one of
+        // them, and the others are not this refresh's business.
+        if (moves.length && groupDef) {
+            const to = new Map(moves.map(([from, path]) => [canonicalPath(from), path]));
+            groupDef = { name: groupDef.name, paths: groupDef.paths.map((p) => to.get(canonicalPath(p)) ?? p) };
+        }
         rebuild();
         // A moved report means the coverage beside it moved too. An explicitly
         // named report is left alone — the caller chose it.
@@ -1038,16 +1051,32 @@ export async function createResultsServer(options = {}) {
             return;
         try {
             const w = watch(dir, { persistent: false }, (_event, filename) => {
+                // Debounced per watched folder, collecting the names that moved
+                // in it. Keying by folder rather than by file is what keeps a
+                // burst -- an Allure run writes one JSON per test -- to a single
+                // refresh, and the key is absolute, so two watched folders that
+                // each hold a `results.trx` never cancel one another.
+                const schedule = () => {
+                    clearTimeout(resultsTimers.get(dir));
+                    resultsTimers.set(dir, setTimeout(() => {
+                        resultsTimers.delete(dir);
+                        const names = pendingNames.get(dir) ?? new Set();
+                        pendingNames.delete(dir);
+                        // A nameless event anywhere in the batch means the batch
+                        // does not say what moved, so the folder is re-read whole
+                        // however many named events arrived alongside it.
+                        if (pendingRescans.delete(dir))
+                            rescanDir(dir);
+                        else
+                            refreshDir(dir, names);
+                    }, 400));
+                };
                 // Node is allowed to report a change without saying what moved.
                 // Dropping it would leave the panel on a run that is no longer
                 // what is on disk, so the whole folder is re-read instead.
                 if (!filename) {
-                    clearTimeout(resultsTimers.get(dir));
-                    resultsTimers.set(dir, setTimeout(() => {
-                        resultsTimers.delete(dir);
-                        pendingNames.delete(dir);
-                        rescanDir(dir);
-                    }, 400));
+                    pendingRescans.add(dir);
+                    schedule();
                     return;
                 }
                 const name = String(filename);
@@ -1060,20 +1089,10 @@ export async function createResultsServer(options = {}) {
                 // one costs a synchronous realpath on the event loop.
                 if (!RESULT_EXTS.some((e) => name.toLowerCase().endsWith(e)) && !isWatchedFile(dir, name))
                     return;
-                // Debounced per watched folder, collecting the names that moved
-                // in it. Keying by folder rather than by file is what keeps a
-                // burst -- an Allure run writes one JSON per test -- to a single
-                // refresh, and the key is absolute, so two watched folders that
-                // each hold a `results.trx` never cancel one another.
                 const pending = pendingNames.get(dir) ?? new Set();
                 pendingNames.set(dir, pending);
                 pending.add(name);
-                clearTimeout(resultsTimers.get(dir));
-                resultsTimers.set(dir, setTimeout(() => {
-                    resultsTimers.delete(dir);
-                    pendingNames.delete(dir);
-                    refreshDir(dir, pending);
-                }, 400));
+                schedule();
             });
             w.on("error", (err) => {
                 console.error("[server] watcher error:", err?.message || err);
@@ -1251,7 +1270,22 @@ export async function createResultsServer(options = {}) {
     // disk rather than cached, so a member rewritten meanwhile comes back
     // current. False when nothing resolves any more, leaving the view alone.
     function restoreGroup(def) {
-        const built = collectSources(def.paths);
+        // A member re-run under a new name is still that member: while the panel
+        // was drilled into one file, the others went on rotating with nothing
+        // watching them. Each missing one takes its folder's newest report that
+        // no other member already names, so a merge survives a re-run that
+        // renamed everything in it.
+        const claimed = new Set(def.paths.filter((p) => existsSync(p)).map((p) => canonicalPath(p)));
+        const paths = def.paths.map((p) => {
+            if (existsSync(p))
+                return p;
+            const replacement = resultsFilesIn(dirname(p)).find((c) => !claimed.has(canonicalPath(c)));
+            if (!replacement)
+                return p;
+            claimed.add(canonicalPath(replacement));
+            return replacement;
+        });
+        const built = collectSources(paths);
         // A member that is there but unreadable is a report caught mid-write:
         // restoring around it would publish a merge one whole project short and
         // then record that shorter set as the group, losing the member for good.

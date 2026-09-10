@@ -462,6 +462,43 @@ test.describe("cross-language report formats", () => {
     await expect(page.getByTestId("test-row")).toHaveCount(2);
   });
 
+  test("a merge whose members rotate can still be restored from a drilled member", async ({ page, makeServer }, testInfo) => {
+    // Drilled into one member, so the group is not what is on screen -- but its
+    // members are still rotating underneath, and the saved definition has to
+    // follow them or there is no way back to the merge.
+    const dir = testInfo.outputPath("rotate-drilled");
+    mkdirSync(dir, { recursive: true });
+    const suite = (name: string) => `<testsuites><testsuite name="s"><testcase name="${name}" /></testsuite></testsuites>`;
+    const a = join(dir, "a-1.xml");
+    const b = join(dir, "b-1.xml");
+    writeFileSync(a, suite("aOld"), "utf8");
+    writeFileSync(b, suite("bOld"), "utf8");
+
+    const s = await makeServer({ name: "Solution", resultsFiles: [a, b], watch: true });
+    await openCanvas(page, s);
+    const picker = page.getByTestId("file-select");
+    await picker.selectOption("a-1.xml");
+    await expect(page.getByTestId("test-name").filter({ hasText: "aOld" })).toBeVisible();
+
+    rmSync(a);
+    rmSync(b);
+    writeFileSync(join(dir, "a-2.xml"), suite("aNew"), "utf8");
+    writeFileSync(join(dir, "b-2.xml"), suite("bNew"), "utf8");
+
+    // The drilled view follows the folder to one of the new runs -- which one
+    // is whichever is newest, and either is a report from this run rather than
+    // the deleted one it was showing.
+    await expect(page.getByTestId("test-name").filter({ hasText: "Old" })).toHaveCount(0);
+    await expect(page.getByTestId("test-row")).toHaveCount(1);
+
+    // And the merge it came from is still there to go back to, with both
+    // members re-derived from the names they now go under.
+    await picker.selectOption("Solution");
+    await expect(page.getByTestId("group-counts")).toHaveText("2 files \u00B7 2 tests");
+    await expect(page.getByTestId("test-name").filter({ hasText: "aNew" })).toBeVisible();
+    await expect(page.getByTestId("test-name").filter({ hasText: "bNew" })).toBeVisible();
+  });
+
   test("merged sources in one folder follow a re-run that renames every file", async ({ page, makeServer }, testInfo) => {
     // Two projects writing timestamped reports into one folder: the old pair is
     // gone, so both sources have to re-anchor -- and onto one file each, not

@@ -241,6 +241,19 @@ test("parseXunit rejects an assembly whose own counters do not match its tests",
   assert.throws(() => parseXunit(assembly(`passed="one" failed="0" skipped="0"`, one)));
 });
 
+test("parseXunit counts not-run tests apart from the tests that ran", () => {
+  // The schema says `total` is how many RAN; a NotRun test is one the runner
+  // was asked to leave alone, and has a counter of its own.
+  const assembly = (counts: string, tests: string) => `<assemblies><assembly name="a.dll" ${counts}><collection name="c">${tests}</collection></assembly></assemblies>`;
+  const both = `<test name="adds" result="Pass" /><test name="explicit" result="NotRun" />`;
+  const rows = parseXunit(assembly(`total="1" passed="1" failed="0" skipped="0" not-run="1"`, both));
+  assert.deepEqual(rows.map((r) => r.status), ["pass", "skip"]);
+  // A not-run count of its own that disagrees is still a disagreement.
+  assert.throws(() => parseXunit(assembly(`total="1" passed="1" failed="0" skipped="0" not-run="2"`, both)));
+  // And `total` counts the run ones, so counting the not-run one in is wrong.
+  assert.throws(() => parseXunit(assembly(`total="2" passed="1" failed="0" skipped="0" not-run="1"`, both)));
+});
+
 test("parseXunit reads the v3 per-test source path and timestamps", () => {
   const rows = parseXunit(`<assemblies>
   <assembly name="/src/Sample.dll" run-date="2024-01-01" run-time="10:00:00">
