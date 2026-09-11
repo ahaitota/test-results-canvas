@@ -70,14 +70,20 @@ Protocol JSON.
 Adding a format is one module in `src/parsers/` plus one entry in
 `src/parsers/registry.ts`.
 
-A folder is read newest-first until a report parses in full, so a run still
-being written never hides the finished one behind it. The folder stays watched
-even when nothing in it can be read yet, so the first report to land shows up on
-its own.
+A run opened from several reports is seeded all or nothing: if any of the named
+files cannot be read, none of them replace what the panel already shows. A
+folder is read newest-first until a report parses in full, so a run still being
+written never hides the finished one behind it — and whatever was asked for but
+was not there yet is watched, so it appears on its own once it lands. That
+includes a folder that does not exist at all when the panel opens (`dotnet test`
+creates `TestResults/` on its first run), and one deleted and recreated by a
+re-run.
 
-Recovering from a folder that does not exist when the panel opens, one deleted
-and recreated by a re-run, and the rest of the live-refresh behaviour under
-re-runs that rename their output, is tracked in #43.
+`resultsDir` and `resultsFile` differ in what they follow afterwards. A folder
+is the identity, so it moves to whatever report in it is newest and readable,
+even if the runner switched formats. A named file keeps the format it was opened
+as, so a stray report beside it cannot take its place. Neither ever moves to a
+run that finished before the one on screen.
 
 ## Install (once, per user — works in every project)
 ### Step 1:

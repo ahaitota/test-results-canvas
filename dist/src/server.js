@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, basename, relative, isAbsolute, resolve as resolvePath } from "node:path";
 import { watch, readFileSync, writeFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { serializeTrx } from "./parsers/trx.js";
-import { looksLikeResults, parseResultsAt, canonicalResultPaths, RESULT_EXTS } from "./parsers/registry.js";
+import { looksLikeResults, parseResultsAt, runKey, canonicalPath, canonicalResultPaths, expandsDirectory, formatIdAt, RESULT_EXTS } from "./parsers/registry.js";
 import { labelForPath } from "./labels.js";
 import { mergeSources } from "./sources.js";
 import { readHead } from "./head.js";
@@ -47,15 +47,14 @@ function findExtensionRoot(start) {
 const EXTENSION_ROOT = findExtensionRoot(__dirname);
 const SAMPLES_DIR = join(EXTENSION_ROOT, "samples");
 const DEFAULT_FILE = "results.trx";
-// Which extensions a directory scan may look at, and what counts as a report,
-// both come from the parser registry: a format is recognised by its content,
-// never by its name.
-export { looksLikeResults, RESULT_EXTS };
+// Re-exported so the extension entry point keeps one import site for what counts
+// as a results file.
+export { RESULT_EXTS, looksLikeResults };
 // Results files directly inside a directory (non-recursive), newest first and
-// then by path, so the order is stable across runs. Head detection only:
-// whether a candidate parses in FULL is for the caller to find out, since a
-// report caught mid-write is recognisable long before it is complete.
-export function resultsFilesIn(dir) {
+// then by path, so the order is stable across runs. Optionally narrowed to the
+// ones a caller can use. Head detection only: whether a candidate parses in
+// full is for the caller to find out, since that costs reading it whole.
+export function resultsFilesIn(dir, accept) {
     let names;
     try {
         names = readdirSync(dir);
@@ -70,16 +69,15 @@ export function resultsFilesIn(dir) {
         const abs = resolvePath(dir, n);
         try {
             const st = statSync(abs);
-            if (st.isFile() && looksLikeResults(readHead(abs)))
-                found.push({ path: abs, mtimeMs: st.mtimeMs });
+            if (!st.isFile() || !looksLikeResults(readHead(abs)))
+                continue;
+            if (accept && !accept(abs))
+                continue;
+            found.push({ path: abs, mtimeMs: st.mtimeMs });
         }
         catch { /* ignore unreadable */ }
     }
     return found.sort((a, b) => b.mtimeMs - a.mtimeMs || a.path.localeCompare(b.path)).map((f) => f.path);
-}
-// Newest results file directly inside a directory (non-recursive).
-export function newestResultsFileIn(dir) {
-    return resultsFilesIn(dir)[0] ?? null;
 }
 export function normalizeStatus(raw) {
     const s = String(raw || "").toLowerCase();
@@ -89,9 +87,22 @@ export function normalizeStatus(raw) {
         return "fail";
     return "skip";
 }
+// Reports sitting in the extension folder itself. Content-checked, not just
+// name-checked: the formats now include .json, and the extension folder holds a
+// package.json that must never reach the picker.
 function listLocalNames() {
     try {
-        return readdirSync(EXTENSION_ROOT).filter((f) => RESULT_EXTS.some((e) => f.toLowerCase().endsWith(e)));
+        return readdirSync(EXTENSION_ROOT)
+            .filter((f) => RESULT_EXTS.some((e) => f.toLowerCase().endsWith(e)))
+            .filter((f) => {
+            try {
+                return looksLikeResults(readHead(join(EXTENSION_ROOT, f)));
+            }
+            catch {
+                return false;
+            }
+        })
+            .sort();
     }
     catch {
         return [];
@@ -99,13 +110,7 @@ function listLocalNames() {
 }
 // Selectable files = local extension-folder reports + discovered project files.
 function listResultFiles(discovered) {
-    let local = [];
-    try {
-        local = readdirSync(EXTENSION_ROOT).filter((f) => RESULT_EXTS.some((e) => f.toLowerCase().endsWith(e))).sort();
-    }
-    catch {
-        local = [];
-    }
+    const local = listLocalNames();
     const extras = [...discovered.keys()].filter((l) => !local.includes(l)).sort();
     return [...local, ...extras];
 }
@@ -123,20 +128,10 @@ function resolveResultPath(name, discovered) {
     const full = join(EXTENSION_ROOT, base);
     return existsSync(full) ? full : null;
 }
-// Parse a named file. The registry detects the format from the file's content,
-// so any report it knows is read the same way.
+// Parse a named file, letting the registry pick the format from its content.
 function loadFile(name, discovered) {
     const full = resolveResultPath(name, discovered);
-    if (!full)
-        return [];
-    return parseResultsAt(full) ?? [];
-}
-// Parse an absolute path, or null when it is missing, unreadable, or not a
-// results file at all. Distinct from loadFile()'s empty array: a source set has
-// to tell "this file reported no tests" from "this path is not a report".
-// Formats that take in their whole folder (Allure) are expanded around `abs`.
-function parseResultsFile(abs) {
-    return parseResultsAt(abs);
+    return (full && parseResultsAt(full)) || [];
 }
 // Persist results as TRX, but only for writable local .trx files (never a
 // discovered project file — that's the agent's own output).
@@ -211,17 +206,36 @@ export async function createResultsServer(options = {}) {
     // The group that was opened, remembered independently of what is displayed:
     // picking one member out of the picker switches the view, and must not
     // destroy the only way back to the merge.
+    // The merged run's definition. Each member carries the format it was read
+    // as and when its report was written, because restoring the group later has
+    // to hold a replacement to the same standard live re-anchoring does.
     let groupDef = null;
-    // One watcher per directory the sources live in.
+    // One watcher per directory the sources live in, with the identity of the
+    // directory each was armed on -- a folder deleted and recreated keeps the
+    // old watcher alive but silent, and the stamp is how that is noticed.
     const watchers = new Map();
-    // A folder the caller explicitly asked for, kept whether or not a report in
-    // it has resolved yet. It is what a watcher has to hold on to so an empty or
-    // half-written folder can still recover once a run lands in it.
-    let awaitedDir = null;
+    const watchStamps = new Map();
+    // How many times in a row a folder's watcher has refused to attach, and the
+    // earliest the poll should try it again. Without this a folder that can
+    // never be watched is re-read in full every 500ms for the life of the panel.
+    const watchFailures = new Map();
+    const watchRetryAt = new Map();
+    // Verifies those watchers, and arms one for a folder that did not exist
+    // when the panel opened.
+    let resultsPoll = null;
     // Held at this level so closing the server can cancel a reload that was
-    // already queued. Keyed by absolute path, so two sources in one folder
-    // debounce independently.
+    // already queued. Keyed by watched folder, alongside the file names that
+    // changed in it since the last refresh.
     const resultsTimers = new Map();
+    const pendingNames = new Map();
+    // Folders whose pending batch holds an event that did not say what moved,
+    // so the batch has to be answered by re-reading the folder whole.
+    const pendingRescans = new Set();
+    // What the caller asked to open when nothing usable was there yet -- a run
+    // still being written, most often. Its folders are watched so the report
+    // arrives on its own instead of needing the panel reopened. One at a time:
+    // a fresh seed replaces the intent, as it replaces the view.
+    let awaitedSeed = null;
     // `coverageWatcher` follows the report's folder so a re-run refreshes the
     // panel the same way results already do.
     let coverage = null;
@@ -363,6 +377,11 @@ export async function createResultsServer(options = {}) {
         for (const t of resultsTimers.values())
             clearTimeout(t);
         resultsTimers.clear();
+        pendingNames.clear();
+        if (resultsPoll) {
+            clearInterval(resultsPoll);
+            resultsPoll = null;
+        }
         for (const w of watchers.values()) {
             try {
                 w.close();
@@ -370,6 +389,7 @@ export async function createResultsServer(options = {}) {
             catch { /* already closed */ }
         }
         watchers.clear();
+        watchStamps.clear();
     }
     function stopCoverageWatcher() {
         // Retire the current generation first: a debounced callback that has
@@ -658,48 +678,74 @@ export async function createResultsServer(options = {}) {
             })();
         return target && existsSync(target.path) ? target : null;
     }
-    function buildEntry(abs) {
-        const rows = parseResultsFile(abs);
+    // When the report at `abs` was last written, or 0 when that cannot be read.
+    function writtenAt(abs) {
+        try {
+            return statSync(abs).mtimeMs;
+        }
+        catch {
+            return 0;
+        }
+    }
+    function buildEntry(abs, dirSourced = false) {
+        const rows = parseResultsAt(abs);
         if (rows === null)
             return null;
         const label = labelForPath(abs, discovered, listLocalNames());
         discovered.set(label, abs);
-        return { source: { label, path: abs, count: rows.length }, rows };
+        return { source: { label, path: abs, count: rows.length }, rows, expands: expandsDirectory(abs), format: formatIdAt(abs), key: canonicalPath(abs), dirSourced, mtimeMs: writtenAt(abs) };
+    }
+    // The first of these paths that parses in full. Head detection is not
+    // enough to choose by: a report caught mid-write is recognizable long
+    // before it is complete, and picking it would hide a finished run sitting
+    // beside it.
+    //
+    // Collapsed to one path per run first: a format that takes in its whole
+    // folder re-reads every sibling on each attempt, so walking all of them
+    // would parse the directory once per file in it -- and they are the same
+    // run, so the second attempt could only fail the same way as the first.
+    function firstReadable(candidates, dirSourced = false) {
+        for (const abs of canonicalResultPaths(candidates)) {
+            const entry = buildEntry(abs, dirSourced);
+            if (entry)
+                return entry;
+        }
+        return null;
     }
     // Resolve named files into sources, reporting what fell out so the caller
-    // can hand back a receipt rather than a silent partial merge.
+    // can hand back a receipt rather than a silent partial merge. `unusable`
+    // counts only the paths that could not be READ: a path that merely repeats
+    // a run another already covers is redundant, not missing, and must not
+    // stand in the way of a merge that is otherwise complete.
     function collectSources(files) {
         const built = [];
         const skipped = [];
         const seen = new Set();
-        // A format that takes in its whole folder (Allure) is one run however
-        // many of its own files name it, so those collapse to a single source
-        // before anything is parsed -- adding them separately would read the
-        // folder once per member and merge N copies of every row.
-        const distinct = new Set(canonicalResultPaths(files.map((f) => resolvePath(f))));
+        let unusable = 0;
         for (const raw of files) {
             const abs = resolvePath(raw);
-            if (seen.has(abs)) {
+            // Keyed by run, not by path: an Allure folder is one source however
+            // many of its result files the caller happened to name.
+            const key = runKey(abs);
+            if (seen.has(key)) {
                 skipped.push({ path: raw, reason: "duplicate of another source" });
                 continue;
             }
-            seen.add(abs);
-            if (existsSync(abs) && !distinct.has(abs)) {
-                skipped.push({ path: raw, reason: "another source already covers this run" });
-                continue;
-            }
+            seen.add(key);
             if (!existsSync(abs)) {
                 skipped.push({ path: raw, reason: "no such file" });
+                unusable++;
                 continue;
             }
             const entry = buildEntry(abs);
             if (!entry) {
                 skipped.push({ path: raw, reason: "not a readable test-results file" });
+                unusable++;
                 continue;
             }
             built.push(entry);
         }
-        return { entries: built, skipped };
+        return { entries: built, skipped, unusable };
     }
     // Swap in a new set and rebuild everything that hangs off it.
     function applySources(list, name) {
@@ -708,7 +754,7 @@ export async function createResultsServer(options = {}) {
         // Recorded from what actually resolved, so a path that could not be read
         // is not retried on every restore.
         if (name)
-            groupDef = { name, paths: list.map((e) => e.source.path) };
+            groupDef = { name, members: list.map((e) => ({ path: e.source.path, format: e.format, mtimeMs: e.mtimeMs ?? 0 })) };
         rebuild();
         if (watchEnabled)
             syncWatchers();
@@ -732,7 +778,7 @@ export async function createResultsServer(options = {}) {
     // Re-read one source in place. False when nothing usable came back, so a
     // half-written file keeps showing the rows it already had.
     function reparse(entry, abs) {
-        const rows = parseResultsFile(abs);
+        const rows = parseResultsAt(abs);
         if (rows === null)
             return false;
         const label = abs === entry.source.path ? entry.source.label : labelForPath(abs, discovered, listLocalNames());
@@ -740,53 +786,271 @@ export async function createResultsServer(options = {}) {
             discovered.set(label, abs);
         entry.rows = rows;
         entry.source = { label, path: abs, count: rows.length };
+        entry.expands = expandsDirectory(abs);
+        entry.format = formatIdAt(abs) ?? entry.format;
+        entry.key = canonicalPath(abs);
+        entry.mtimeMs = writtenAt(abs);
+        return true;
+    }
+    // Accepts only reports of the format a source was read as, so re-deriving
+    // keeps it on the kind of report it started as -- and still works once the
+    // file it was read from has been deleted by a re-run.
+    function sameFormat(want) {
+        return (candidate) => want !== undefined && formatIdAt(candidate) === want;
+    }
+    // The folders an unfulfilled seed is waiting on.
+    function awaitedDirs() {
+        if (!awaitedSeed)
+            return [];
+        if (awaitedSeed.kind === "group")
+            return [...new Set(awaitedSeed.paths.map((p) => dirname(p)))];
+        return [awaitedSeed.dir];
+    }
+    // The exact file names it is waiting for in `dir`. Those are watched
+    // whatever they are called, since a named file is accepted by content.
+    function awaitedNamesIn(dir) {
+        if (!awaitedSeed)
+            return new Set();
+        if (awaitedSeed.kind === "file")
+            return new Set(awaitedSeed.dir === dir ? [awaitedSeed.name] : []);
+        if (awaitedSeed.kind === "group")
+            return new Set(awaitedSeed.paths.filter((p) => dirname(p) === dir).map((p) => basename(p)));
+        return new Set();
+    }
+    // Whether a file this server is following just moved. Compared as canonical
+    // paths rather than raw names: Windows reports whichever spelling the
+    // writer used, which need not be the one the source was opened with, and a
+    // missed event on a report whose extension no scan looks at leaves the
+    // panel stuck on what it had.
+    function isWatchedFile(dir, name) {
+        const raw = join(dir, name);
+        if (entries.some((e) => e.source.path === raw) || awaitedNamesIn(dir).has(name))
+            return true;
+        const key = canonicalPath(raw);
+        if (entries.some((e) => (e.key ?? canonicalPath(e.source.path)) === key))
+            return true;
+        for (const awaited of awaitedNamesIn(dir)) {
+            if (canonicalPath(join(dir, awaited)) === key)
+                return true;
+        }
+        return false;
+    }
+    // Retry an unfulfilled seed after something moved in `dir`. Nothing is shown
+    // until the whole request resolves, on the same all-or-nothing terms the
+    // original seed applied. True once it has, so the caller stops: what was
+    // asked for outranks whatever the panel fell back to.
+    function retryAwaitedSeed(dir) {
+        if (!awaitedSeed || !awaitedDirs().includes(dir))
+            return false;
+        if (awaitedSeed.kind === "group") {
+            const built = collectSources(awaitedSeed.paths);
+            if (built.unusable || !built.entries.length)
+                return false;
+            const name = groupNameFor(awaitedSeed.name, built.entries.length);
+            awaitedSeed = null;
+            applySources(built.entries, name);
+        }
+        else {
+            // A directory follows its newest report, but the newest can be one
+            // caught mid-write: take the first that parses in full, so a
+            // complete older run beats a partial newer one.
+            const candidates = awaitedSeed.kind === "file"
+                ? [resolvePath(awaitedSeed.dir, awaitedSeed.name)]
+                : resultsFilesIn(awaitedSeed.dir);
+            const entry = firstReadable(candidates, awaitedSeed.kind === "dir");
+            if (!entry)
+                return false;
+            awaitedSeed = null;
+            applySources([entry], null);
+            groupDef = null;
+        }
+        if (!explicitCoverage)
+            attachCoverageForSources();
+        broadcast();
         return true;
     }
     // Only the sources living in `dir` are touched: a five-project group must
-    // not re-read four untouched files because the fifth was rewritten.
-    function refreshDir(dir, changedName) {
-        const here = entries.filter((e) => dirname(e.source.path) === dir);
-        // Nothing here yet, but the caller asked for this folder: whatever just
-        // landed may be the run it was waiting for. Taken newest-first until one
-        // parses in full, on the same terms as the original seed.
-        if (!here.length) {
-            if (dir !== awaitedDir)
-                return;
-            for (const candidate of resultsFilesIn(dir)) {
-                const entry = buildEntry(candidate);
-                if (!entry)
-                    continue;
-                applySources([entry], null);
-                groupDef = null;
-                if (!explicitCoverage)
-                    attachCoverageForSources();
-                broadcast();
-                return;
-            }
+    // not re-read four untouched files because the fifth was rewritten. `full`
+    // says the folder is being re-read because nothing said WHAT changed, so
+    // the names are every source's own rather than a record of what moved.
+    function refreshDir(dir, changedNames, full = false) {
+        // A seed that could not be fulfilled when the panel opened gets first
+        // refusal on the event, wherever the fallback sources happen to live.
+        if (retryAwaitedSeed(dir))
             return;
-        }
+        const here = entries.filter((e) => dirname(e.source.path) === dir);
+        if (!here.length)
+            return;
         let changed = false, moved = false;
+        // Every source that ended up on a different file, so the saved group can
+        // be kept pointing at what its members are now called.
+        const moves = [];
+        // Cheapest first. A folder-expanding source takes in every result beside
+        // it, so anything that moved in the folder moved it, and a source is
+        // usually rewritten under the very name it was opened with. Only when
+        // neither holds are the queued names canonicalized -- the spelling in an
+        // event need not be the one the source was opened with, but a synchronous
+        // realpath each is not free when an Allure run queues thousands.
+        let changedKeys = null;
+        const touched = (entry) => {
+            if (entry.expands || changedNames.has(basename(entry.source.path)))
+                return true;
+            changedKeys ??= new Set([...changedNames].map((n) => canonicalPath(join(dir, n))));
+            return changedKeys.has(entry.key ?? canonicalPath(entry.source.path));
+        };
         if (here.length === 1) {
-            // Alone in its folder, a source follows that folder's newest report:
-            // `dotnet test` writes a fresh <machine>_<user>_<timestamp>.trx per
-            // run instead of overwriting, and re-deriving is how a single named
-            // file has always stayed live.
+            const entry = here[0];
+            const before = entry.source.path;
+            // Move the source onto the first candidate that parses, or re-read
+            // where it already points when none do. One path per run, for the
+            // same reason firstReadable() takes one: a folder-expanding format
+            // parses every sibling on each attempt.
             //
-            // Sources that SHARE a folder must not do this. They would all
-            // re-resolve onto the same newest file and quietly collapse into one,
+            // Never backwards, though: a candidate written before the report on
+            // screen is a run that finished earlier, so taking it would answer a
+            // report being replaced with the one it already superseded -- and
+            // that older run is usually the greener one.
+            const since = entry.mtimeMs ?? 0;
+            // Files the saved group's OTHER members hold: drilled into one
+            // member with the rest still live, following a sibling's report
+            // would leave the group naming one file twice, which no later
+            // restore can resolve. Empty without a group, so an ordinary
+            // source canonicalizes nothing.
+            const selfKey = entry.key ?? canonicalPath(before);
+            const heldByOthers = new Set((groupDef?.members ?? [])
+                .map((m) => canonicalPath(m.path))
+                .filter((k) => k !== selfKey));
+            const follow = (candidates) => {
+                for (const candidate of canonicalResultPaths(candidates)) {
+                    if (heldByOthers.size && candidate !== before && heldByOthers.has(canonicalPath(candidate)))
+                        continue;
+                    if (candidate !== before && writtenAt(candidate) < since)
+                        continue;
+                    if (!reparse(entry, candidate))
+                        continue;
+                    if (candidate !== before) {
+                        moved = true;
+                        moves.push([before, candidate]);
+                    }
+                    return true;
+                }
+                return reparse(entry, before);
+            };
+            // The file the source names was itself rewritten: that IS the
+            // update. Re-deriving here would hand the panel whatever else in
+            // the folder happens to be newer, which is how an explicitly named
+            // report gets replaced by an unrelated one beside it.
+            const rewritten = touched(entry) && existsSync(before);
+            // Otherwise a source alone in its folder follows that folder's
+            // newest report: `dotnet test` writes a fresh
+            // <machine>_<user>_<timestamp>.trx per run instead of overwriting,
+            // and re-deriving is how a single named file has always stayed
+            // live. Taken newest-first until one parses, so a report caught
+            // mid-write does not shut out the complete one behind it.
+            //
+            // A source that came from a DIRECTORY follows it wherever it goes,
+            // because the folder is what was asked for -- including onto a
+            // report of another format, which is a runner writing its results
+            // differently, not a different run. A NAMED source keeps the format
+            // it was opened as, so a stray report beside it cannot take its
+            // place.
+            //
+            // Sources that SHARE a folder never re-derive at all. They would all
+            // resolve onto the same newest file and quietly collapse into one,
             // losing the rest of the merge — so they re-parse their own path.
-            const abs = newestResultsFileIn(dir) ?? here[0].source.path;
-            moved = abs !== here[0].source.path;
-            changed = reparse(here[0], abs);
+            if (entry.dirSourced) {
+                // Its own report being rewritten IS the update, exactly as for a
+                // named source. Re-deriving here would hand the panel the next
+                // file down the folder while this one is mid-write -- an older
+                // run, and a greener one, replacing the run it superseded. On a
+                // full re-read nothing actually said this file changed, so the
+                // folder is what it follows, which is the whole point of a
+                // source that came from one.
+                changed = rewritten && !full ? reparse(entry, before) : follow(resultsFilesIn(dir));
+            }
+            else if (rewritten) {
+                changed = reparse(entry, before);
+            }
+            else {
+                changed = follow(resultsFilesIn(dir, sameFormat(entry.format)));
+            }
         }
         else {
+            // The files these sources already hold, so two of them in one folder
+            // cannot re-derive onto the same replacement and collapse the merge
+            // into one run shown twice.
+            const claimed = new Set(here.map((e) => e.key ?? canonicalPath(e.source.path)));
+            // Read once for the whole refresh, identity and format included:
+            // every source that has to re-anchor picks from this same list, and
+            // working it out per source means a directory scan, a realpath and a
+            // detection read each time round.
+            let siblings = null;
+            const candidates = () => (siblings ??= resultsFilesIn(dir).map((path) => ({
+                path,
+                key: canonicalPath(path),
+                format: formatIdAt(path),
+                expands: expandsDirectory(path),
+                mtimeMs: writtenAt(path),
+            })));
             for (const entry of here) {
-                if (basename(entry.source.path) === changedName && reparse(entry, entry.source.path))
+                // A folder-expanding source (Allure) reads every result beside
+                // it, so a brand-new sibling changed it even though the file it
+                // is named after did not. A source whose file is GONE always gets
+                // a look too: a replacement written after the deletion was seen
+                // arrives in a batch that names neither of them.
+                const missing = !existsSync(entry.source.path);
+                if (!entry.expands && !missing && !touched(entry))
+                    continue;
+                // It is only ANCHORED on that file, though. A re-run that
+                // deletes the old results and writes new ones leaves the anchor
+                // pointing at nothing, so take a sibling of the same kind that
+                // no other source here has taken -- newest first, one each, so a
+                // merge of N runs comes back as N runs. Never one written before
+                // the run this source is showing: that one finished earlier.
+                let anchor = entry.source.path;
+                if (missing) {
+                    const since = entry.mtimeMs ?? 0;
+                    const free = candidates().find((c) => !claimed.has(c.key) && c.mtimeMs >= since
+                        && (entry.expands ? c.expands : entry.format !== undefined && c.format === entry.format));
+                    if (free) {
+                        claimed.add(free.key);
+                        anchor = free.path;
+                    }
+                }
+                const before = entry.source.path;
+                if (reparse(entry, anchor)) {
                     changed = true;
+                    if (anchor !== before) {
+                        moved = true;
+                        moves.push([before, anchor]);
+                    }
+                }
             }
         }
         if (!changed)
             return;
+        // A source that re-anchored leaves the saved group naming a file that is
+        // gone, so restoring it later would fail or come back short. Only the
+        // member that moved is replaced: the panel may be drilled into one of
+        // them, and the others are not this refresh's business.
+        if (moves.length && groupDef) {
+            const to = new Map(moves.map(([from, path]) => [canonicalPath(from), path]));
+            const taken = new Set();
+            const members = groupDef.members.map((m) => {
+                const moved = to.get(canonicalPath(m.path));
+                // A remap that lands on a file another member already names
+                // would make the group two entries for one run, and every later
+                // restore would reject the duplicate. Keep the old path instead
+                // -- a member that is merely missing can still come back.
+                if (!moved || taken.has(canonicalPath(moved))) {
+                    taken.add(canonicalPath(m.path));
+                    return m;
+                }
+                taken.add(canonicalPath(moved));
+                return { path: moved, format: formatIdAt(moved) ?? m.format, mtimeMs: writtenAt(moved) };
+            });
+            groupDef = { name: groupDef.name, members };
+        }
         rebuild();
         // A moved report means the coverage beside it moved too. An explicitly
         // named report is left alone — the caller chose it.
@@ -794,101 +1058,214 @@ export async function createResultsServer(options = {}) {
             attachCoverageForSources();
         broadcast();
     }
+    // Directory identity, so a folder deleted and recreated is not mistaken for
+    // the one a watcher is still attached to. Null when it is not there (or is
+    // not a directory) at all.
+    function dirStamp(dir) {
+        try {
+            const st = statSync(dir);
+            return st.isDirectory() ? `${st.ino}:${st.birthtimeMs}` : null;
+        }
+        catch {
+            return null;
+        }
+    }
+    function dropWatcher(dir) {
+        const w = watchers.get(dir);
+        if (w) {
+            try {
+                w.close();
+            }
+            catch { /* already closed */ }
+        }
+        watchers.delete(dir);
+        watchStamps.delete(dir);
+    }
     function startWatch(dir) {
+        const stamp = dirStamp(dir);
+        // Not there yet -- a run that has still to create its output folder.
+        // The poll arms the watcher the moment it appears.
+        if (stamp === null)
+            return;
         try {
             const w = watch(dir, { persistent: false }, (_event, filename) => {
-                if (!filename)
+                // Debounced per watched folder, collecting the names that moved
+                // in it. Keying by folder rather than by file is what keeps a
+                // burst -- an Allure run writes one JSON per test -- to a single
+                // refresh, and the key is absolute, so two watched folders that
+                // each hold a `results.trx` never cancel one another.
+                const schedule = () => {
+                    clearTimeout(resultsTimers.get(dir));
+                    resultsTimers.set(dir, setTimeout(() => {
+                        resultsTimers.delete(dir);
+                        const names = pendingNames.get(dir) ?? new Set();
+                        pendingNames.delete(dir);
+                        // A nameless event anywhere in the batch means the batch
+                        // does not say what moved, so the folder is re-read whole
+                        // however many named events arrived alongside it.
+                        if (pendingRescans.delete(dir))
+                            rescanDir(dir);
+                        else
+                            refreshDir(dir, names);
+                    }, 400));
+                };
+                // Node is allowed to report a change without saying what moved.
+                // Dropping it would leave the panel on a run that is no longer
+                // what is on disk, so the whole folder is re-read instead.
+                if (!filename) {
+                    pendingRescans.add(dir);
+                    schedule();
                     return;
+                }
                 const name = String(filename);
-                if (!RESULT_EXTS.some((e) => name.toLowerCase().endsWith(e)))
+                // An active source is watched whatever it is called: an
+                // explicitly named file is accepted by content, so a rewrite of
+                // `junit.report` must not be discarded for its extension. Same
+                // for a file a seed is still waiting for. The filter only bounds
+                // what a scan may DISCOVER, and it is asked first: an Allure run
+                // writes thousands of recognized files, and canonicalizing each
+                // one costs a synchronous realpath on the event loop.
+                if (!RESULT_EXTS.some((e) => name.toLowerCase().endsWith(e)) && !isWatchedFile(dir, name))
                     return;
-                // Keyed by absolute path rather than bare name: two watched
-                // folders can each hold a `results.trx`, and they must not
-                // cancel one another's pending reload.
-                const abs = resolvePath(dir, name);
-                clearTimeout(resultsTimers.get(abs));
-                resultsTimers.set(abs, setTimeout(() => {
-                    resultsTimers.delete(abs);
-                    refreshDir(dir, name);
-                }, 400));
+                const pending = pendingNames.get(dir) ?? new Set();
+                pendingNames.set(dir, pending);
+                pending.add(name);
+                schedule();
             });
-            w.on("error", (err) => console.error("[server] watcher error:", err?.message || err));
+            w.on("error", (err) => {
+                console.error("[server] watcher error:", err?.message || err);
+                // A watcher that has errored delivers nothing further; drop it
+                // so the poll puts a working one back.
+                dropWatcher(dir);
+            });
             watchers.set(dir, w);
+            watchStamps.set(dir, stamp);
         }
         catch (err) {
             console.error(`[server] watch failed for ${dir}:`, err instanceof Error ? err.message : err);
         }
     }
-    // One watcher per directory the sources live in, recomputed from the active
-    // set: several sources in one folder share a watcher, and a folder nothing
-    // points at any more is dropped.
-    function syncWatchers() {
+    // Every folder the panel has a reason to watch.
+    function wantedDirs() {
         const wanted = new Set(entries.map((e) => dirname(e.source.path)));
-        // A folder the caller asked for is watched even before anything in it
-        // resolves: `dotnet test` creates TestResults/ on its first run, and a
-        // report caught mid-write becomes readable moments later. Without this
-        // the panel has nothing to recover from and stays empty for good.
-        if (awaitedDir)
-            wanted.add(awaitedDir);
-        for (const [dir, w] of watchers) {
-            if (wanted.has(dir))
-                continue;
-            try {
-                w.close();
+        for (const dir of awaitedDirs())
+            wanted.add(dir);
+        return [...wanted];
+    }
+    // Re-read a folder from scratch: every source in it is treated as changed,
+    // which is what a watcher gap means -- whatever happened while nothing was
+    // listening was missed.
+    function rescanDir(dir) {
+        if (retryAwaitedSeed(dir))
+            return;
+        const here = entries.filter((e) => dirname(e.source.path) === dir);
+        if (here.length)
+            refreshDir(dir, new Set(here.map((e) => basename(e.source.path))), true);
+    }
+    // The watchers are a shortcut for the common case, not the source of truth.
+    // A folder may not exist when the panel opens -- `dotnet test` creates
+    // TestResults/ on the first run -- and one deleted and recreated leaves its
+    // watcher attached to a directory nothing writes to any more, with no event
+    // to say so. A tick costs one stat per watched folder.
+    function syncResultsPoll() {
+        const wanted = watchEnabled && wantedDirs().length > 0;
+        if (wanted === (resultsPoll !== null))
+            return;
+        if (!wanted) {
+            if (resultsPoll)
+                clearInterval(resultsPoll);
+            resultsPoll = null;
+            return;
+        }
+        resultsPoll = setInterval(() => {
+            const now = Date.now();
+            for (const dir of wantedDirs()) {
+                // A folder whose watcher will not attach -- a permissions
+                // failure, or a filesystem that does not support watching --
+                // must not be retried, logged and fully re-read every tick. It
+                // backs off to at most every 30s and keeps the poll cheap.
+                if ((watchRetryAt.get(dir) ?? 0) > now)
+                    continue;
+                const stamp = dirStamp(dir);
+                if (stamp === null) {
+                    dropWatcher(dir);
+                    continue;
+                }
+                if (watchers.has(dir) && watchStamps.get(dir) === stamp)
+                    continue;
+                dropWatcher(dir);
+                startWatch(dir);
+                if (!watchers.has(dir)) {
+                    const failures = (watchFailures.get(dir) ?? 0) + 1;
+                    watchFailures.set(dir, failures);
+                    watchRetryAt.set(dir, now + Math.min(500 * 2 ** failures, 30_000));
+                    continue;
+                }
+                watchFailures.delete(dir);
+                watchRetryAt.delete(dir);
+                rescanDir(dir);
             }
-            catch { /* already closed */ }
-            watchers.delete(dir);
+        }, 500);
+        resultsPoll.unref?.();
+    }
+    // One watcher per directory the sources live in, plus any an unfulfilled
+    // seed is waiting on, recomputed from the active set: several sources in
+    // one folder share a watcher, and a folder nothing points at any more is
+    // dropped.
+    function syncWatchers() {
+        const wanted = new Set(wantedDirs());
+        for (const dir of [...watchers.keys()]) {
+            if (!wanted.has(dir))
+                dropWatcher(dir);
         }
         for (const dir of wanted)
             if (!watchers.has(dir))
                 startWatch(dir);
+        syncResultsPoll();
     }
     // Seed from a set of files, or from the original single file/dir.
     function seed(input) {
         let loaded = false;
+        // A fresh seed re-points the whole panel, so whatever a previous one was
+        // still waiting for is no longer wanted.
+        awaitedSeed = null;
         const files = input.resultsFiles ?? [];
         if (files.length) {
             const built = collectSources(files);
-            if (built.entries.length) {
+            // All or nothing. A seed has no receipt to hand back the way the
+            // open_files action does, so a partial merge would quietly show
+            // fewer tests than were asked for with nothing on screen to say so.
+            if (built.unusable || !built.entries.length) {
+                if (built.skipped.length) {
+                    console.error(`[server] not seeding a partial merge: ${built.skipped.map((s) => `${s.path} (${s.reason})`).join(", ")}`);
+                }
+                // The missing half may be a report still being written, so wait
+                // for it rather than making the caller reopen the panel.
+                awaitedSeed = { kind: "group", name: input.name, paths: files.map((f) => resolvePath(f)) };
+            }
+            else {
                 applySources(built.entries, groupNameFor(input.name, built.entries.length));
                 loaded = true;
             }
         }
         if (!loaded && (input.resultsFile || input.resultsDir)) {
-            let abs = null;
-            if (input.resultsFile) {
-                const p = resolvePath(String(input.resultsFile));
-                // isFile, so a folder handed to resultsFile falls through to the
-                // resultsDir branch rather than swallowing it; and the head is
-                // sniffed so something that is not a report falls through too
-                // rather than blanking the panel.
-                try {
-                    if (existsSync(p) && statSync(p).isFile() && looksLikeResults(readHead(p)))
-                        abs = p;
-                }
-                catch { /* unreadable */ }
+            // isFile, so a folder handed to resultsFile falls through to the
+            // resultsDir branch rather than swallowing it; and it has to parse,
+            // so something that is not a report -- or is one caught mid-write --
+            // falls through too rather than blanking the panel.
+            const named = input.resultsFile ? resolvePath(String(input.resultsFile)) : null;
+            let entry = null;
+            try {
+                if (named && existsSync(named) && statSync(named).isFile())
+                    entry = buildEntry(named);
             }
-            if (!abs && input.resultsDir) {
-                const d = resolvePath(String(input.resultsDir));
-                // Remembered whether or not a report resolves, so a folder that
-                // is empty, or holds only a report still being written, is still
-                // watched and recovers on its own once one lands.
-                awaitedDir = d;
-                if (existsSync(d)) {
-                    // Newest-first until one parses IN FULL. Detection only reads
-                    // a candidate's opening bytes, and the parsers reject a report
-                    // that is incomplete -- so the newest file can be recognisable
-                    // and still unreadable, and the finished run behind it is what
-                    // the panel should show rather than nothing at all.
-                    for (const candidate of resultsFilesIn(d)) {
-                        if (parseResultsAt(candidate) !== null) {
-                            abs = candidate;
-                            break;
-                        }
-                    }
-                }
-            }
-            const entry = abs ? buildEntry(abs) : null;
+            catch { /* unreadable */ }
+            const dir = input.resultsDir ? resolvePath(String(input.resultsDir)) : null;
+            // Newest first, but the newest can be a report caught mid-write, so
+            // take the first that parses in full: a complete older run beats a
+            // partial newer one.
+            if (!entry && dir)
+                entry = firstReadable(resultsFilesIn(dir), true);
             if (entry) {
                 applySources([entry], null);
                 // A fresh seed re-points the whole panel, so a group left over
@@ -896,14 +1273,19 @@ export async function createResultsServer(options = {}) {
                 groupDef = null;
                 loaded = true;
             }
+            else if (!awaitedSeed && dir) {
+                awaitedSeed = { kind: "dir", dir };
+            }
+            else if (!awaitedSeed && named) {
+                awaitedSeed = { kind: "file", dir: dirname(named), name: basename(named) };
+            }
         }
         // Honoured even when no results file resolved: the agent may be pointing
         // the panel at coverage for a run whose report it could not find.
         explicitCoverage = seedCoverage(input, entries[0]?.source.path ?? null);
         if (!loaded) {
-            // applySources starts the watchers for a seed that landed; one that
-            // did not has to start its own, or the folder it is waiting on is
-            // never looked at again.
+            // applySources does this for a seed that landed; one still waiting
+            // has to start its own watchers.
             if (watchEnabled)
                 syncWatchers();
             return null;
@@ -924,23 +1306,47 @@ export async function createResultsServer(options = {}) {
     // the merge stays listed and can be picked again.
     function loadSingle(abs, label) {
         const entry = buildEntry(abs);
-        // Registered but unparseable: keep the old behaviour of showing an empty
-        // run rather than refusing the selection outright.
-        applySources(entry ? [entry] : [], null);
+        // A file caught mid-write is not something to replace a complete run
+        // with: blanking the panel loses what is on screen and stops watching
+        // for the rest of it. The selection is refused instead.
+        if (!entry)
+            return false;
+        // A deliberate choice retires whatever an unfulfilled seed was still
+        // waiting for: it must not arrive later and take the panel back.
+        awaitedSeed = null;
+        applySources([entry], null);
         file = label;
         attachCoverage(abs);
+        return true;
     }
     // Re-open the group after drilling into one of its files. Re-collected from
     // disk rather than cached, so a member rewritten meanwhile comes back
     // current. False when nothing resolves any more, leaving the view alone.
     function restoreGroup(def) {
-        const built = collectSources(def.paths);
-        // A member deleted since the group was opened drops out; the rest still
-        // merge, and the per-source counts in the header show what came back.
-        if (!built.entries.length)
+        // A member re-run under a new name is still that member: while the panel
+        // was drilled into one file, the others went on rotating with nothing
+        // watching them. A replacement is held to exactly what live re-anchoring
+        // asks -- same format, and not a run that finished before the one this
+        // member last held -- so an unrelated report sitting in the folder
+        // cannot quietly take a missing project's place.
+        const claimed = new Set(def.members.filter((m) => existsSync(m.path)).map((m) => canonicalPath(m.path)));
+        const paths = def.members.map((m) => {
+            if (existsSync(m.path))
+                return m.path;
+            const replacement = resultsFilesIn(dirname(m.path), sameFormat(m.format))
+                .find((c) => !claimed.has(canonicalPath(c)) && writtenAt(c) >= m.mtimeMs);
+            if (!replacement)
+                return m.path;
+            claimed.add(canonicalPath(replacement));
+            return replacement;
+        });
+        const built = collectSources(paths);
+        // A member that could not be read is still a member -- caught mid-write,
+        // or deleted with nothing in its folder eligible to take its place.
+        // Publishing the rest would record that shorter set AS the group, and
+        // the member would never come back once its report did.
+        if (built.skipped.length || !built.entries.length)
             return false;
-        // Decayed to one readable file, it is no longer a merge — but `groupDef`
-        // stays, because the group still exists and the member may return.
         applySources(built.entries, groupNameFor(def.name, built.entries.length));
         if (!explicitCoverage)
             attachCoverageForSources();
@@ -1300,7 +1706,11 @@ export async function createResultsServer(options = {}) {
                 res.end(JSON.stringify({ ok: false, error: "unknown file" }));
                 return;
             }
-            loadSingle(abs, name);
+            if (!loadSingle(abs, name)) {
+                res.writeHead(400, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ ok: false, error: "that file could not be read as a test-results file" }));
+                return;
+            }
             broadcast();
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ ok: true, file: name }));
@@ -1411,7 +1821,8 @@ export async function createResultsServer(options = {}) {
             const abs = resolveResultPath(name, discovered);
             if (!abs)
                 return false;
-            loadSingle(abs, name);
+            if (!loadSingle(abs, name))
+                return false;
             broadcast();
             return true;
         },
@@ -1424,6 +1835,9 @@ export async function createResultsServer(options = {}) {
                 return { ok: false, error: "none of those paths could be read as a test-results file", skipped: built.skipped };
             }
             const name = groupNameFor(input.name, built.entries.length);
+            // Same as the picker: this replaces the panel deliberately, so a
+            // seed still waiting must not arrive later and undo it.
+            awaitedSeed = null;
             applySources(built.entries, name);
             // Resolved to a single file, so this is an ordinary run, not a merge:
             // any group left from an earlier open must not stay in the picker.
