@@ -423,6 +423,41 @@ test.describe("cross-language report formats", () => {
     await expect(page.getByTestId("group-counts")).toHaveText("3 files \u00B7 3 tests");
   });
 
+  test("a merge whose deleted member has no replacement keeps that member", async ({ page, makeServer }, testInfo) => {
+    // Three members, so losing one still leaves a plural merge -- which is what
+    // makes this worse than the two-member case: the reduced set is a valid
+    // merge, so publishing it also RECORDS it, and the third member is gone for
+    // good even after its report comes back.
+    const dir = testInfo.outputPath("restore-deleted");
+    mkdirSync(dir, { recursive: true });
+    const suite = (name: string) => `<testsuites><testsuite name="s"><testcase name="${name}" /></testsuite></testsuites>`;
+    const a = join(dir, "a.xml");
+    const b = join(dir, "b.xml");
+    const c = join(dir, "c.xml");
+    writeFileSync(a, suite("fromA"), "utf8");
+    writeFileSync(b, suite("fromB"), "utf8");
+    writeFileSync(c, suite("fromC"), "utf8");
+
+    const s = await makeServer({ name: "Solution", resultsFiles: [a, b, c], watch: false });
+    await openCanvas(page, s);
+    const picker = page.getByTestId("file-select");
+    await picker.selectOption("a.xml");
+    await expect(page.getByTestId("test-row")).toHaveCount(1);
+
+    rmSync(c);
+    await picker.selectOption("Solution");
+
+    // Two thirds of a merge is not the merge, however readable those two are.
+    await expect(page.getByTestId("test-name").filter({ hasText: "fromA" })).toBeVisible();
+    await expect(page.getByTestId("test-row")).toHaveCount(1);
+
+    // And C was not written out of the group, so its report returning brings
+    // the whole merge back.
+    writeFileSync(c, suite("fromC"), "utf8");
+    await picker.selectOption("Solution");
+    await expect(page.getByTestId("group-counts")).toHaveText("3 files \u00B7 3 tests");
+  });
+
   test("picking a file caught mid-write leaves the run that is on screen", async ({ page, makeServer }, testInfo) => {
     const dir = testInfo.outputPath("pick-partial");
     mkdirSync(dir, { recursive: true });

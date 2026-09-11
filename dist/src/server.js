@@ -1341,17 +1341,12 @@ export async function createResultsServer(options = {}) {
             return replacement;
         });
         const built = collectSources(paths);
-        // A member that is there but unreadable is a report caught mid-write:
-        // restoring around it would publish a merge one whole project short and
-        // then record that shorter set as the group, losing the member for good.
-        if (built.skipped.some((s) => s.reason !== "no such file"))
+        // A member that could not be read is still a member -- caught mid-write,
+        // or deleted with nothing in its folder eligible to take its place.
+        // Publishing the rest would record that shorter set AS the group, and
+        // the member would never come back once its report did.
+        if (built.skipped.length || !built.entries.length)
             return false;
-        // A member deleted since the group was opened drops out; the rest still
-        // merge, and the per-source counts in the header show what came back.
-        if (!built.entries.length)
-            return false;
-        // Decayed to one readable file, it is no longer a merge — but `groupDef`
-        // stays, because the group still exists and the member may return.
         applySources(built.entries, groupNameFor(def.name, built.entries.length));
         if (!explicitCoverage)
             attachCoverageForSources();
