@@ -499,6 +499,78 @@ test.describe("cross-language report formats", () => {
     await expect(page.getByTestId("test-name").filter({ hasText: "bNew" })).toBeVisible();
   });
 
+  test("a missing member is not restored from an older unrelated report", async ({ page, makeServer }, testInfo) => {
+    // Re-deriving a member from its folder is what carries a merge through a
+    // re-run that renames things -- but an old report that happens to be lying
+    // beside it is not that member under a new name.
+    const dir = testInfo.outputPath("restore-unrelated");
+    mkdirSync(dir, { recursive: true });
+    const suite = (name: string) => `<testsuites><testsuite name="s"><testcase name="${name}" /></testsuite></testsuites>`;
+    const a = join(dir, "a.xml");
+    const b = join(dir, "b.xml");
+    const unrelated = join(dir, "unrelated.xml");
+    writeFileSync(a, suite("fromA"), "utf8");
+    writeFileSync(b, suite("fromB"), "utf8");
+    writeFileSync(unrelated, suite("unrelatedOldRun"), "utf8");
+    const tenMinutesAgo = new Date(Date.now() - 600_000);
+    utimesSync(unrelated, tenMinutesAgo, tenMinutesAgo);
+
+    const s = await makeServer({ name: "Solution", resultsFiles: [a, b], watch: false });
+    await openCanvas(page, s);
+    const picker = page.getByTestId("file-select");
+    await picker.selectOption("a.xml");
+    await expect(page.getByTestId("test-row")).toHaveCount(1);
+
+    rmSync(b);
+    await picker.selectOption("Solution");
+
+    // B has no replacement, so the merge is a member short and is not published
+    // -- rather than published with a run that was never part of it.
+    await expect(page.getByTestId("test-name").filter({ hasText: "unrelatedOldRun" })).toHaveCount(0);
+    await expect(page.getByTestId("test-name").filter({ hasText: "fromA" })).toBeVisible();
+    await expect(page.getByTestId("test-row")).toHaveCount(1);
+
+    // And nothing was recorded in B's place, so B coming back restores the merge.
+    writeFileSync(b, suite("fromB"), "utf8");
+    await picker.selectOption("Solution");
+    await expect(page.getByTestId("group-counts")).toHaveText("2 files \u00B7 2 tests");
+  });
+
+  test("a drilled member does not follow another live member of its merge", async ({ page, makeServer }, testInfo) => {
+    // Drilled into A with B still live: following the folder's newest report
+    // would take A onto B's file, and a merge that names one file twice can
+    // never be restored again.
+    const dir = testInfo.outputPath("drill-sibling");
+    mkdirSync(dir, { recursive: true });
+    const suite = (name: string) => `<testsuites><testsuite name="s"><testcase name="${name}" /></testsuite></testsuites>`;
+    const a = join(dir, "a.xml");
+    const b = join(dir, "b.xml");
+    writeFileSync(a, suite("fromA"), "utf8");
+    writeFileSync(b, suite("fromB"), "utf8");
+
+    const s = await makeServer({ name: "Solution", resultsFiles: [a, b], watch: true });
+    await openCanvas(page, s);
+    const picker = page.getByTestId("file-select");
+    await picker.selectOption("a.xml");
+    await expect(page.getByTestId("test-name").filter({ hasText: "fromA" })).toBeVisible();
+
+    rmSync(a);
+    await page.waitForTimeout(1200);
+    writeFileSync(b, suite("fromBRerun"), "utf8");
+    await page.waitForTimeout(1200);
+
+    // B is somebody else's file: A stays on the run it was showing.
+    await expect(page.getByTestId("test-name").filter({ hasText: "fromBRerun" })).toHaveCount(0);
+    await expect(page.getByTestId("test-name").filter({ hasText: "fromA" })).toBeVisible();
+
+    // So the merge still names two distinct files, and comes back once A does.
+    writeFileSync(a, suite("fromARerun"), "utf8");
+    await picker.selectOption("Solution");
+    await expect(page.getByTestId("group-counts")).toHaveText("2 files \u00B7 2 tests");
+    await expect(page.getByTestId("test-name").filter({ hasText: "fromARerun" })).toBeVisible();
+    await expect(page.getByTestId("test-name").filter({ hasText: "fromBRerun" })).toBeVisible();
+  });
+
   test("merged sources in one folder follow a re-run that renames every file", async ({ page, makeServer }, testInfo) => {
     // Two projects writing timestamped reports into one folder: the old pair is
     // gone, so both sources have to re-anchor -- and onto one file each, not

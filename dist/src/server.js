@@ -206,6 +206,9 @@ export async function createResultsServer(options = {}) {
     // The group that was opened, remembered independently of what is displayed:
     // picking one member out of the picker switches the view, and must not
     // destroy the only way back to the merge.
+    // The merged run's definition. Each member carries the format it was read
+    // as and when its report was written, because restoring the group later has
+    // to hold a replacement to the same standard live re-anchoring does.
     let groupDef = null;
     // One watcher per directory the sources live in, with the identity of the
     // directory each was armed on -- a folder deleted and recreated keeps the
@@ -751,7 +754,7 @@ export async function createResultsServer(options = {}) {
         // Recorded from what actually resolved, so a path that could not be read
         // is not retried on every restore.
         if (name)
-            groupDef = { name, paths: list.map((e) => e.source.path) };
+            groupDef = { name, members: list.map((e) => ({ path: e.source.path, format: e.format, mtimeMs: e.mtimeMs ?? 0 })) };
         rebuild();
         if (watchEnabled)
             syncWatchers();
@@ -908,8 +911,19 @@ export async function createResultsServer(options = {}) {
             // report being replaced with the one it already superseded -- and
             // that older run is usually the greener one.
             const since = entry.mtimeMs ?? 0;
+            // Files the saved group's OTHER members hold: drilled into one
+            // member with the rest still live, following a sibling's report
+            // would leave the group naming one file twice, which no later
+            // restore can resolve. Empty without a group, so an ordinary
+            // source canonicalizes nothing.
+            const selfKey = entry.key ?? canonicalPath(before);
+            const heldByOthers = new Set((groupDef?.members ?? [])
+                .map((m) => canonicalPath(m.path))
+                .filter((k) => k !== selfKey));
             const follow = (candidates) => {
                 for (const candidate of canonicalResultPaths(candidates)) {
+                    if (heldByOthers.size && candidate !== before && heldByOthers.has(canonicalPath(candidate)))
+                        continue;
                     if (candidate !== before && writtenAt(candidate) < since)
                         continue;
                     if (!reparse(entry, candidate))
@@ -1021,7 +1035,21 @@ export async function createResultsServer(options = {}) {
         // them, and the others are not this refresh's business.
         if (moves.length && groupDef) {
             const to = new Map(moves.map(([from, path]) => [canonicalPath(from), path]));
-            groupDef = { name: groupDef.name, paths: groupDef.paths.map((p) => to.get(canonicalPath(p)) ?? p) };
+            const taken = new Set();
+            const members = groupDef.members.map((m) => {
+                const moved = to.get(canonicalPath(m.path));
+                // A remap that lands on a file another member already names
+                // would make the group two entries for one run, and every later
+                // restore would reject the duplicate. Keep the old path instead
+                // -- a member that is merely missing can still come back.
+                if (!moved || taken.has(canonicalPath(moved))) {
+                    taken.add(canonicalPath(m.path));
+                    return m;
+                }
+                taken.add(canonicalPath(moved));
+                return { path: moved, format: formatIdAt(moved) ?? m.format, mtimeMs: writtenAt(moved) };
+            });
+            groupDef = { name: groupDef.name, members };
         }
         rebuild();
         // A moved report means the coverage beside it moved too. An explicitly
@@ -1297,16 +1325,18 @@ export async function createResultsServer(options = {}) {
     function restoreGroup(def) {
         // A member re-run under a new name is still that member: while the panel
         // was drilled into one file, the others went on rotating with nothing
-        // watching them. Each missing one takes its folder's newest report that
-        // no other member already names, so a merge survives a re-run that
-        // renamed everything in it.
-        const claimed = new Set(def.paths.filter((p) => existsSync(p)).map((p) => canonicalPath(p)));
-        const paths = def.paths.map((p) => {
-            if (existsSync(p))
-                return p;
-            const replacement = resultsFilesIn(dirname(p)).find((c) => !claimed.has(canonicalPath(c)));
+        // watching them. A replacement is held to exactly what live re-anchoring
+        // asks -- same format, and not a run that finished before the one this
+        // member last held -- so an unrelated report sitting in the folder
+        // cannot quietly take a missing project's place.
+        const claimed = new Set(def.members.filter((m) => existsSync(m.path)).map((m) => canonicalPath(m.path)));
+        const paths = def.members.map((m) => {
+            if (existsSync(m.path))
+                return m.path;
+            const replacement = resultsFilesIn(dirname(m.path), sameFormat(m.format))
+                .find((c) => !claimed.has(canonicalPath(c)) && writtenAt(c) >= m.mtimeMs);
             if (!replacement)
-                return p;
+                return m.path;
             claimed.add(canonicalPath(replacement));
             return replacement;
         });
